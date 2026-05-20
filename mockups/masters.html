@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Master Data · Receiving Operations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700;900&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<!-- BEGIN_CSS:main -->
+<style>
+  /* ============ THEME TOKENS (shared with rest of app) ============ */
+  :root, [data-theme="light"] {
+    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #faf9f6; --surface-3: #f0eee8;
+    --border: #e6e3dc; --border-bright: #d4d0c6;
+    --text: #1a1d20; --text-dim: #5a626c; --text-muted: #8a8f97;
+    --accent: #1f4d2b; --accent-bg: #e8f0ea; --accent-hover: #163a20; --accent-fg: #ffffff; --accent-2: #0a8a92;
+    --error: #c0392b; --error-bg: #fceae7;
+    --warn: #b86e00; --warn-bg: #fdf4e3;
+    --ok: #2d7d4f; --ok-bg: #e7f3ec;
+    --shadow-sm: 0 1px 2px rgba(20, 22, 24, 0.04);
+    --shadow-md: 0 4px 16px rgba(20, 22, 24, 0.06);
+    --shadow-lg: 0 20px 60px rgba(20, 22, 24, 0.12);
+    --grid-line: rgba(0,0,0,0.018);
+    --ambient-1: rgba(31, 77, 43, 0.04);
+    --ambient-2: rgba(10, 138, 146, 0.03);
+  }
+  [data-theme="midnight"] {
+    --bg: #0e1116; --surface: #161a21; --surface-2: #1c2128; --surface-3: #232932;
+    --border: #2a313c; --border-bright: #3a4250;
+    --text: #e6e8ea; --text-dim: #9aa3b0; --text-muted: #6b7382;
+    --accent: #5fd49a; --accent-bg: rgba(95, 212, 154, 0.12); --accent-hover: #4dbf85; --accent-fg: #0e1116; --accent-2: #4cd4dc;
+    --error: #ff6b6b; --error-bg: rgba(255,107,107,0.12);
+    --warn: #f0a73a; --warn-bg: rgba(240,167,58,0.12);
+    --ok: #5fd49a; --ok-bg: rgba(95,212,154,0.12);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 20px 60px rgba(0,0,0,0.6);
+    --grid-line: rgba(255,255,255,0.025);
+    --ambient-1: rgba(95, 212, 154, 0.05);
+    --ambient-2: rgba(76, 212, 220, 0.04);
+  }
+  [data-theme="slate"] {
+    --bg: #eef1f4; --surface: #ffffff; --surface-2: #f7f9fb; --surface-3: #e9edf2;
+    --border: #dce2e9; --border-bright: #c5cdd6;
+    --text: #1c2530; --text-dim: #4a5562; --text-muted: #7d8794;
+    --accent: #2e4d6b; --accent-bg: #e3ebf3; --accent-hover: #213a52; --accent-fg: #ffffff; --accent-2: #1e6fc4;
+    --error: #c43b3b; --error-bg: #fbe7e7;
+    --warn: #c47611; --warn-bg: #fef0dc;
+    --ok: #2d8a5d; --ok-bg: #e0f0e7;
+    --shadow-sm: 0 1px 3px rgba(28, 37, 48, 0.05);
+    --shadow-md: 0 4px 18px rgba(28, 37, 48, 0.08);
+    --shadow-lg: 0 24px 64px rgba(28, 37, 48, 0.15);
+    --grid-line: rgba(28, 37, 48, 0.02);
+    --ambient-1: rgba(46, 77, 107, 0.04);
+    --ambient-2: rgba(30, 111, 196, 0.03);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Roboto', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    min-height: 100vh;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  body { font-weight: 400; }
+  body::before {
+    content: ''; position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% 0%, var(--ambient-1), transparent 65%),
+      radial-gradient(ellipse 700px 400px at 85% 100%, var(--ambient-2), transparent 65%);
+    pointer-events: none;
+  }
+  body::after {
+    content: ''; position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+  .app { position: relative; z-index: 1; }
+
+  /* ============ Bootstrap overrides ============ */
+  .form-select, .form-control {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    font-size: 14px;
+    border-radius: 8px;
+  }
+  .form-select:focus, .form-control:focus {
+    background-color: var(--surface);
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .form-control::placeholder { color: var(--text-muted); }
+  .modal-content { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .modal-header { border-bottom-color: var(--border); padding: 18px 22px; }
+  .modal-footer { border-top-color: var(--border); padding: 14px 22px; background: var(--surface-2); }
+  .modal-body { padding: 22px; }
+  .modal-title { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+
+  /* ============ PAGE ============ */
+  .page-wrap {
+    max-width: 1280px;
+    margin: 24px auto;
+    padding: 0 24px 72px;
+  }
+  .page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 22px;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .page-eyebrow {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .page-title {
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .page-subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* ============ TABS ============ */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 3px;
+  }
+  .tab {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 8px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s ease;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+  }
+  .tab .count {
+    font-size: 10px;
+    background: var(--surface-3);
+    color: var(--text-muted);
+    padding: 2px 6px;
+    border-radius: 100px;
+    font-family: 'Roboto Mono', monospace;
+  }
+  .tab.active .count {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ============ CARD ============ */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 18px;
+  }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    flex-wrap: wrap;
+  }
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .section-title i { color: var(--accent); }
+
+  /* Toolbar */
+  .toolbar-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  .search-input {
+    position: relative;
+  }
+  .search-input i {
+    position: absolute;
+    left: 12px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+    pointer-events: none;
+  }
+  .search-input input {
+    padding: 8px 12px 8px 36px;
+    width: 260px;
+  }
+
+  /* Buttons */
+  .btn {
+    border-radius: 8px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: var(--shadow-sm);
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--surface-2); border-color: var(--border-bright); }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+  .btn-danger {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 30%, var(--border));
+  }
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--error) 10%, transparent);
+    border-color: var(--error);
+  }
+  .btn-icon {
+    padding: 6px 8px;
+    font-size: 13px;
+    background: transparent;
+    border: 1px solid transparent;
+    box-shadow: none;
+  }
+  .btn-icon:hover { background: var(--surface-2); border-color: var(--border); }
+  .btn-icon.danger { color: var(--error); }
+  .btn-icon.danger:hover { background: var(--error-bg); }
+
+  /* ============ TABLE ============ */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .data-table thead th {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    text-align: left;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .data-table tbody td {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+  .data-table tbody tr:hover { background: var(--surface-2); }
+  .data-table .actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  .empty-row {
+    padding: 48px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .empty-row i {
+    display: block;
+    font-size: 32px;
+    margin-bottom: 10px;
+    opacity: 0.5;
+  }
+
+  /* User row visuals */
+  .user-cell {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .avatar {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: var(--accent-fg);
+    display: grid;
+    place-items: center;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 700;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .user-name { font-weight: 500; color: var(--text); line-height: 1.2; }
+  .user-username {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .role-badge {
+    display: inline-flex;
+    align-items: center;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid;
+  }
+  .role-badge.admin       { color: var(--error); border-color: color-mix(in srgb, var(--error) 30%, transparent); background: color-mix(in srgb, var(--error) 8%, transparent); }
+  .role-badge.supervisor  { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 30%, transparent); background: color-mix(in srgb, var(--accent-2) 8%, transparent); }
+  .role-badge.operator    { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: var(--accent-bg); }
+  .role-badge.viewer      { color: var(--text-muted); border-color: var(--border); background: var(--surface-2); }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+  }
+  .status-pill::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .status-pill.active::before { background: var(--ok); }
+  .status-pill.disabled::before { background: var(--text-muted); }
+
+  /* Warehouse chip stack */
+  .wh-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .wh-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  .wh-chip::before {
+    content: '';
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .wh-chip.none { color: var(--text-muted); border-style: dashed; }
+  .wh-chip.none::before { display: none; }
+
+  /* ============ FORM ============ */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 16px;
+  }
+  .form-grid.cols-1 { grid-template-columns: 1fr; }
+  .form-field { display: flex; flex-direction: column; gap: 5px; }
+  .form-field.full { grid-column: 1 / -1; }
+  .form-field label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .form-field .help {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+  }
+  .form-field.error label { color: var(--error); }
+  .form-field.error .form-control { border-color: var(--error); }
+  .form-field .err-msg {
+    color: var(--error);
+    font-size: 12px;
+    margin-top: 3px;
+    display: none;
+  }
+  .form-field.error .err-msg { display: block; }
+
+  /* Toggle switch */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 38px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch-slider {
+    position: absolute; inset: 0;
+    background: var(--surface-3);
+    border-radius: 100px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    border: 1px solid var(--border);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--surface);
+    top: 2px; left: 2px;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.2s ease;
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(16px);
+  }
+  .switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .switch-row-info .name { font-size: 14px; color: var(--text); font-weight: 500; }
+  .switch-row-info .help { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Warehouse assignment editor */
+  .assign-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    background: var(--surface-2);
+  }
+  .assign-row {
+    display: grid;
+    grid-template-columns: auto 1fr 130px auto;
+    gap: 10px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+  }
+  .assign-row.disabled { opacity: 0.55; }
+  .assign-row input[type=checkbox] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .assign-row-name { display: flex; flex-direction: column; gap: 1px; line-height: 1.2; }
+  .assign-row-code {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  .assign-row-label { font-size: 13px; color: var(--text); }
+  .assign-row .form-select { padding: 4px 28px 4px 8px; font-size: 11px; }
+  .assign-row.empty-state {
+    grid-template-columns: 1fr;
+    text-align: center;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 18px;
+  }
+
+  /* Audit log */
+  .audit-row {
+    display: grid;
+    grid-template-columns: 110px 100px 1fr auto;
+    gap: 14px;
+    padding: 11px 20px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    font-size: 13px;
+  }
+  .audit-row:last-child { border-bottom: none; }
+  .audit-row:hover { background: var(--surface-2); }
+  .audit-time {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .audit-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  .audit-action.create { background: var(--ok-bg); color: var(--ok); }
+  .audit-action.update { background: var(--accent-bg); color: var(--accent); }
+  .audit-action.delete { background: var(--error-bg); color: var(--error); }
+  .audit-action.assign { background: var(--warn-bg); color: var(--warn); }
+  .audit-message { color: var(--text); }
+  .audit-message b { font-weight: 500; }
+  .audit-actor {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* Toast */
+  .toast-host {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    pointer-events: none;
+  }
+  .custom-toast {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-left: 3px solid var(--accent);
+    padding: 12px 18px;
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s ease;
+    max-width: 380px;
+  }
+  .custom-toast.show { opacity: 1; transform: translateY(0); }
+  .custom-toast.danger { border-color: var(--error); border-left-color: var(--error); }
+  .custom-toast .icon-wrap {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: grid; place-items: center;
+    font-size: 14px;
+  }
+  .custom-toast.danger .icon-wrap { background: var(--error-bg); color: var(--error); }
+  .custom-toast .msg { font-size: 13px; color: var(--text); }
+  .custom-toast .msg small {
+    display: block;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  /* Stats strip */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: var(--shadow-sm);
+  }
+  .stat-card .label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .stat-card .value {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+    margin-top: 2px;
+  }
+  .stat-card .value small {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+  .stat-card .sub {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  @media (max-width: 720px) {
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .form-grid { grid-template-columns: 1fr; }
+    .search-input input { width: 100%; }
+    .audit-row { grid-template-columns: 1fr auto; gap: 8px; }
+    .audit-row .audit-time, .audit-row .audit-actor { grid-column: 1 / -1; }
+  }
+</style>
+<!-- END_CSS:main -->
+</head>
+<body data-app-page="masters">
+<!-- BEGIN_BODY:main -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-eyebrow">Administration</div>
+        <h1 class="page-title">Master Data</h1>
+        <p class="page-subtitle">Manage users, warehouses, and their assignments.</p>
+      </div>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="users">
+          <i class="bi bi-people"></i> Users <span class="count" id="count-users">0</span>
+        </button>
+        <button class="tab" data-tab="warehouses">
+          <i class="bi bi-buildings"></i> Warehouses <span class="count" id="count-warehouses">0</span>
+        </button>
+        <button class="tab" data-tab="audit">
+          <i class="bi bi-clock-history"></i> Audit Log <span class="count" id="count-audit">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ USERS ============ -->
+    <div class="tab-panel active" data-panel="users">
+      <div class="stats-strip">
+        <div class="stat-card">
+          <span class="label">Total Users</span>
+          <span class="value" id="s-users-total">0</span>
+          <span class="sub" id="s-users-sub">across the org</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Active</span>
+          <span class="value" id="s-users-active">0</span>
+          <span class="sub">can sign in</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Disabled</span>
+          <span class="value" id="s-users-disabled">0</span>
+          <span class="sub">blocked from login</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Avg Warehouses</span>
+          <span class="value" id="s-users-avg-wh">0</span>
+          <span class="sub">per active user</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-people"></i> Users</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-users" placeholder="Search name, username, role…">
+            </div>
+            <select class="form-select" id="filter-users-role" style="width: 170px;">
+              <option value="all">All roles</option>
+              <option value="admin">Administrator</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="operator">Operator</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <select class="form-select" id="filter-users-status" style="width: 150px;">
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="disabled">Disabled only</option>
+            </select>
+            <button class="btn btn-primary" id="btn-new-user">
+              <i class="bi bi-plus-lg"></i> New User
+            </button>
+          </div>
+        </div>
+        <div id="users-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 30%;">User</th>
+                <th>Role</th>
+                <th>Warehouses</th>
+                <th>Status</th>
+                <th>Last sign-in</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ WAREHOUSES ============ -->
+    <div class="tab-panel" data-panel="warehouses">
+      <div class="stats-strip">
+        <div class="stat-card">
+          <span class="label">Total Warehouses</span>
+          <span class="value" id="s-wh-total">0</span>
+          <span class="sub">facilities</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Active</span>
+          <span class="value" id="s-wh-active">0</span>
+          <span class="sub">operational</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Total Capacity</span>
+          <span class="value" id="s-wh-capacity">0 <small>m²</small></span>
+          <span class="sub">across all sites</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Avg Users</span>
+          <span class="value" id="s-wh-avg-users">0</span>
+          <span class="sub">assigned per warehouse</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-buildings"></i> Warehouses</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-warehouses" placeholder="Search code, name, city…">
+            </div>
+            <select class="form-select" id="filter-warehouses-status" style="width: 150px;">
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="disabled">Disabled only</option>
+            </select>
+            <button class="btn btn-primary" id="btn-new-warehouse">
+              <i class="bi bi-plus-lg"></i> New Warehouse
+            </button>
+          </div>
+        </div>
+        <div id="warehouses-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 14%;">Code</th>
+                <th>Name</th>
+                <th>Location</th>
+                <th>Capacity</th>
+                <th>Users</th>
+                <th>Status</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="warehouses-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ AUDIT LOG ============ -->
+    <div class="tab-panel" data-panel="audit">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-clock-history"></i> Audit Log</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-audit" placeholder="Search action, entity, actor…">
+            </div>
+            <select class="form-select" id="filter-audit-action" style="width: 170px;">
+              <option value="all">All actions</option>
+              <option value="create">Create</option>
+              <option value="update">Update</option>
+              <option value="delete">Delete</option>
+              <option value="assign">Assignment</option>
+            </select>
+            <button class="btn btn-danger" id="btn-clear-audit">
+              <i class="bi bi-trash"></i> Clear log
+            </button>
+          </div>
+        </div>
+        <div id="audit-list"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ USER MODAL ============ -->
+<div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="userModalTitle">New User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="u-id">
+        <div class="form-grid">
+          <div class="form-field" id="ff-u-username">
+            <label for="u-username">Username</label>
+            <input type="text" class="form-control" id="u-username" placeholder="e.g. swattana" autocomplete="off">
+            <span class="err-msg" id="err-u-username">Username is required</span>
+            <span class="help">Letters and numbers only. Used for login.</span>
+          </div>
+          <div class="form-field" id="ff-u-name">
+            <label for="u-name">Full Name</label>
+            <input type="text" class="form-control" id="u-name" placeholder="e.g. S. Wattana">
+            <span class="err-msg" id="err-u-name">Name is required</span>
+          </div>
+          <div class="form-field" id="ff-u-email">
+            <label for="u-email">Email</label>
+            <input type="email" class="form-control" id="u-email" placeholder="user@company.com">
+            <span class="err-msg" id="err-u-email">Invalid email</span>
+          </div>
+          <div class="form-field">
+            <label for="u-phone">Phone (optional)</label>
+            <input type="tel" class="form-control" id="u-phone" placeholder="+66 ...">
+          </div>
+          <div class="form-field">
+            <label for="u-role">Primary Role</label>
+            <select class="form-select" id="u-role">
+              <option value="admin">Administrator — all warehouses</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="operator" selected>Operator</option>
+              <option value="viewer">Viewer — read-only</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="u-password">Password</label>
+            <input type="text" class="form-control" id="u-password" placeholder="Set initial password">
+            <span class="help" id="u-password-help">Required for new users. Leave blank to keep existing.</span>
+          </div>
+          <div class="form-field full">
+            <label>Warehouse Assignments</label>
+            <span class="help" style="margin-top:0; margin-bottom: 6px;">User can sign in to selected warehouses. Pick a role per warehouse.</span>
+            <div class="assign-list" id="u-warehouses"></div>
+          </div>
+          <div class="form-field full">
+            <div class="switch-row">
+              <div class="switch-row-info">
+                <div class="name">Account active</div>
+                <div class="help">Disabled users cannot sign in but their data is preserved.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="u-active" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-user"><i class="bi bi-check2"></i> Save User</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WAREHOUSE MODAL ============ -->
+<div class="modal fade" id="warehouseModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="warehouseModalTitle">New Warehouse</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="w-id">
+        <div class="form-grid">
+          <div class="form-field" id="ff-w-code">
+            <label for="w-code">Code</label>
+            <input type="text" class="form-control" id="w-code" placeholder="e.g. WH-01" autocomplete="off">
+            <span class="err-msg" id="err-w-code">Code is required and must be unique</span>
+            <span class="help">Short ID used in pull sheets and reports.</span>
+          </div>
+          <div class="form-field" id="ff-w-name">
+            <label for="w-name">Name</label>
+            <input type="text" class="form-control" id="w-name" placeholder="e.g. Bangkok Main">
+            <span class="err-msg" id="err-w-name">Name is required</span>
+          </div>
+          <div class="form-field">
+            <label for="w-city">City</label>
+            <input type="text" class="form-control" id="w-city" placeholder="e.g. Bangkok">
+          </div>
+          <div class="form-field">
+            <label for="w-country">Country</label>
+            <select class="form-select" id="w-country">
+              <option value="TH">Thailand</option>
+              <option value="VN">Vietnam</option>
+              <option value="MY">Malaysia</option>
+              <option value="ID">Indonesia</option>
+              <option value="SG">Singapore</option>
+              <option value="CN">China</option>
+              <option value="JP">Japan</option>
+            </select>
+          </div>
+          <div class="form-field full">
+            <label for="w-address">Address (optional)</label>
+            <input type="text" class="form-control" id="w-address" placeholder="Street, district, postal code">
+          </div>
+          <div class="form-field">
+            <label for="w-capacity">Capacity (m²)</label>
+            <input type="number" min="0" class="form-control" id="w-capacity" placeholder="0">
+          </div>
+          <div class="form-field">
+            <label for="w-timezone">Timezone</label>
+            <select class="form-select" id="w-timezone">
+              <option value="Asia/Bangkok">ICT · Asia/Bangkok</option>
+              <option value="Asia/Ho_Chi_Minh">ICT · Asia/Ho_Chi_Minh</option>
+              <option value="Asia/Kuala_Lumpur">MYT · Asia/Kuala_Lumpur</option>
+              <option value="Asia/Jakarta">WIB · Asia/Jakarta</option>
+              <option value="Asia/Singapore">SGT · Asia/Singapore</option>
+              <option value="Asia/Shanghai">CST · Asia/Shanghai</option>
+              <option value="Asia/Tokyo">JST · Asia/Tokyo</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="w-manager">Manager (optional)</label>
+            <select class="form-select" id="w-manager">
+              <option value="">— None —</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="w-phone">Phone (optional)</label>
+            <input type="tel" class="form-control" id="w-phone" placeholder="+66 ...">
+          </div>
+          <div class="form-field full">
+            <div class="switch-row">
+              <div class="switch-row-info">
+                <div class="name">Warehouse active</div>
+                <div class="help">Disabled warehouses are hidden from login and new pulls.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w-active" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-warehouse"><i class="bi bi-check2"></i> Save Warehouse</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM MODAL ============ -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="confirmTitle">Confirm</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMsg" style="margin: 0;"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-ok"><i class="bi bi-trash"></i> Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TOAST ============ -->
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap" id="toast-icon">✓</div>
+    <div class="msg">
+      <span id="toast-msg">Saved</span>
+      <small id="toast-sub"></small>
+    </div>
+  </div>
+</div>
+
+<!-- END_BODY:main -->
+<!-- Bootstrap + nav -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="app-nav.js"></script>
+
+<!-- BEGIN_JS:main -->
+<script>
+/* =============================================================================
+ * MASTER DATA — User + Warehouse CRUD with N:M relationships and audit log
+ * Storage: localStorage under "masters.*" keys
+ * =========================================================================== */
+
+const STORE = {
+  load(key, fallback) {
+    try {
+      const raw = localStorage.getItem('masters.' + key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  },
+  save(key, val) {
+    try { localStorage.setItem('masters.' + key, JSON.stringify(val)); } catch (e) {}
+  },
+};
+
+const DEFAULT_USERS = [
+  { id: 'u-001', username: 'swattana',   name: 'S. Wattana',     email: 'swattana@company.com',   phone: '+66 81 234 5678', role: 'supervisor', active: true,  password: 'demo1234', lastSignIn: '2026-03-18T07:24:00', createdAt: '2024-06-10T00:00:00' },
+  { id: 'u-002', username: 'psomchai',   name: 'P. Somchai',     email: 'psomchai@company.com',   phone: '+66 81 234 5679', role: 'supervisor', active: true,  password: 'demo1234', lastSignIn: '2026-03-18T08:12:00', createdAt: '2024-07-22T00:00:00' },
+  { id: 'u-003', username: 'npatcharin', name: 'N. Patcharin',   email: 'npatcharin@company.com', phone: '+66 81 234 5680', role: 'operator',   active: true,  password: 'demo1234', lastSignIn: '2026-03-17T10:30:00', createdAt: '2024-09-01T00:00:00' },
+  { id: 'u-004', username: 'kanucha',    name: 'K. Anucha',      email: 'kanucha@company.com',    phone: '+66 81 234 5681', role: 'operator',   active: true,  password: 'demo1234', lastSignIn: '2026-03-16T09:15:00', createdAt: '2024-11-15T00:00:00' },
+  { id: 'u-005', username: 'sadmin',     name: 'System Admin',   email: 'admin@company.com',      phone: '+66 81 234 5000', role: 'admin',      active: true,  password: 'admin',    lastSignIn: '2026-03-18T14:32:00', createdAt: '2024-01-01T00:00:00' },
+  { id: 'u-006', username: 'tviewer',    name: 'T. Audit',       email: 'tviewer@company.com',    phone: '',                role: 'viewer',     active: false, password: 'demo1234', lastSignIn: null, createdAt: '2025-01-15T00:00:00' },
+];
+
+const DEFAULT_WAREHOUSES = [
+  { id: 'w-001', code: 'WH-01', name: 'Bangkok Main', city: 'Bangkok',   country: 'TH', address: '100 Industrial Rd, Bang Khun Thian',  capacity: 12000, timezone: 'Asia/Bangkok',   managerId: 'u-001', phone: '+66 2 100 0001', active: true, createdAt: '2023-03-10T00:00:00' },
+  { id: 'w-002', code: 'WH-02', name: 'Chonburi',     city: 'Chonburi',  country: 'TH', address: '55 Eastern Seaboard, Pluak Daeng',     capacity: 8500,  timezone: 'Asia/Bangkok',   managerId: 'u-003', phone: '+66 38 200 0002', active: true, createdAt: '2023-08-15T00:00:00' },
+  { id: 'w-003', code: 'WH-03', name: 'Rayong',       city: 'Rayong',    country: 'TH', address: '12 Map Ta Phut Industrial Estate',     capacity: 4200,  timezone: 'Asia/Bangkok',   managerId: 'u-004', phone: '+66 38 300 0003', active: true, createdAt: '2024-02-20T00:00:00' },
+  { id: 'w-004', code: 'WH-04', name: 'Hanoi DC',     city: 'Hanoi',     country: 'VN', address: 'Lot 3, Thang Long Industrial Park',    capacity: 6000,  timezone: 'Asia/Ho_Chi_Minh', managerId: '',     phone: '+84 24 400 0004', active: false, createdAt: '2025-10-01T00:00:00' },
+];
+
+const DEFAULT_ASSIGNMENTS = [
+  // Admin → ALL warehouses (special-cased; we still include explicit rows for visibility)
+  { userId: 'u-005', warehouseId: 'w-001', role: 'admin'      },
+  { userId: 'u-005', warehouseId: 'w-002', role: 'admin'      },
+  { userId: 'u-005', warehouseId: 'w-003', role: 'admin'      },
+  { userId: 'u-005', warehouseId: 'w-004', role: 'admin'      },
+
+  // S. Wattana → WH-01 (supervisor), WH-02 (operator)
+  { userId: 'u-001', warehouseId: 'w-001', role: 'supervisor' },
+  { userId: 'u-001', warehouseId: 'w-002', role: 'operator'   },
+
+  // P. Somchai → WH-01 (supervisor)
+  { userId: 'u-002', warehouseId: 'w-001', role: 'supervisor' },
+
+  // N. Patcharin → WH-02 (supervisor), WH-03 (operator)
+  { userId: 'u-003', warehouseId: 'w-002', role: 'supervisor' },
+  { userId: 'u-003', warehouseId: 'w-003', role: 'operator'   },
+
+  // K. Anucha → WH-03 (supervisor)
+  { userId: 'u-004', warehouseId: 'w-003', role: 'supervisor' },
+
+  // T. Audit (disabled) → WH-01 (viewer)
+  { userId: 'u-006', warehouseId: 'w-001', role: 'viewer'     },
+];
+
+/* ---- State ---- */
+let users        = STORE.load('users',        DEFAULT_USERS);
+let warehouses   = STORE.load('warehouses',   DEFAULT_WAREHOUSES);
+let assignments  = STORE.load('assignments',  DEFAULT_ASSIGNMENTS);
+let auditLog     = STORE.load('auditLog',     []);
+
+function persist() {
+  STORE.save('users', users);
+  STORE.save('warehouses', warehouses);
+  STORE.save('assignments', assignments);
+  STORE.save('auditLog', auditLog);
+}
+
+/* ---- Audit logging ---- */
+function getCurrentActor() {
+  try {
+    const raw = localStorage.getItem('auth.user');
+    if (raw) {
+      const u = JSON.parse(raw);
+      return u.name || u.username || 'System';
+    }
+  } catch (e) {}
+  return 'System';
+}
+function log(action, message) {
+  auditLog.unshift({
+    id: 'a-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+    action,
+    message,
+    actor: getCurrentActor(),
+    at: new Date().toISOString(),
+  });
+  // Cap audit log at 500 entries
+  if (auditLog.length > 500) auditLog.length = 500;
+  STORE.save('auditLog', auditLog);
+  renderAuditCount();
+  if (activeTab === 'audit') renderAudit();
+}
+
+/* ---- Helpers ---- */
+function uid(prefix) { return prefix + '-' + Date.now() + '-' + Math.floor(Math.random()*1000); }
+function initialsOf(name) {
+  if (!name) return '??';
+  return name.split(/\s+/).map(s => s[0]).slice(0,2).join('').toUpperCase();
+}
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function formatDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function userWarehouses(userId) {
+  return assignments.filter(a => a.userId === userId);
+}
+function warehouseUsers(warehouseId) {
+  return assignments.filter(a => a.warehouseId === warehouseId);
+}
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* =============================================================================
+ * USERS
+ * =========================================================================== */
+function filteredUsers() {
+  const q = document.getElementById('search-users').value.trim().toLowerCase();
+  const role = document.getElementById('filter-users-role').value;
+  const status = document.getElementById('filter-users-status').value;
+  return users.filter(u => {
+    if (role !== 'all' && u.role !== role) return false;
+    if (status === 'active' && !u.active) return false;
+    if (status === 'disabled' && u.active) return false;
+    if (q) {
+      const h = `${u.username} ${u.name} ${u.email} ${u.role}`.toLowerCase();
+      if (!h.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderUsers() {
+  const tbody = document.getElementById('users-tbody');
+  const list = filteredUsers();
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-row">
+      <i class="bi bi-inbox"></i>
+      No users match your filter
+    </td></tr>`;
+  } else {
+    tbody.innerHTML = list.map(u => {
+      const whs = userWarehouses(u.id);
+      const whChips = whs.length === 0
+        ? `<span class="wh-chip none">No warehouses</span>`
+        : whs.slice(0, 4).map(a => {
+            const w = warehouses.find(x => x.id === a.warehouseId);
+            return w ? `<span class="wh-chip" title="${escHtml(w.name)} · ${escHtml(a.role)}">${escHtml(w.code)}</span>` : '';
+          }).join('') + (whs.length > 4 ? `<span class="wh-chip">+${whs.length - 4}</span>` : '');
+      return `
+        <tr data-id="${u.id}">
+          <td>
+            <div class="user-cell">
+              <div class="avatar">${escHtml(initialsOf(u.name))}</div>
+              <div>
+                <div class="user-name">${escHtml(u.name)}</div>
+                <div class="user-username">${escHtml(u.username)} · ${escHtml(u.email)}</div>
+              </div>
+            </div>
+          </td>
+          <td><span class="role-badge ${u.role}">${escHtml(u.role)}</span></td>
+          <td><div class="wh-chips">${whChips}</div></td>
+          <td><span class="status-pill ${u.active ? 'active' : 'disabled'}">${u.active ? 'Active' : 'Disabled'}</span></td>
+          <td style="font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--text-dim);">${formatDateTime(u.lastSignIn)}</td>
+          <td>
+            <div class="actions">
+              <button class="btn btn-icon" data-act="edit-user" data-id="${u.id}" title="Edit"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-icon danger" data-act="del-user" data-id="${u.id}" title="Delete"><i class="bi bi-trash"></i></button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('count-users').textContent = users.length;
+  renderUserStats();
+}
+
+function renderUserStats() {
+  document.getElementById('s-users-total').textContent = users.length;
+  const active = users.filter(u => u.active);
+  document.getElementById('s-users-active').textContent = active.length;
+  document.getElementById('s-users-disabled').textContent = users.length - active.length;
+  const avgWh = active.length === 0 ? 0
+    : (active.reduce((sum, u) => sum + userWarehouses(u.id).length, 0) / active.length).toFixed(1);
+  document.getElementById('s-users-avg-wh').textContent = avgWh;
+}
+
+function openUserModal(userId) {
+  const isEdit = !!userId;
+  const u = isEdit ? users.find(x => x.id === userId) : null;
+  document.getElementById('userModalTitle').textContent = isEdit ? 'Edit User · ' + u.name : 'New User';
+  document.getElementById('u-id').value = userId || '';
+  document.getElementById('u-username').value = u ? u.username : '';
+  document.getElementById('u-name').value = u ? u.name : '';
+  document.getElementById('u-email').value = u ? u.email : '';
+  document.getElementById('u-phone').value = u ? u.phone : '';
+  document.getElementById('u-role').value = u ? u.role : 'operator';
+  document.getElementById('u-password').value = '';
+  document.getElementById('u-password').placeholder = isEdit ? 'Leave blank to keep existing' : 'Set initial password';
+  document.getElementById('u-password-help').textContent = isEdit ? 'Leave blank to keep the existing password.' : 'Required for new users (min 4 chars).';
+  document.getElementById('u-active').checked = u ? u.active : true;
+
+  // Clear prior errors
+  document.querySelectorAll('#userModal .form-field').forEach(f => f.classList.remove('error'));
+
+  // Warehouse assignment editor
+  const wrap = document.getElementById('u-warehouses');
+  if (warehouses.length === 0) {
+    wrap.innerHTML = `<div class="assign-row empty-state">No warehouses exist — create one first.</div>`;
+  } else {
+    const myAssigns = userId ? userWarehouses(userId) : [];
+    const myMap = {};
+    myAssigns.forEach(a => { myMap[a.warehouseId] = a.role; });
+    wrap.innerHTML = warehouses.map(w => {
+      const assigned = !!myMap[w.id];
+      const role = myMap[w.id] || 'operator';
+      return `
+        <div class="assign-row ${w.active ? '' : 'disabled'}" data-wh="${w.id}">
+          <input type="checkbox" data-wh-check="${w.id}" ${assigned ? 'checked' : ''}>
+          <div class="assign-row-name">
+            <span class="assign-row-code">${escHtml(w.code)}${w.active ? '' : ' · disabled'}</span>
+            <span class="assign-row-label">${escHtml(w.name)} · ${escHtml(w.city || '—')}</span>
+          </div>
+          <select class="form-select" data-wh-role="${w.id}">
+            <option value="supervisor" ${role==='supervisor'?'selected':''}>Supervisor</option>
+            <option value="operator" ${role==='operator'?'selected':''}>Operator</option>
+            <option value="viewer" ${role==='viewer'?'selected':''}>Viewer</option>
+            <option value="admin" ${role==='admin'?'selected':''}>Admin</option>
+          </select>
+          <span style="color: var(--text-muted); font-family: 'Roboto Mono', monospace; font-size: 10px;">${assigned ? 'ASSIGNED' : ''}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  new bootstrap.Modal(document.getElementById('userModal')).show();
+}
+
+function validateUser() {
+  let ok = true;
+  const username = document.getElementById('u-username').value.trim();
+  const name     = document.getElementById('u-name').value.trim();
+  const email    = document.getElementById('u-email').value.trim();
+  const password = document.getElementById('u-password').value;
+  const editingId = document.getElementById('u-id').value;
+
+  // username required, unique, alphanumeric
+  const ffUsername = document.getElementById('ff-u-username');
+  ffUsername.classList.remove('error');
+  if (!username) {
+    document.getElementById('err-u-username').textContent = 'Username is required';
+    ffUsername.classList.add('error'); ok = false;
+  } else if (!/^[a-zA-Z0-9_.]+$/.test(username)) {
+    document.getElementById('err-u-username').textContent = 'Letters, numbers, underscore, dot only';
+    ffUsername.classList.add('error'); ok = false;
+  } else if (users.some(u => u.username.toLowerCase() === username.toLowerCase() && u.id !== editingId)) {
+    document.getElementById('err-u-username').textContent = 'Username already taken';
+    ffUsername.classList.add('error'); ok = false;
+  }
+
+  // name required
+  const ffName = document.getElementById('ff-u-name');
+  ffName.classList.remove('error');
+  if (!name) { ffName.classList.add('error'); ok = false; }
+
+  // email simple check
+  const ffEmail = document.getElementById('ff-u-email');
+  ffEmail.classList.remove('error');
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { ffEmail.classList.add('error'); ok = false; }
+
+  // password required for new
+  if (!editingId && password.length < 4) {
+    document.getElementById('u-password').focus();
+    showToast('Password must be at least 4 characters', '', 'danger');
+    ok = false;
+  }
+
+  return ok;
+}
+
+function saveUser() {
+  if (!validateUser()) return;
+
+  const editingId = document.getElementById('u-id').value;
+  const username  = document.getElementById('u-username').value.trim();
+  const name      = document.getElementById('u-name').value.trim();
+  const email     = document.getElementById('u-email').value.trim();
+  const phone     = document.getElementById('u-phone').value.trim();
+  const role      = document.getElementById('u-role').value;
+  const password  = document.getElementById('u-password').value;
+  const active    = document.getElementById('u-active').checked;
+
+  let user;
+  if (editingId) {
+    user = users.find(u => u.id === editingId);
+    const before = { ...user };
+    user.username = username;
+    user.name = name;
+    user.email = email;
+    user.phone = phone;
+    user.role = role;
+    user.active = active;
+    if (password) user.password = password;
+    log('update', `Updated user <b>${escHtml(name)}</b> (${escHtml(username)})`);
+  } else {
+    user = {
+      id: uid('u'),
+      username, name, email, phone, role, password,
+      active,
+      lastSignIn: null,
+      createdAt: new Date().toISOString(),
+    };
+    users.push(user);
+    log('create', `Created user <b>${escHtml(name)}</b> (${escHtml(username)}) with role <b>${escHtml(role)}</b>`);
+  }
+
+  // Apply warehouse assignments
+  const oldAssigns = assignments.filter(a => a.userId === user.id).map(a => a.warehouseId);
+  assignments = assignments.filter(a => a.userId !== user.id);
+  const newAssigns = [];
+  document.querySelectorAll('[data-wh-check]').forEach(cb => {
+    if (cb.checked) {
+      const whId = cb.getAttribute('data-wh-check');
+      const role = document.querySelector(`[data-wh-role="${whId}"]`).value;
+      assignments.push({ userId: user.id, warehouseId: whId, role });
+      newAssigns.push(whId);
+    }
+  });
+
+  // Log assignment changes
+  const added   = newAssigns.filter(id => !oldAssigns.includes(id));
+  const removed = oldAssigns.filter(id => !newAssigns.includes(id));
+  if (added.length || removed.length) {
+    const addedCodes   = added.map(id   => warehouses.find(w => w.id === id)?.code).filter(Boolean);
+    const removedCodes = removed.map(id => warehouses.find(w => w.id === id)?.code).filter(Boolean);
+    let msg = `Updated assignments for <b>${escHtml(name)}</b>:`;
+    if (addedCodes.length)   msg += ` +${addedCodes.join(', ')}`;
+    if (removedCodes.length) msg += ` −${removedCodes.join(', ')}`;
+    log('assign', msg);
+  }
+
+  persist();
+  renderUsers();
+  renderWarehouses(); // user counts on warehouses may change
+  bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
+  showToast(editingId ? 'User updated' : 'User created', name);
+}
+
+function deleteUser(id) {
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+  confirmAction(
+    `Delete user "${u.name}"?`,
+    `This removes the user and all their warehouse assignments. The audit log entry stays.`,
+    () => {
+      users = users.filter(x => x.id !== id);
+      assignments = assignments.filter(a => a.userId !== id);
+      // If this user is a warehouse manager, clear that field
+      warehouses.forEach(w => { if (w.managerId === id) w.managerId = ''; });
+      log('delete', `Deleted user <b>${escHtml(u.name)}</b> (${escHtml(u.username)})`);
+      persist();
+      renderUsers();
+      renderWarehouses();
+      showToast('User deleted', u.name, 'danger');
+    }
+  );
+}
+
+/* =============================================================================
+ * WAREHOUSES
+ * =========================================================================== */
+function filteredWarehouses() {
+  const q = document.getElementById('search-warehouses').value.trim().toLowerCase();
+  const status = document.getElementById('filter-warehouses-status').value;
+  return warehouses.filter(w => {
+    if (status === 'active' && !w.active) return false;
+    if (status === 'disabled' && w.active) return false;
+    if (q) {
+      const h = `${w.code} ${w.name} ${w.city} ${w.country}`.toLowerCase();
+      if (!h.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderWarehouses() {
+  const tbody = document.getElementById('warehouses-tbody');
+  const list = filteredWarehouses();
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">
+      <i class="bi bi-buildings"></i>
+      No warehouses match your filter
+    </td></tr>`;
+  } else {
+    tbody.innerHTML = list.map(w => {
+      const userCount = warehouseUsers(w.id).length;
+      const mgr = w.managerId ? users.find(u => u.id === w.managerId) : null;
+      return `
+        <tr data-id="${w.id}">
+          <td><span style="font-family: 'Roboto Mono', monospace; font-size: 13px; font-weight: 600; color: var(--text);">${escHtml(w.code)}</span></td>
+          <td>
+            <div style="font-weight: 500; color: var(--text);">${escHtml(w.name)}</div>
+            ${mgr ? `<div style="font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--text-muted); margin-top: 2px;">Mgr: ${escHtml(mgr.name)}</div>` : ''}
+          </td>
+          <td style="font-size: 13px; color: var(--text-dim);">${escHtml(w.city || '—')}, ${escHtml(w.country || '—')}</td>
+          <td style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text);">${(w.capacity || 0).toLocaleString()} <span style="color: var(--text-muted); font-size: 11px;">m²</span></td>
+          <td><span style="font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--text-dim);">${userCount} user${userCount===1?'':'s'}</span></td>
+          <td><span class="status-pill ${w.active ? 'active' : 'disabled'}">${w.active ? 'Active' : 'Disabled'}</span></td>
+          <td>
+            <div class="actions">
+              <button class="btn btn-icon" data-act="edit-warehouse" data-id="${w.id}" title="Edit"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-icon danger" data-act="del-warehouse" data-id="${w.id}" title="Delete"><i class="bi bi-trash"></i></button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+  document.getElementById('count-warehouses').textContent = warehouses.length;
+  renderWarehouseStats();
+}
+
+function renderWarehouseStats() {
+  document.getElementById('s-wh-total').textContent = warehouses.length;
+  const active = warehouses.filter(w => w.active);
+  document.getElementById('s-wh-active').textContent = active.length;
+  const totalCap = warehouses.reduce((a, w) => a + (w.capacity || 0), 0);
+  document.getElementById('s-wh-capacity').innerHTML = `${totalCap.toLocaleString()} <small>m²</small>`;
+  const avgUsers = warehouses.length === 0 ? 0
+    : (warehouses.reduce((sum, w) => sum + warehouseUsers(w.id).length, 0) / warehouses.length).toFixed(1);
+  document.getElementById('s-wh-avg-users').textContent = avgUsers;
+}
+
+function openWarehouseModal(whId) {
+  const isEdit = !!whId;
+  const w = isEdit ? warehouses.find(x => x.id === whId) : null;
+  document.getElementById('warehouseModalTitle').textContent = isEdit ? 'Edit Warehouse · ' + w.code : 'New Warehouse';
+  document.getElementById('w-id').value = whId || '';
+  document.getElementById('w-code').value = w ? w.code : '';
+  document.getElementById('w-name').value = w ? w.name : '';
+  document.getElementById('w-city').value = w ? w.city : '';
+  document.getElementById('w-country').value = w ? w.country : 'TH';
+  document.getElementById('w-address').value = w ? w.address : '';
+  document.getElementById('w-capacity').value = w ? w.capacity : '';
+  document.getElementById('w-timezone').value = w ? w.timezone : 'Asia/Bangkok';
+  document.getElementById('w-phone').value = w ? w.phone : '';
+  document.getElementById('w-active').checked = w ? w.active : true;
+
+  // Manager dropdown: only active users
+  const mgrSel = document.getElementById('w-manager');
+  mgrSel.innerHTML = `<option value="">— None —</option>` +
+    users.filter(u => u.active).map(u =>
+      `<option value="${u.id}" ${w && w.managerId === u.id ? 'selected' : ''}>${escHtml(u.name)} (${escHtml(u.username)})</option>`
+    ).join('');
+
+  document.querySelectorAll('#warehouseModal .form-field').forEach(f => f.classList.remove('error'));
+  new bootstrap.Modal(document.getElementById('warehouseModal')).show();
+}
+
+function validateWarehouse() {
+  let ok = true;
+  const editingId = document.getElementById('w-id').value;
+  const code = document.getElementById('w-code').value.trim();
+  const name = document.getElementById('w-name').value.trim();
+
+  const ffCode = document.getElementById('ff-w-code');
+  ffCode.classList.remove('error');
+  if (!code) {
+    document.getElementById('err-w-code').textContent = 'Code is required';
+    ffCode.classList.add('error'); ok = false;
+  } else if (!/^[A-Z0-9-]+$/i.test(code)) {
+    document.getElementById('err-w-code').textContent = 'Letters, numbers, dashes only';
+    ffCode.classList.add('error'); ok = false;
+  } else if (warehouses.some(w => w.code.toLowerCase() === code.toLowerCase() && w.id !== editingId)) {
+    document.getElementById('err-w-code').textContent = 'Code already exists';
+    ffCode.classList.add('error'); ok = false;
+  }
+
+  const ffName = document.getElementById('ff-w-name');
+  ffName.classList.remove('error');
+  if (!name) { ffName.classList.add('error'); ok = false; }
+
+  return ok;
+}
+
+function saveWarehouse() {
+  if (!validateWarehouse()) return;
+
+  const editingId = document.getElementById('w-id').value;
+  const code      = document.getElementById('w-code').value.trim().toUpperCase();
+  const name      = document.getElementById('w-name').value.trim();
+  const city      = document.getElementById('w-city').value.trim();
+  const country   = document.getElementById('w-country').value;
+  const address   = document.getElementById('w-address').value.trim();
+  const capacity  = parseInt(document.getElementById('w-capacity').value) || 0;
+  const timezone  = document.getElementById('w-timezone').value;
+  const managerId = document.getElementById('w-manager').value;
+  const phone     = document.getElementById('w-phone').value.trim();
+  const active    = document.getElementById('w-active').checked;
+
+  if (editingId) {
+    const w = warehouses.find(x => x.id === editingId);
+    w.code = code; w.name = name; w.city = city; w.country = country;
+    w.address = address; w.capacity = capacity; w.timezone = timezone;
+    w.managerId = managerId; w.phone = phone; w.active = active;
+    log('update', `Updated warehouse <b>${escHtml(code)} · ${escHtml(name)}</b>`);
+  } else {
+    warehouses.push({
+      id: uid('w'),
+      code, name, city, country, address, capacity, timezone,
+      managerId, phone, active,
+      createdAt: new Date().toISOString(),
+    });
+    log('create', `Created warehouse <b>${escHtml(code)} · ${escHtml(name)}</b>`);
+  }
+
+  persist();
+  renderWarehouses();
+  renderUsers(); // assignments view depends on warehouse list
+  bootstrap.Modal.getInstance(document.getElementById('warehouseModal')).hide();
+  showToast(editingId ? 'Warehouse updated' : 'Warehouse created', code);
+}
+
+function deleteWarehouse(id) {
+  const w = warehouses.find(x => x.id === id);
+  if (!w) return;
+  const userCount = warehouseUsers(id).length;
+  confirmAction(
+    `Delete warehouse "${w.code} · ${w.name}"?`,
+    userCount > 0
+      ? `This warehouse has ${userCount} assigned user${userCount===1?'':'s'}. Their assignments will be removed.`
+      : `This action removes the warehouse and any historical references.`,
+    () => {
+      warehouses = warehouses.filter(x => x.id !== id);
+      assignments = assignments.filter(a => a.warehouseId !== id);
+      log('delete', `Deleted warehouse <b>${escHtml(w.code)} · ${escHtml(w.name)}</b>`);
+      persist();
+      renderWarehouses();
+      renderUsers();
+      showToast('Warehouse deleted', w.code, 'danger');
+    }
+  );
+}
+
+/* =============================================================================
+ * AUDIT LOG
+ * =========================================================================== */
+function filteredAudit() {
+  const q = document.getElementById('search-audit').value.trim().toLowerCase();
+  const act = document.getElementById('filter-audit-action').value;
+  return auditLog.filter(a => {
+    if (act !== 'all' && a.action !== act) return false;
+    if (q) {
+      const h = `${a.action} ${a.message} ${a.actor}`.toLowerCase();
+      if (!h.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAudit() {
+  const list = filteredAudit();
+  const wrap = document.getElementById('audit-list');
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-row" style="padding: 56px 20px;">
+      <i class="bi bi-journal-text"></i>
+      No audit entries match
+    </div>`;
+  } else {
+    wrap.innerHTML = list.map(a => `
+      <div class="audit-row">
+        <span class="audit-time">${formatDateTime(a.at)}</span>
+        <span><span class="audit-action ${a.action}">${a.action}</span></span>
+        <span class="audit-message">${a.message}</span>
+        <span class="audit-actor">${escHtml(a.actor)}</span>
+      </div>
+    `).join('');
+  }
+  renderAuditCount();
+}
+function renderAuditCount() {
+  document.getElementById('count-audit').textContent = auditLog.length;
+}
+
+/* =============================================================================
+ * CONFIRM MODAL
+ * =========================================================================== */
+let _confirmCb = null;
+function confirmAction(title, msg, cb) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = msg;
+  _confirmCb = cb;
+  new bootstrap.Modal(document.getElementById('confirmModal')).show();
+}
+document.getElementById('btn-confirm-ok').addEventListener('click', () => {
+  bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+  if (_confirmCb) _confirmCb();
+  _confirmCb = null;
+});
+
+/* =============================================================================
+ * TOAST
+ * =========================================================================== */
+function showToast(msg, sub, kind) {
+  const t = document.getElementById('toast');
+  document.getElementById('toast-msg').textContent = msg;
+  document.getElementById('toast-sub').textContent = sub || '';
+  t.classList.toggle('danger', kind === 'danger');
+  document.getElementById('toast-icon').textContent = kind === 'danger' ? '!' : '✓';
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* =============================================================================
+ * TABS & EVENTS
+ * =========================================================================== */
+let activeTab = 'users';
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    activeTab = t.dataset.tab;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === t));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === activeTab));
+    if (activeTab === 'audit') renderAudit();
+  });
+});
+
+// User toolbar
+document.getElementById('search-users').addEventListener('input', renderUsers);
+document.getElementById('filter-users-role').addEventListener('change', renderUsers);
+document.getElementById('filter-users-status').addEventListener('change', renderUsers);
+document.getElementById('btn-new-user').addEventListener('click', () => openUserModal(null));
+document.getElementById('btn-save-user').addEventListener('click', saveUser);
+
+// Warehouse toolbar
+document.getElementById('search-warehouses').addEventListener('input', renderWarehouses);
+document.getElementById('filter-warehouses-status').addEventListener('change', renderWarehouses);
+document.getElementById('btn-new-warehouse').addEventListener('click', () => openWarehouseModal(null));
+document.getElementById('btn-save-warehouse').addEventListener('click', saveWarehouse);
+
+// Audit toolbar
+document.getElementById('search-audit').addEventListener('input', renderAudit);
+document.getElementById('filter-audit-action').addEventListener('change', renderAudit);
+document.getElementById('btn-clear-audit').addEventListener('click', () => {
+  if (auditLog.length === 0) return;
+  confirmAction('Clear audit log?', `This permanently removes ${auditLog.length} audit entries.`, () => {
+    auditLog = [];
+    STORE.save('auditLog', auditLog);
+    renderAudit();
+    showToast('Audit log cleared', '', 'danger');
+  });
+});
+
+// Row actions delegated
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-id');
+  const act = btn.getAttribute('data-act');
+  if (act === 'edit-user') openUserModal(id);
+  else if (act === 'del-user') deleteUser(id);
+  else if (act === 'edit-warehouse') openWarehouseModal(id);
+  else if (act === 'del-warehouse') deleteWarehouse(id);
+});
+
+// Initial render
+renderUsers();
+renderWarehouses();
+renderAuditCount();
+
+// First-time setup: seed audit log if empty
+if (auditLog.length === 0) {
+  auditLog.unshift({
+    id: 'a-seed',
+    action: 'create',
+    message: `Initialized master data with <b>${users.length} users</b> and <b>${warehouses.length} warehouses</b>`,
+    actor: 'System',
+    at: new Date().toISOString(),
+  });
+  STORE.save('auditLog', auditLog);
+  renderAuditCount();
+}
+</script>
+<!-- END_JS:main -->
+
+</body>
+</html>

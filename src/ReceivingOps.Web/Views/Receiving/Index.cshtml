@@ -1,0 +1,519 @@
+@{
+    ViewData["Title"] = "Receiving Console";
+    ViewData["PageId"] = "receiving";
+    Layout = null;  // The mockup owns its own theme stylesheet + DOM structure.
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Receiving Console · Receiving Operations</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@@0,300;0,400;0,500;0,600;0,700;0,900;1,300;1,400;1,500&family=Roboto+Mono:wght@@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <link rel="stylesheet" href="~/css/receiving.css" asp-append-version="true">
+</head>
+<body data-app-page="receiving">
+<!-- ===== BODY:main (from receiving-mockup-v2-fullreceived.html) ===== -->
+
+<div class="app">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">Receiving<span>v3.2</span></div>
+      <div class="brand-path">Operations <b>/</b> Inbound <b>/</b> Console</div>
+      <div class="closed-banner" id="closed-banner">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        Pull Sheet Closed
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button class="theme-swatch light active"    data-theme="light"    title="Light Paper"></button>
+        <button class="theme-swatch midnight"        data-theme="midnight" title="Midnight"></button>
+        <button class="theme-swatch slate"           data-theme="slate"    title="Slate"></button>
+      </div>
+      <div class="status-pill">
+        <span class="pulse"></span>
+        <span>Live · <span id="topbar-pull">PL-2847</span> · <span id="topbar-wh">WH-01</span> · 14:32 ICT</span>
+      </div>
+      <div class="user-chip">
+        <span>S. Wattana</span>
+        <span class="avatar">SW</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <div class="field-group">
+      <span class="field-label">Pull #</span>
+      <select class="select" id="pull-select">
+        <option value="PL-2847">PL-2847 · Mar 18</option>
+        <option value="PL-2846">PL-2846 · Mar 17</option>
+        <option value="PL-2845">PL-2845 · Mar 16</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Period</span>
+      <select class="select" id="period-select">
+        <option value="07">07:00 — 10:00 · Morning</option>
+        <option value="11" selected>11:00 — 14:00 · Midday</option>
+        <option value="15">15:00 — 18:00 · Afternoon</option>
+        <option value="19">19:00 — 22:00 · Evening</option>
+        <option value="23">23:00 — 02:00 · Night</option>
+        <option value="03">03:00 — 06:00 · Pre-dawn</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Warehouse</span>
+      <select class="select" id="warehouse-select">
+        <option value="WH-01">WH-01 · Bangkok Main</option>
+        <option value="WH-02">WH-02 · Chonburi</option>
+        <option value="WH-03">WH-03 · Rayong</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Filter</span>
+      <select class="select" id="filter-select">
+        <option value="all">All items</option>
+        <option value="received">Fully received</option>
+        <option value="outstanding">Outstanding</option>
+        <option value="canceled">Canceled</option>
+      </select>
+    </div>
+
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-spacer"></div>
+
+    <div class="search-box">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input id="search-input" placeholder="Search item, vendor…">
+    </div>
+
+    <button class="btn" id="btn-transactions" title="View receipt history for this pull">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      Transactions
+    </button>
+    <button class="btn" id="btn-export">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      Export
+    </button>
+    <button class="btn btn-close-pull" id="btn-close-pull" disabled>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"></path><circle cx="12" cy="12" r="10"></circle></svg>
+      <span id="btn-close-pull-label">Close Pull Sheet</span>
+    </button>
+    <button class="btn btn-reopen-pull" id="btn-reopen-pull" style="display: none;" title="Supervisor only — reopen this closed pull for further editing">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+      <span>Reopen</span>
+    </button>
+  </div>
+
+  <!-- PROGRESS STRIP -->
+  <div class="progress-strip">
+    <div class="stat">
+      <span class="stat-label">Items · Active</span>
+      <span class="stat-value" id="stat-items">8 <small>SKUs</small></span>
+      <span class="stat-trend" id="stat-items-sub">2 PCBA · 6 components</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Expected · Period</span>
+      <span class="stat-value" id="stat-exp">14,800 <small>units</small></span>
+      <span class="stat-trend" id="stat-exp-sub">across 32 windows</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Received · Period</span>
+      <span class="stat-value" id="stat-rec">9,184 <small>units</small></span>
+      <span class="stat-trend" id="stat-rec-sub">62.1% of expected</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Outstanding</span>
+      <span class="stat-value" id="stat-out">5,616 <small>units</small></span>
+      <span class="stat-trend warn" id="stat-out-sub">7 windows pending</span>
+    </div>
+    <div class="progress-bar-host">
+      <div class="progress-bar-head">
+        <span>Period progress</span>
+        <span><b id="prog-label">62%</b></span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
+      <div class="progress-bar-head" style="text-transform:none; letter-spacing:0;">
+        <span style="color:var(--text-muted)" id="prog-hint-left">Started 11:00</span>
+        <span style="color:var(--text-muted)" id="prog-hint-right">ETA 14:48</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRID -->
+  <div class="grid-wrap">
+    <table id="grid">
+      <thead>
+        <tr>
+          <th style="min-width:100px">Status</th>
+          <th style="min-width:260px">Item · Description</th>
+          <th style="min-width:180px">Vendor</th>
+          <th style="min-width:140px">Remark</th>
+          <th class="hour-col" data-col="0"><span class="hour-num">11.00</span><span class="hour-tag">Window 1</span></th>
+          <th class="hour-col current" data-col="1"><span class="hour-num">12.00</span><span class="hour-tag">▸ Active</span></th>
+          <th class="hour-col" data-col="2"><span class="hour-num">13.00</span><span class="hour-tag">Window 3</span></th>
+          <th class="hour-col" data-col="3"><span class="hour-num">14.00</span><span class="hour-tag">Window 4</span></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-legend">
+      <span class="legend-dot pending">Pending</span>
+      <span class="legend-dot complete">Complete</span>
+      <span class="legend-dot empty">Not scheduled</span>
+      <span class="legend-dot new">New row</span>
+      <span class="legend-dot canceled">Canceled</span>
+    </div>
+    <div id="footer-meta">Updated 14:32:08 · Viewing period <b id="footer-period">11:00 — 14:00 · Midday</b> · Click status badge to change · Click any cell to receive</div>
+  </footer>
+</div>
+
+<!-- STATUS DROPDOWN MENU -->
+<div class="status-menu" id="status-menu">
+  <div class="status-menu-item normal" data-status="normal">Normal</div>
+  <div class="status-menu-item new" data-status="new">New</div>
+  <div class="status-menu-item canceled" data-status="canceled">Canceled</div>
+</div>
+
+<!-- RECEIVE MODAL -->
+<div class="app-modal-backdrop" id="modal">
+  <div class="app-modal">
+    <div class="app-modal-head">
+      <div class="app-modal-head-info">
+        <div class="app-modal-eyebrow">
+          <span>Receive Goods</span>
+          <span class="scheduled-time">· Scheduled <b id="m-time">12:00</b></span>
+        </div>
+        <div class="app-modal-title" id="m-title">PCBA-AX450-R2</div>
+        <div class="app-modal-subtitle">
+          <b id="m-desc">Main Logic Board · Rev 2</b> · <span id="m-vendor">Foxlink Electronics (FXL-002)</span>
+        </div>
+      </div>
+      <button class="close-btn" id="m-close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="app-modal-body">
+      <div class="qty-cards">
+        <div class="qty-card">
+          <div class="qty-card-label">Expected</div>
+          <div class="qty-card-value" id="m-expected">1,000</div>
+        </div>
+        <div class="qty-card">
+          <div class="qty-card-label">Previously Received</div>
+          <div class="qty-card-value" id="m-prev">0</div>
+        </div>
+        <div class="qty-card outstanding">
+          <div class="qty-card-label">Outstanding (max)</div>
+          <div class="qty-card-value" id="m-out">1,000</div>
+        </div>
+      </div>
+
+      <div class="receive-input-host">
+        <div class="receive-input-label">
+          <div class="small">Receive Now</div>
+          <div class="big">How many units?</div>
+        </div>
+        <div class="receive-input-wrap">
+          <input type="number" class="receive-input" id="m-input" value="1000" min="0">
+          <span class="receive-input-unit">pcs</span>
+        </div>
+      </div>
+
+      <div class="cap-hint" id="cap-hint">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="cap-hint-text">Maximum allowed: <b id="cap-hint-max">1,000</b> pcs. Cannot receive over expected.</span>
+      </div>
+
+      <div class="quick-fill">
+        <button data-fill="all">Fill outstanding</button>
+        <button data-fill="half">½ outstanding</button>
+        <button data-fill="0">Mark zero</button>
+      </div>
+
+      <div class="fields-grid">
+        <div class="field">
+          <label>Lot / Batch</label>
+          <input type="text" placeholder="e.g. LOT-2403-A" value="LOT-2403-118">
+        </div>
+        <div class="field">
+          <label>Pallet ID</label>
+          <input type="text" placeholder="e.g. PLT-00482" value="PLT-00482">
+        </div>
+        <div class="field">
+          <label>Bin / Location</label>
+          <input type="text" placeholder="e.g. A-12-03" value="A-12-03">
+        </div>
+        <div class="field">
+          <label>QC Status</label>
+          <select class="select" style="width:100%; padding-left:12px;">
+            <option>Passed inspection</option>
+            <option>Pending QC</option>
+            <option>Flagged · Hold</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>Note (optional)</label>
+          <textarea placeholder="Any discrepancy, damage, or instruction…"></textarea>
+        </div>
+      </div>
+
+      <!-- ============ READ-ONLY BANNER (shown when pull is closed) ============ -->
+      <div class="m-readonly-banner" id="m-readonly-banner" style="display: none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="4" y="11" width="16" height="10" rx="2"/>
+          <path d="M8 11V7a4 4 0 1 1 8 0v4"/>
+        </svg>
+        <div class="m-readonly-text">
+          <div class="m-readonly-title">Pull sheet is closed</div>
+          <div class="m-readonly-desc">This pull has been signed off and locked. Receiving and cancellations are disabled. <b id="m-readonly-reopen-hint">Only supervisors can reopen this sheet.</b></div>
+        </div>
+      </div>
+
+      <!-- ============ TRANSACTIONS LIST FOR THIS (item, hour) ============ -->
+      <div class="m-tx-section">
+        <div class="m-tx-header">
+          <div class="m-tx-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+            <span>Recent transactions for this slot</span>
+            <span class="m-tx-count" id="m-tx-count">0</span>
+          </div>
+          <a class="m-tx-full" id="m-tx-full" href="#">View all in drawer →</a>
+        </div>
+        <div class="m-tx-list" id="m-tx-list"></div>
+      </div>
+    </div>
+
+    <div class="app-modal-foot">
+      <div class="app-modal-foot-hint">
+        Press <kbd>⌘</kbd><kbd>↵</kbd> to confirm · <kbd>ESC</kbd> to cancel
+      </div>
+      <div class="app-modal-foot-buttons">
+        <button class="btn" id="m-cancel">Cancel</button>
+        <button class="btn btn-primary" id="m-confirm">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          Confirm Receipt
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CLOSE PULL CONFIRMATION MODAL -->
+<div class="app-modal-backdrop" id="close-modal">
+  <div class="app-modal close-modal">
+    <div class="app-modal-head">
+      <div class="app-modal-head-info">
+        <div class="app-modal-eyebrow close-app-modal-eyebrow">
+          <span>Close Pull Sheet · Final Confirmation</span>
+        </div>
+        <div class="app-modal-title">Sign &amp; Close</div>
+        <div class="app-modal-subtitle">
+          <b id="cm-pullid">PL-2847</b> · <span id="cm-warehouse">WH-01 · Bangkok Main</span>
+        </div>
+      </div>
+      <button class="close-btn" id="cm-close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="app-modal-body">
+      <div class="summary-grid">
+        <div class="summary-card accent">
+          <div class="label">Total Received</div>
+          <div class="value" id="cm-received">14,800</div>
+          <div class="sub" id="cm-received-sub">✓ All windows matched</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Active Items</div>
+          <div class="value" id="cm-items">8 SKUs</div>
+          <div class="sub" style="color:var(--text-muted)" id="cm-items-sub">0 canceled · 0 new</div>
+        </div>
+      </div>
+
+      <div class="declaration">
+        I, <b>S. Wattana</b>, confirm that the goods listed in pull sheet <b id="cm-decl-id">PL-2847</b> have been physically received, counted, and verified against the expected quantities at <b id="cm-decl-wh">WH-01 · Bangkok Main</b> on <b id="cm-date">18 Mar 2026, 14:32 ICT</b>. By signing below I acknowledge this closure is final and the records will be locked.
+      </div>
+
+      <div class="field" style="margin-bottom:8px">
+        <label>Signature</label>
+      </div>
+      <div class="signature-host" id="sig-host">
+        <canvas class="signature-canvas" id="sig-canvas" width="600" height="140"></canvas>
+        <div class="signature-placeholder">Sign here</div>
+      </div>
+      <div class="signature-foot">
+        <span class="label">S. Wattana</span>
+        <span class="line"></span>
+        <button class="clear-sig-btn" id="sig-clear">Clear</button>
+      </div>
+    </div>
+
+    <div class="app-modal-foot">
+      <div class="app-modal-foot-hint">
+        Signature required · This action is final
+      </div>
+      <div class="app-modal-foot-buttons">
+        <button class="btn" id="cm-cancel">Cancel</button>
+        <button class="btn btn-primary" id="cm-confirm" disabled>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"></path><circle cx="12" cy="12" r="10"></circle></svg>
+          Sign &amp; Close Pull Sheet
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <div class="toast-icon" id="toast-icon">✓</div>
+  <div class="toast-content">
+    <span id="toast-msg">Receipt confirmed</span>
+    <small id="toast-sub">PCBA-AX450-R2 · 1,000 pcs</small>
+  </div>
+</div>
+
+<!-- ===== BODY:tx-drawer (from receiving-mockup-v2-fullreceived.html) ===== -->
+<div class="app-modal-backdrop" id="txDrawer-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(20,22,24,0.45); z-index: 1040; opacity: 0; transition: opacity 0.2s ease;"></div>
+<div id="txDrawer" style="position: fixed; top: 0; right: 0; bottom: 0; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); z-index: 1041; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.25s ease;">
+  <div class="offcanvas-header" style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0;">
+    <div>
+      <div class="drawer-eyebrow">Receipt History</div>
+      <div class="drawer-title" id="tx-drawer-pull">PL-2847</div>
+      <div class="drawer-subtitle" id="tx-drawer-meta">WH-01 · Bangkok Main</div>
+    </div>
+    <button id="tx-drawer-close" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 8px; font-size: 24px; line-height: 1;">×</button>
+  </div>
+
+  <div class="tx-summary">
+    <div class="tx-summary-cell">
+      <span class="lbl">Receipts</span>
+      <span class="val" id="tx-s-receipts">0</span>
+    </div>
+    <div class="tx-summary-cell error">
+      <span class="lbl">Reversals</span>
+      <span class="val" id="tx-s-reversals">0</span>
+    </div>
+    <div class="tx-summary-cell ok">
+      <span class="lbl">Net Units</span>
+      <span class="val" id="tx-s-net">0</span>
+    </div>
+  </div>
+
+  <div class="tx-toolbar">
+    <div class="tx-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="tx-search" placeholder="Item, lot, pallet, operator…">
+    </div>
+    <select id="tx-filter">
+      <option value="all">All</option>
+      <option value="receive">Receipts</option>
+      <option value="cancel">Reversals</option>
+      <option value="voided">Voided</option>
+    </select>
+    <a class="tx-full-link" id="tx-open-full" href="transactions.html">Open full view ↗</a>
+  </div>
+
+  <!-- Active hour filter chip (only visible when filtered by hour) -->
+  <div id="tx-hour-filter-bar" style="display: none; padding: 8px 22px; background: var(--accent-bg); border-bottom: 1px solid var(--border); align-items: center; gap: 8px;">
+    <span style="font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); font-weight: 600;">Filtered to:</span>
+    <span id="tx-hour-filter-label" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); font-weight: 600; background: var(--surface); padding: 3px 10px; border-radius: 100px; border: 1px solid var(--accent); display: inline-flex; align-items: center; gap: 6px;"></span>
+    <button id="tx-hour-filter-clear" style="background: transparent; border: none; color: var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-left: auto; display: inline-flex; align-items: center; gap: 3px;">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      Clear
+    </button>
+  </div>
+
+  <div class="tx-list" id="tx-drawer-list"></div>
+</div>
+
+<!-- Cancel confirmation modal (inside drawer flow) -->
+<div class="app-modal-backdrop" id="tx-cancel-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(20,22,24,0.55); z-index: 1060; opacity: 0; transition: opacity 0.2s ease; align-items: center; justify-content: center;">
+  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); width: 540px; max-width: 92vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;">
+    <div style="padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0; font-size: 18px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--over)" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+        Cancel Receipt
+      </h3>
+      <button id="tx-cancel-close" style="background: transparent; border: none; color: var(--text-muted); font-size: 24px; line-height: 1; cursor: pointer;">×</button>
+    </div>
+    <div style="padding: 22px; overflow-y: auto;">
+      <p style="margin-top: 0; color: var(--text-dim); font-size: 14px;">
+        Creates a <b>reversal entry</b> (negative quantity). Original receipt and reversal both stay in the journal.
+      </p>
+
+      <div style="background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Receipt ID</div>
+            <div id="tx-c-id" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">When</div>
+            <div id="tx-c-when" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Item</div>
+            <div id="tx-c-item" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Quantity to reverse</div>
+            <div id="tx-c-qty" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--over); font-weight: 500;">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); display: block; margin-bottom: 8px;">Reason</span>
+        <div id="tx-reason-group" style="display: flex; flex-direction: column; gap: 6px;">
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="miscount"> <span>Miscount — wrong quantity entered</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="wrong-item"> <span>Wrong item — entered against incorrect SKU</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="qc-fail"> <span>QC failure — material rejected after receipt</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="duplicate"> <span>Duplicate — already recorded</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="other"> <span>Other</span></label>
+        </div>
+      </div>
+
+      <div>
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); display: block; margin-bottom: 4px;">Note (optional)</span>
+        <textarea id="tx-c-note" rows="2" placeholder="Additional context for audit…" style="width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-family: inherit; font-size: 13px; resize: vertical;"></textarea>
+      </div>
+    </div>
+    <div style="padding: 14px 22px; border-top: 1px solid var(--border); background: var(--surface-2); display: flex; justify-content: flex-end; gap: 8px;">
+      <button id="tx-cancel-keep" class="btn">Keep receipt</button>
+      <button id="tx-cancel-confirm" class="btn" style="background: var(--over); border-color: var(--over); color: white;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+        Create reversal
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="~/js/receiving.js" asp-append-version="true"></script>
+
+</body>
+</html>

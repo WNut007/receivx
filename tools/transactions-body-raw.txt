@@ -1,0 +1,238 @@
+<!-- ===== BODY:main (from transactions.html) ===== -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-eyebrow">Audit · Receipts</div>
+        <h1 class="page-title">Transactions</h1>
+        <p class="page-subtitle">Every receive and cancel across all pulls. Cancellations create reversal entries so the audit trail stays intact.</p>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn" id="btn-refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button class="btn" id="btn-export"><i class="bi bi-download"></i> Export</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-strip">
+      <div class="stat-card">
+        <span class="label">Total Transactions</span>
+        <span class="value" id="s-total">0</span>
+        <span class="sub" id="s-total-sub">matching filter</span>
+      </div>
+      <div class="stat-card ok">
+        <span class="label">Receipts</span>
+        <span class="value" id="s-receipts">0</span>
+        <span class="sub" id="s-receipts-sub">positive entries</span>
+      </div>
+      <div class="stat-card error">
+        <span class="label">Reversals</span>
+        <span class="value" id="s-reversals">0</span>
+        <span class="sub" id="s-reversals-sub">negative entries</span>
+      </div>
+      <div class="stat-card">
+        <span class="label">Net Units</span>
+        <span class="value" id="s-net">0</span>
+        <span class="sub">after reversals</span>
+      </div>
+      <div class="stat-card">
+        <span class="label">Operators</span>
+        <span class="value" id="s-operators">0</span>
+        <span class="sub">unique actors</span>
+      </div>
+    </div>
+
+    <!-- Section -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <i class="bi bi-list-columns-reverse"></i> Receipt Journal
+        </div>
+        <div class="meta-line" id="result-count">0 of 0 records</div>
+      </div>
+
+      <!-- Hour filter banner (only when arrived from a specific cell with ?hour=) -->
+      <div id="hour-filter-banner" style="display: none; padding: 10px 20px; background: var(--accent-bg); border-bottom: 1px solid var(--border); align-items: center; gap: 10px;">
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 600;">Filtered to slot:</span>
+        <span id="hour-filter-label" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 600; background: var(--surface); padding: 4px 12px; border-radius: 100px; border: 1px solid var(--accent); display: inline-flex; align-items: center; gap: 6px;"></span>
+        <button id="hour-filter-clear" class="btn" style="margin-left: auto; padding: 6px 10px;">
+          <i class="bi bi-x"></i> Clear hour filter
+        </button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <div class="field-group search-box">
+          <span class="field-label">Search</span>
+          <div style="position: relative;">
+            <i class="bi bi-search"></i>
+            <input type="text" class="form-control" id="f-search" placeholder="Pull #, item code, lot, pallet, operator…">
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Warehouse</span>
+          <select class="form-select" id="f-warehouse">
+            <option value="all">All warehouses</option>
+            <option value="WH-01">WH-01 · Bangkok Main</option>
+            <option value="WH-02">WH-02 · Chonburi</option>
+            <option value="WH-03">WH-03 · Rayong</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Action</span>
+          <select class="form-select" id="f-action">
+            <option value="all">All actions</option>
+            <option value="receive">Receive</option>
+            <option value="cancel">Cancel</option>
+            <option value="voided">Voided receipts</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Date Range</span>
+          <select class="form-select" id="f-date">
+            <option value="all">All time</option>
+            <option value="today" selected>Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="week">This week</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Operator</span>
+          <select class="form-select" id="f-operator">
+            <option value="all">All operators</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-clear-filters" title="Clear filters">
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+
+      <!-- Table -->
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 130px;">Time</th>
+              <th style="width: 90px;">Action</th>
+              <th>Pull / Warehouse</th>
+              <th>Item</th>
+              <th style="width: 60px;" class="num">Hour</th>
+              <th style="width: 110px;" class="num">Qty</th>
+              <th>Lot / Pallet</th>
+              <th>QC</th>
+              <th>Operator</th>
+              <th style="width: 110px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span id="footer-summary">—</span>
+        <span>Click any row's <b>cancel</b> action to create a reversal entry</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CANCEL MODAL ============ -->
+<div class="modal fade" id="cancelModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise" style="color: var(--error); margin-right: 6px;"></i> Cancel Receipt</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top: 0; color: var(--text-dim);">
+          This creates a <b>reversal entry</b> with negative quantity. Both the original receipt and the reversal remain in the journal — nothing is deleted.
+        </p>
+
+        <div class="receipt-summary">
+          <div class="summary-grid">
+            <div>
+              <div class="lbl">Receipt ID</div>
+              <div class="val" id="c-id">—</div>
+            </div>
+            <div>
+              <div class="lbl">When received</div>
+              <div class="val" id="c-when">—</div>
+            </div>
+            <div>
+              <div class="lbl">Item</div>
+              <div class="val" id="c-item">—</div>
+            </div>
+            <div>
+              <div class="lbl">Quantity to reverse</div>
+              <div class="val" id="c-qty" style="color: var(--error);">—</div>
+            </div>
+            <div>
+              <div class="lbl">Pull / Hour</div>
+              <div class="val" id="c-pull">—</div>
+            </div>
+            <div>
+              <div class="lbl">Originally by</div>
+              <div class="val" id="c-by">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group" style="margin-bottom: 14px;">
+          <span class="field-label" style="margin-bottom: 6px;">Reason</span>
+          <div class="reason-radio-group" id="reason-group">
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="miscount">
+              <span>Miscount — wrong quantity entered</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="wrong-item">
+              <span>Wrong item — entered against incorrect SKU</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="qc-fail">
+              <span>QC failure — material rejected after receipt</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="duplicate">
+              <span>Duplicate — already recorded elsewhere</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="other">
+              <span>Other (specify note below)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <span class="field-label" style="margin-bottom: 4px;">Note (optional)</span>
+          <textarea class="form-control" id="c-note" rows="2" placeholder="Additional context for the audit trail…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Keep receipt</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-cancel">
+          <i class="bi bi-arrow-counterclockwise"></i> Create reversal entry
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap" id="toast-icon">✓</div>
+    <div class="msg">
+      <span id="toast-msg">Saved</span>
+      <small id="toast-sub"></small>
+    </div>
+  </div>
+</div>
+
+

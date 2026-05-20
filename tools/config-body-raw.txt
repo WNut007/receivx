@@ -1,0 +1,192 @@
+<!-- ===== BODY:main (from config.html) ===== -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div class="page-eyebrow">Preferences</div>
+      <h1 class="page-title">Settings</h1>
+      <p class="page-subtitle">Personalize how the receiving console looks and feels for you.</p>
+    </div>
+
+    <!-- ACCOUNT -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-block">
+          <div class="eyebrow">Account</div>
+          <div class="section-title">Your profile</div>
+          <div class="section-desc">Signed-in identity and current session details.</div>
+        </div>
+      </div>
+
+      <div class="account-card">
+        <div class="account-avatar" id="acc-avatar">SW</div>
+        <div style="position: relative; z-index: 1;">
+          <div class="account-info-name" id="acc-name">S. Wattana</div>
+          <div class="account-info-role" id="acc-role">Inbound Supervisor</div>
+          <div class="account-info-meta" id="acc-meta">Signed in 14:32 ICT · 18 Mar 2026</div>
+        </div>
+      </div>
+
+      <div class="account-grid">
+        <div class="account-row">
+          <span class="label">Username</span>
+          <span class="value" id="acc-username">swattana</span>
+        </div>
+        <div class="account-row">
+          <span class="label">Warehouse</span>
+          <span class="value" id="acc-warehouse">WH-01 · Bangkok Main</span>
+        </div>
+        <div class="account-row">
+          <span class="label">Role</span>
+          <span class="value" id="acc-role2">Inbound Supervisor</span>
+        </div>
+        <div class="account-row">
+          <span class="label">Last Sign-in</span>
+          <span class="value" id="acc-signin">Today, 14:32</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- THEME -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-block">
+          <div class="eyebrow">Appearance</div>
+          <div class="section-title">Theme</div>
+          <div class="section-desc">Choose a color scheme. Applies instantly across all pages.</div>
+        </div>
+      </div>
+
+      <div class="theme-grid">
+        <button class="theme-card" data-theme="light">
+          <div class="theme-preview light">
+            <div class="theme-preview-bar"></div>
+            <div class="theme-preview-dots">
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+            </div>
+          </div>
+          <div class="theme-name">Light Paper <i class="bi bi-check2 check"></i></div>
+          <div class="theme-desc">Warm cream · daylight</div>
+        </button>
+        <button class="theme-card" data-theme="midnight">
+          <div class="theme-preview midnight">
+            <div class="theme-preview-bar"></div>
+            <div class="theme-preview-dots">
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+            </div>
+          </div>
+          <div class="theme-name">Midnight <i class="bi bi-check2 check"></i></div>
+          <div class="theme-desc">Dark · night shift</div>
+        </button>
+        <button class="theme-card" data-theme="slate">
+          <div class="theme-preview slate">
+            <div class="theme-preview-bar"></div>
+            <div class="theme-preview-dots">
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+              <span class="theme-preview-dot"></span>
+            </div>
+          </div>
+          <div class="theme-name">Slate <i class="bi bi-check2 check"></i></div>
+          <div class="theme-desc">Cool grey · corporate</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- NAV -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-block">
+          <div class="eyebrow">Navigation</div>
+          <div class="section-title">Menu bar</div>
+          <div class="section-desc">Position and behavior of the main navigation across the app.</div>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Position</div>
+          <div class="setting-help">Horizontal puts the nav across the top. Vertical pins it to the left side.</div>
+        </div>
+        <div class="toggle-group" id="nav-position">
+          <button class="toggle-option" data-value="horizontal">
+            <i class="bi bi-layout-three-columns"></i> Horizontal
+          </button>
+          <button class="toggle-option" data-value="vertical">
+            <i class="bi bi-layout-sidebar"></i> Vertical
+          </button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Behavior</div>
+          <div class="setting-help">Sticky stays at the top while you scroll. Auto-hide gets out of the way. Static scrolls away with the page.</div>
+        </div>
+        <div class="toggle-group" id="nav-behavior">
+          <button class="toggle-option" data-value="sticky">
+            <i class="bi bi-pin-angle"></i> Sticky
+          </button>
+          <button class="toggle-option" data-value="auto-hide">
+            <i class="bi bi-eye-slash"></i> Auto-hide
+          </button>
+          <button class="toggle-option" data-value="static">
+            <i class="bi bi-arrow-down-circle"></i> Static
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DANGER -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-block">
+          <div class="eyebrow">Session</div>
+          <div class="section-title">Sign out &amp; reset</div>
+          <div class="section-desc">Manage your session and reset preferences if something feels off.</div>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Reset preferences</div>
+          <div class="setting-help">Restore theme, nav, and saved filters to defaults. Your account isn't affected.</div>
+        </div>
+        <button class="btn" id="btn-reset"><i class="bi bi-arrow-counterclockwise"></i> Reset to defaults</button>
+      </div>
+
+      <div class="danger-zone">
+        <div class="danger-zone-info">
+          <div class="label">Danger zone</div>
+          <div class="help">Signing out clears your session and returns you to the login screen.</div>
+        </div>
+        <button class="btn btn-danger" id="btn-signout"><i class="bi bi-box-arrow-right"></i> Sign out</button>
+      </div>
+    </div>
+
+    <!-- Save bar -->
+    <div class="save-bar" id="save-bar">
+      <span class="save-bar-msg" id="save-msg">All changes saved</span>
+      <div class="save-bar-actions">
+        <button class="btn" id="btn-discard" style="display:none;"><i class="bi bi-x"></i> Discard</button>
+        <button class="btn btn-primary" id="btn-save"><i class="bi bi-check2"></i> Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap">✓</div>
+    <div class="msg" id="toast-msg">Settings saved</div>
+  </div>
+</div>
+
+

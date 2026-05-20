@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# .NET
+*.swp
+*.userprefs
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Local secrets — NEVER commit
+appsettings.Development.json
+appsettings.Local.json
+*.pfx
+*.env
+.env
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db

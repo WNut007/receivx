@@ -1,0 +1,3877 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receiving Console — Pull #2847</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,500;0,600;0,700;0,900;1,300;1,400;1,500&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Bootstrap 5.3 -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- BEGIN_CSS:main -->
+<style>
+  /* ============ THEME TOKENS ============ */
+  :root, [data-theme="light"] {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #faf9f6;
+    --surface-3: #f0eee8;
+    --border: #e6e3dc;
+    --border-bright: #d4d0c6;
+    --text: #1a1d20;
+    --text-dim: #5a626c;
+    --text-muted: #8a8f97;
+
+    --accent: #1f4d2b;
+    --accent-bg: #e8f0ea;
+    --accent-hover: #163a20;
+    --accent-fg: #ffffff;
+
+    --pending: #b86e00;        --pending-bg: #fdf4e3;        --pending-border: #f0d896;
+    --complete: #2d7d4f;       --complete-bg: #e7f3ec;       --complete-border: #b3d9c0;
+    --over: #c0392b;           --over-bg: #fceae7;           --over-border: #e8b8b0;
+    --idle: #c7c4bc;           --idle-bg: #efedea;
+
+    /* Domain-specific (PCBA/SWAP tags + row status) */
+    --pcba: #d4a017;           --pcba-bg: #fef7e0;
+    --pcba-swap: #0a8a92;      --pcba-swap-bg: #e2f4f5;
+    --status-normal: #5a626c;  --status-normal-bg: #eeece6;
+    --status-new: #1f6fb8;     --status-new-bg: #e3eef9;
+    --status-cancel: #8a8f97;  --status-cancel-bg: #f0eee8;
+
+    --shadow-sm: 0 1px 2px rgba(20, 22, 24, 0.04);
+    --shadow-md: 0 4px 16px rgba(20, 22, 24, 0.06);
+    --shadow-lg: 0 20px 60px rgba(20, 22, 24, 0.12);
+
+    --grid-line: rgba(0,0,0,0.018);
+    --ambient-1: rgba(31, 77, 43, 0.04);
+    --ambient-2: rgba(10, 138, 146, 0.03);
+  }
+
+  [data-theme="midnight"] {
+    --bg: #0e1116;
+    --surface: #161a21;
+    --surface-2: #1c2128;
+    --surface-3: #232932;
+    --border: #2a313c;
+    --border-bright: #3a4250;
+    --text: #e6e8ea;
+    --text-dim: #9aa3b0;
+    --text-muted: #6b7382;
+
+    --accent: #5fd49a;
+    --accent-bg: rgba(95, 212, 154, 0.12);
+    --accent-hover: #4dbf85;
+    --accent-fg: #0e1116;
+
+    --pending: #f0a73a;        --pending-bg: rgba(240, 167, 58, 0.12);   --pending-border: rgba(240, 167, 58, 0.3);
+    --complete: #5fd49a;       --complete-bg: rgba(95, 212, 154, 0.12);  --complete-border: rgba(95, 212, 154, 0.3);
+    --over: #ff6b6b;           --over-bg: rgba(255, 107, 107, 0.12);     --over-border: rgba(255, 107, 107, 0.3);
+    --idle: #4a525f;           --idle-bg: rgba(74, 82, 95, 0.15);
+
+    --pcba: #f0c850;           --pcba-bg: rgba(240, 200, 80, 0.14);
+    --pcba-swap: #4cd4dc;      --pcba-swap-bg: rgba(76, 212, 220, 0.12);
+    --status-normal: #8a93a0;  --status-normal-bg: rgba(138, 147, 160, 0.14);
+    --status-new: #5aa8e8;     --status-new-bg: rgba(90, 168, 232, 0.14);
+    --status-cancel: #6b7382;  --status-cancel-bg: rgba(107, 115, 130, 0.14);
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 20px 60px rgba(0,0,0,0.6);
+
+    --grid-line: rgba(255,255,255,0.025);
+    --ambient-1: rgba(95, 212, 154, 0.05);
+    --ambient-2: rgba(90, 168, 232, 0.04);
+  }
+
+  [data-theme="slate"] {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #f7f9fb;
+    --surface-3: #e9edf2;
+    --border: #dce2e9;
+    --border-bright: #c5cdd6;
+    --text: #1c2530;
+    --text-dim: #4a5562;
+    --text-muted: #7d8794;
+
+    --accent: #2e4d6b;
+    --accent-bg: #e3ebf3;
+    --accent-hover: #213a52;
+    --accent-fg: #ffffff;
+
+    --pending: #c47611;        --pending-bg: #fef0dc;        --pending-border: #f0cb89;
+    --complete: #2d8a5d;       --complete-bg: #e0f0e7;       --complete-border: #a8d2bb;
+    --over: #c43b3b;           --over-bg: #fbe7e7;           --over-border: #e8b0b0;
+    --idle: #b8c0ca;           --idle-bg: #e9edf2;
+
+    --pcba: #c08919;           --pcba-bg: #fbeec9;
+    --pcba-swap: #0e7a82;      --pcba-swap-bg: #dceff1;
+    --status-normal: #6b7480;  --status-normal-bg: #e9edf2;
+    --status-new: #1e6fc4;     --status-new-bg: #e0edfa;
+    --status-cancel: #7d8794;  --status-cancel-bg: #e9edf2;
+
+    --shadow-sm: 0 1px 3px rgba(28, 37, 48, 0.05);
+    --shadow-md: 0 4px 18px rgba(28, 37, 48, 0.08);
+    --shadow-lg: 0 24px 64px rgba(28, 37, 48, 0.15);
+
+    --grid-line: rgba(28, 37, 48, 0.02);
+    --ambient-1: rgba(46, 77, 107, 0.04);
+    --ambient-2: rgba(30, 111, 196, 0.03);
+  }
+
+  :root {
+    --font-display: 'Roboto', system-ui, sans-serif;
+    --font-body: 'Roboto', system-ui, sans-serif;
+    --font-mono: 'Roboto Mono', ui-monospace, monospace;
+  }
+
+  /* Bootstrap overrides — theme-aware */
+  .form-select, .form-control {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    font-size: 14px;
+    border-radius: 8px;
+  }
+  .form-select:focus, .form-control:focus {
+    background-color: var(--surface);
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  .form-select { font-family: 'Roboto Mono', monospace; font-weight: 500; }
+  .form-control::placeholder { color: var(--text-muted); }
+
+  .modal-content, .offcanvas {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .app-modal-header, .offcanvas-header { border-bottom-color: var(--border); }
+  .app-modal-footer { border-top-color: var(--border); background: var(--surface-2); }
+
+  /* Roboto rendering tweaks — body weight 400, headings get explicit weight */
+  .brand-mark { font-weight: 500; }
+  .app-modal-title { font-weight: 500; }
+  .qty-card-value, .summary-card .value { font-weight: 500; }
+  .receive-input-label .big { font-weight: 500; }
+  .signature-placeholder { font-weight: 400; }
+  .hour-col .hour-num { font-weight: 500; }
+  .stat-value { font-weight: 500; }
+  body { font-weight: 400; }
+
+  /* Roboto italic at large sizes renders weak and slightly blurry — override
+     italic on big display text and use upright with a heavier weight instead.
+     Small italic accents (table remark cells, signature placeholder) stay italic. */
+  .brand-mark,
+  .app-modal-title,
+  .qty-card-value,
+  .summary-card .value,
+  .receive-input-label .big,
+  .hour-col .hour-num,
+  .stat-value {
+    font-style: normal !important;
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;            /* +2px from previous 13px */
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    overflow: hidden;
+    height: 100vh;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% 0%, var(--ambient-1), transparent 65%),
+      radial-gradient(ellipse 700px 400px at 85% 100%, var(--ambient-2), transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative;
+    z-index: 1;
+    height: 100vh;
+    display: grid;
+    /* topbar · toolbar · progress-strip · grid-wrap · footer */
+    grid-template-rows: auto auto auto 1fr auto;
+    min-height: 0; /* allow inner scroll */
+  }
+  .app > .grid-wrap { min-height: 0; }
+
+  /* ============ TOP BAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(20px);
+  }
+  .brand { display: flex; align-items: baseline; gap: 14px; }
+  .brand-mark {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .brand-mark span {
+    color: var(--accent);
+    font-style: normal;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-left: 4px;
+  }
+  .brand-path {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .brand-path b { color: var(--text-dim); font-weight: 500; }
+  .topbar-right { display: flex; align-items: center; gap: 14px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    box-shadow: var(--shadow-sm);
+  }
+  .pulse {
+    width: 6px; height: 6px;
+    background: var(--complete);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(45, 125, 79, 0.4); }
+    70% { box-shadow: 0 0 0 8px rgba(45, 125, 79, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(45, 125, 79, 0); }
+  }
+  .user-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 4px 4px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 12px;
+    box-shadow: var(--shadow-sm);
+  }
+  .user-chip .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--pcba-swap));
+    color: var(--accent-fg);
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 10px;
+    font-family: var(--font-mono);
+  }
+
+  /* Theme switcher */
+  .theme-switch {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 3px;
+    gap: 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .theme-swatch {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.15s ease;
+  }
+  .theme-swatch:hover { transform: scale(1.08); }
+  .theme-swatch.active::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+  }
+  .theme-swatch.light    { background: linear-gradient(135deg, #f6f5f1 50%, #ffffff 50%); border: 1px solid #d4d0c6; }
+  .theme-swatch.midnight { background: linear-gradient(135deg, #0e1116 50%, #5fd49a 50%); }
+  .theme-swatch.slate    { background: linear-gradient(135deg, #eef1f4 50%, #2e4d6b 50%); }
+
+  /* ============ TOOLBAR ============ */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    flex-wrap: wrap;
+  }
+  .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .field-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    padding-left: 2px;
+  }
+  .select {
+    appearance: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 32px 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8f97' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    min-width: 140px;
+    box-shadow: var(--shadow-sm);
+  }
+  .select:hover { border-color: var(--border-bright); background-color: var(--surface-2); }
+  .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.1); }
+
+  .toolbar-divider {
+    width: 1px;
+    height: 36px;
+    background: var(--border);
+    margin: 0 4px;
+    align-self: flex-end;
+    margin-bottom: 1px;
+  }
+  .toolbar-spacer { flex: 1; }
+
+  .search-box { position: relative; align-self: flex-end; }
+  .search-box input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px 8px 34px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    border-radius: 8px;
+    width: 240px;
+    transition: all 0.15s;
+    box-shadow: var(--shadow-sm);
+  }
+  .search-box input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.1); }
+  .search-box input::placeholder { color: var(--text-muted); }
+  .search-box svg {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+  }
+  .search-box::after {
+    content: '⌘K';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    pointer-events: none;
+    background: var(--surface-2);
+  }
+
+  .btn {
+    align-self: flex-end;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: var(--shadow-sm);
+  }
+  .btn:hover { background: var(--surface-2); border-color: var(--border-bright); }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+  .btn:disabled:hover { background: var(--surface-3); border-color: var(--border); }
+
+  /* Close-pull button gets special treatment when ready */
+  .btn-close-pull.ready {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.15), 0 4px 12px rgba(31, 77, 43, 0.2);
+    animation: readyPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes readyPulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.12), 0 4px 12px rgba(31, 77, 43, 0.15); }
+    50%      { box-shadow: 0 0 0 6px rgba(31, 77, 43, 0.18), 0 6px 18px rgba(31, 77, 43, 0.25); }
+  }
+  .btn-close-pull.ready:hover { background: var(--accent-hover); }
+
+  /* Reopen button — amber tone, supervisor-only action */
+  .btn-reopen-pull {
+    background: var(--pending-bg);
+    color: var(--pending);
+    border-color: var(--pending-border);
+  }
+  .btn-reopen-pull:hover {
+    background: color-mix(in srgb, var(--pending) 18%, var(--pending-bg));
+    border-color: var(--pending);
+  }
+
+  /* ============ PROGRESS STRIP ============ */
+  .progress-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr) auto;
+    gap: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .stat {
+    padding: 14px 24px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--text-muted);
+  }
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 28px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .stat-value small {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-style: normal;
+  }
+  .stat-trend {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--complete);
+  }
+  .stat-trend.warn { color: var(--pending); }
+  .progress-bar-host {
+    padding: 14px 24px;
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    justify-content: center;
+  }
+  .progress-bar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .progress-bar-head b { color: var(--text); font-weight: 600; }
+  .progress-track {
+    height: 6px;
+    background: var(--surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #3a7a4d);
+    border-radius: 3px;
+    width: 62%;
+    transition: width 0.5s ease;
+  }
+
+  /* ============ MAIN GRID AREA ============ */
+  .grid-wrap {
+    overflow: auto;
+    background: var(--bg);
+    position: relative;
+  }
+  .grid-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
+  .grid-wrap::-webkit-scrollbar-track { background: var(--surface-2); }
+  .grid-wrap::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 5px; }
+  .grid-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 1400px;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    z-index: 5;
+    padding: 10px 14px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border-bright);
+    white-space: nowrap;
+  }
+  thead th.hour-col {
+    text-align: center;
+    background: var(--surface-3);
+    border-left: 1px solid var(--border);
+  }
+  thead th.hour-col .hour-num {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-style: italic;
+    color: var(--text);
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+  thead th.hour-col .hour-tag {
+    font-size: 9px;
+    color: var(--text-muted);
+  }
+  thead th.hour-col.current {
+    background: linear-gradient(180deg, var(--accent-bg), var(--surface));
+    border-bottom: 2px solid var(--accent);
+  }
+  thead th.hour-col.current .hour-tag {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  tbody td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    background: var(--surface);
+  }
+  tbody tr { transition: background 0.12s; }
+  tbody tr:hover .info-cell,
+  tbody tr:hover .vendor-cell,
+  tbody tr:hover .remark-cell,
+  tbody tr:hover .status-cell { background: var(--surface-2); }
+
+  .info-cell { padding: 12px 14px; background: var(--surface); }
+  .item-code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .item-code .tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 3px;
+    vertical-align: 1px;
+    letter-spacing: 0.06em;
+  }
+  .tag.pcba { background: var(--pcba-bg); color: #8a6a0a; border: 1px solid #ecdaa5; }
+  .tag.swap { background: var(--pcba-swap-bg); color: #066469; border: 1px solid #a8d7da; }
+  .item-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .vendor-cell { padding: 12px 14px; background: var(--surface); }
+  .vendor-code { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .vendor-name { font-size: 12px; color: var(--text); margin-top: 2px; font-weight: 500; }
+  .remark-cell {
+    padding: 12px 14px;
+    background: var(--surface);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    max-width: 140px;
+  }
+
+  /* ============ STATUS COLUMN ============ */
+  .status-cell {
+    padding: 12px 14px;
+    background: var(--surface);
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 100px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--surface);
+  }
+  .status-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .status-badge:hover { filter: brightness(0.97); }
+
+  .status-badge.normal {
+    color: var(--status-normal);
+    border-color: var(--border-bright);
+    background: var(--status-normal-bg);
+  }
+  .status-badge.normal::before { background: var(--status-normal); }
+
+  .status-badge.new {
+    color: var(--status-new);
+    border-color: #b8d2eb;
+    background: var(--status-new-bg);
+  }
+  .status-badge.new::before { background: var(--status-new); }
+
+  .status-badge.canceled {
+    color: var(--status-cancel);
+    border-color: var(--border);
+    background: var(--status-cancel-bg);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .status-badge.canceled::before {
+    background: var(--status-cancel);
+  }
+
+  /* Canceled row treatment */
+  tr.row-canceled td {
+    background: var(--surface-3) !important;
+    opacity: 0.6;
+  }
+  tr.row-canceled .item-code,
+  tr.row-canceled .vendor-name {
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    color: var(--text-muted);
+  }
+  tr.row-canceled .item-desc {
+    text-decoration: line-through;
+  }
+  tr.row-canceled .hour-btn {
+    cursor: not-allowed !important;
+    pointer-events: none;
+  }
+  tr.row-canceled .hour-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 6px,
+      rgba(0,0,0,0.025) 6px,
+      rgba(0,0,0,0.025) 12px
+    );
+    pointer-events: none;
+  }
+
+  /* "NEW" row gets a subtle highlight */
+  tr.row-new .info-cell,
+  tr.row-new .vendor-cell,
+  tr.row-new .status-cell,
+  tr.row-new .remark-cell {
+    background: linear-gradient(90deg, rgba(31, 111, 184, 0.04), transparent 60%);
+  }
+  tr.row-new .info-cell { border-left: 3px solid var(--status-new); }
+
+  /* ============ HOUR CELLS ============ */
+  .hour-cell {
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0;
+    position: relative;
+  }
+  .hour-btn {
+    display: block;
+    width: 100%;
+    min-width: 120px;
+    padding: 12px 8px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    text-align: center;
+    transition: all 0.12s;
+    position: relative;
+  }
+  .hour-btn:hover { background: rgba(0,0,0,0.02); }
+  .hour-btn:focus { outline: none; }
+  .hour-btn:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .hour-nums {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .hour-nums .recv { color: var(--text); }
+  .hour-nums .sep { color: var(--text-muted); font-weight: 400; }
+  .hour-nums .exp { color: var(--text-dim); }
+  .hour-meter {
+    margin-top: 6px;
+    height: 2px;
+    background: rgba(0,0,0,0.05);
+    border-radius: 1px;
+    overflow: hidden;
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+  .hour-meter span {
+    display: block;
+    height: 100%;
+    border-radius: 1px;
+    transition: width 0.4s ease;
+  }
+  .hour-status {
+    margin-top: 4px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+  .hour-btn.pending { background: var(--pending-bg); }
+  .hour-btn.pending .recv { color: var(--pending); }
+  .hour-btn.pending .hour-meter span { background: var(--pending); }
+  .hour-btn.pending .hour-status { color: var(--pending); }
+  .hour-btn.pending::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--pending);
+  }
+  .hour-btn.complete { background: var(--complete-bg); }
+  .hour-btn.complete .recv { color: var(--complete); }
+  .hour-btn.complete .hour-meter span { background: var(--complete); }
+  .hour-btn.complete .hour-status { color: var(--complete); }
+  .hour-btn.complete::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--complete);
+  }
+  .hour-btn.empty { color: var(--text-muted); }
+  .hour-btn.empty .hour-nums { color: var(--text-muted); font-size: 14px; }
+  .hour-btn.empty .hour-nums::before {
+    content: '＋';
+    opacity: 0.35;
+    margin-right: 0;
+    transition: opacity 0.15s;
+  }
+  .hour-btn.empty:hover .hour-nums::before { opacity: 0.75; }
+  .hour-btn.empty .hour-nums .label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  tr.pcba .info-cell { border-left: 3px solid var(--pcba); }
+  tr.swap .info-cell { border-left: 3px solid var(--pcba-swap); }
+  /* New + PCBA combo: NEW takes the border, PCBA tag is still visible inside */
+  tr.row-new.pcba .info-cell,
+  tr.row-new.swap .info-cell { border-left-color: var(--status-new); }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    padding: 10px 28px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .footer-legend { display: flex; gap: 18px; flex-wrap: wrap; }
+  .legend-dot { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-dot::before { content: ''; width: 8px; height: 8px; border-radius: 50%; }
+  .legend-dot.pending::before { background: var(--pending); }
+  .legend-dot.complete::before { background: var(--complete); }
+  .legend-dot.empty::before { background: var(--idle); }
+  .legend-dot.canceled::before { background: var(--status-cancel); }
+  .legend-dot.new::before { background: var(--status-new); }
+
+  /* ============ MODAL (receive) ============ */
+  .app-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 29, 32, 0.35);
+    backdrop-filter: blur(6px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .app-modal-backdrop.open { display: flex; opacity: 1; }
+  .app-modal {
+    width: 560px;
+    max-width: 94vw;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    transform: scale(0.96) translateY(8px);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .app-modal-backdrop.open .app-modal { transform: scale(1) translateY(0); }
+  .app-modal-head {
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    flex-shrink: 0;
+  }
+  .app-modal-head-info { flex: 1; min-width: 0; }
+  .app-modal-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+  }
+  .app-modal-eyebrow .scheduled-time { color: var(--text-muted); font-weight: 500; }
+  .app-modal-title {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-style: italic;
+    line-height: 1;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .app-modal-subtitle { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
+  .app-modal-subtitle b { color: var(--text); font-weight: 600; }
+  .close-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .close-btn:hover { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .app-modal-body { padding: 20px 22px; overflow-y: auto; }
+
+  /* Read-only banner (shown when pull is closed) */
+  .m-readonly-banner {
+    background: var(--pending-bg);
+    border: 1px solid var(--pending-border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 16px 0 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    color: var(--pending);
+  }
+  .m-readonly-banner svg { flex-shrink: 0; margin-top: 1px; }
+  .m-readonly-text { flex: 1; }
+  .m-readonly-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 3px;
+  }
+  .m-readonly-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .m-readonly-desc b { color: var(--pending); font-weight: 600; }
+
+  /* Transactions section inside modal */
+  .m-tx-section {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .m-tx-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .m-tx-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+  }
+  .m-tx-title svg { color: var(--accent); }
+  .m-tx-count {
+    background: var(--surface-3);
+    color: var(--text-dim);
+    padding: 1px 7px;
+    border-radius: 100px;
+    font-size: 10px;
+    margin-left: 2px;
+  }
+  .m-tx-count.has-tx { background: var(--accent-bg); color: var(--accent); }
+  .m-tx-full {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .m-tx-full:hover { text-decoration: underline; }
+
+  .m-tx-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .m-tx-empty {
+    padding: 16px 14px;
+    text-align: center;
+    background: var(--surface-2);
+    border: 1px dashed var(--border-bright);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .m-tx-row {
+    display: grid;
+    grid-template-columns: 86px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    transition: background 0.1s ease;
+  }
+  .m-tx-row:hover { background: var(--surface-2); }
+  .m-tx-row.reversal {
+    background: var(--over-bg);
+    border-color: var(--over-border);
+  }
+  .m-tx-row.voided {
+    opacity: 0.55;
+  }
+  .m-tx-row.voided .m-tx-qty,
+  .m-tx-row.voided .m-tx-meta { text-decoration: line-through; }
+  .m-tx-row .m-tx-when {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.2;
+  }
+  .m-tx-row .m-tx-when small {
+    display: block;
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 1px;
+  }
+  .m-tx-row .m-tx-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .m-tx-row .m-tx-meta b { color: var(--text); font-weight: 600; }
+  .m-tx-row .m-tx-meta .m-tx-actor { color: var(--text-muted); }
+  .m-tx-row .m-tx-qty {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--complete);
+    white-space: nowrap;
+  }
+  .m-tx-row .m-tx-qty.neg { color: var(--over); }
+  .m-tx-row .m-tx-action {
+    display: flex;
+    gap: 4px;
+  }
+  .m-tx-row .m-tx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .m-tx-pill.receive { color: var(--complete); background: var(--complete-bg); border-color: var(--complete-border); }
+  .m-tx-pill.cancel  { color: var(--over);     background: var(--over-bg);     border-color: var(--over-border); }
+  .m-tx-pill.voided  { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+  .m-tx-cancel-btn {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--over) 30%, var(--border));
+    color: var(--over);
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .m-tx-cancel-btn:hover {
+    background: color-mix(in srgb, var(--over) 10%, transparent);
+    border-color: var(--over);
+  }
+  .m-tx-cancel-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .qty-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .qty-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .qty-card-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .qty-card-value {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 30px;
+    line-height: 1.05;
+    margin-top: 4px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .qty-card.outstanding { border-color: var(--pending-border); background: var(--pending-bg); }
+  .qty-card.outstanding .qty-card-value { color: var(--pending); }
+  .receive-input-host {
+    background: linear-gradient(180deg, var(--accent-bg), #dfeae2);
+    border: 1px solid #c5d8c9;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .receive-input-label { flex-shrink: 0; }
+  .receive-input-label .small {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .receive-input-label .big {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 22px;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .receive-input-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .receive-input {
+    width: 160px;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 32px;
+    font-weight: 700;
+    padding: 10px 14px;
+    border-radius: 8px;
+    text-align: right;
+    letter-spacing: -0.02em;
+    transition: all 0.15s;
+  }
+  .receive-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.15);
+  }
+  .receive-input.is-error {
+    color: var(--over);
+    border-color: var(--over);
+    background: var(--over-bg);
+    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.12);
+  }
+  .receive-input-unit {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+
+  .cap-hint {
+    margin-bottom: 14px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cap-hint.error {
+    color: var(--over);
+    background: var(--over-bg);
+    border-color: var(--over-border);
+    font-weight: 600;
+  }
+  .cap-hint .ico {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+  }
+
+  .quick-fill {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .quick-fill button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.12s;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .quick-fill button:hover {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .fields-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.full { grid-column: 1 / -1; }
+  .field label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    padding-left: 2px;
+  }
+  .field input, .field textarea {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.15s;
+  }
+  .field input:focus, .field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.08);
+  }
+  .field textarea { font-family: var(--font-body); resize: none; min-height: 50px; }
+  .app-modal-foot {
+    padding: 16px 22px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface-2);
+    flex-shrink: 0;
+  }
+  .app-modal-foot-hint {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .app-modal-foot-hint kbd {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 9px;
+    color: var(--text-dim);
+    margin: 0 2px;
+    box-shadow: 0 1px 0 var(--border-bright);
+  }
+  .app-modal-foot-buttons { display: flex; gap: 8px; }
+
+  /* ============ CLOSE PULL CONFIRMATION MODAL ============ */
+  .close-modal {
+    width: 600px;
+  }
+  .close-app-modal-eyebrow {
+    color: var(--accent) !important;
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .summary-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .summary-card .label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .summary-card .value {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 24px;
+    line-height: 1.05;
+    margin-top: 4px;
+    color: var(--text);
+  }
+  .summary-card .sub {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--complete);
+    margin-top: 2px;
+  }
+  .summary-card.accent { background: var(--accent-bg); border-color: #c5d8c9; }
+  .summary-card.accent .value { color: var(--accent); }
+
+  .declaration {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .declaration b { color: var(--text); }
+
+  .signature-host {
+    background: var(--surface);
+    border: 1px dashed var(--border-bright);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 8px;
+    position: relative;
+  }
+  .signature-canvas {
+    width: 100%;
+    height: 140px;
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+    border-radius: 8px;
+  }
+  .signature-placeholder {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 18px;
+    color: var(--text-muted);
+    letter-spacing: -0.01em;
+  }
+  .signature-host.signed .signature-placeholder { display: none; }
+
+  .signature-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .signature-foot .line {
+    flex: 1;
+    border-bottom: 1px solid var(--border);
+    margin: 0 12px;
+  }
+  .signature-foot .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .clear-sig-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: all 0.12s;
+  }
+  .clear-sig-btn:hover { background: var(--surface-3); color: var(--text); }
+
+  /* ============ STATUS DROPDOWN MENU ============ */
+  .status-menu {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+    z-index: 90;
+    min-width: 150px;
+    display: none;
+  }
+  .status-menu.open { display: block; }
+  .status-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text);
+    transition: background 0.1s;
+  }
+  .status-menu-item:hover { background: var(--surface-2); }
+  .status-menu-item::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .status-menu-item.normal::before { background: var(--status-normal); }
+  .status-menu-item.new::before { background: var(--status-new); }
+  .status-menu-item.canceled::before { background: var(--status-cancel); }
+
+  /* ============ TOAST ============ */
+  .toast {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--surface);
+    border: 1px solid var(--complete-border);
+    border-left: 3px solid var(--complete);
+    padding: 12px 18px;
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s;
+    z-index: 200;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast-icon {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--complete-bg);
+    color: var(--complete);
+    display: grid; place-items: center;
+    font-weight: 700;
+  }
+  .toast-content { font-size: 12px; color: var(--text); }
+  .toast-content small {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+  .toast.error { border-color: var(--over-border); border-left-color: var(--over); }
+  .toast.error .toast-icon { background: var(--over-bg); color: var(--over); }
+  .toast.success-big { border-color: var(--accent); border-left-color: var(--accent); }
+  .toast.success-big .toast-icon { background: var(--accent-bg); color: var(--accent); }
+
+  @keyframes cellPop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.06); background: var(--accent-bg); }
+    100% { transform: scale(1); }
+  }
+  .hour-btn.just-updated { animation: cellPop 0.5s ease; }
+
+  /* Pull sheet closed overlay */
+  .closed-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 12px;
+    background: var(--complete-bg);
+    border: 1px solid var(--complete-border);
+    border-radius: 100px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--complete);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .closed-banner.show { display: inline-flex; }
+  .closed-banner svg { color: var(--complete); }
+
+  body.pull-closed .hour-btn {
+    pointer-events: none;
+    cursor: default;
+  }
+  body.pull-closed .status-badge {
+    pointer-events: none;
+  }
+</style>
+<!-- END_CSS:main -->
+</head>
+<body data-app-page="receiving">
+<!-- BEGIN_BODY:main -->
+
+<div class="app">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">Receiving<span>v3.2</span></div>
+      <div class="brand-path">Operations <b>/</b> Inbound <b>/</b> Console</div>
+      <div class="closed-banner" id="closed-banner">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        Pull Sheet Closed
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button class="theme-swatch light active"    data-theme="light"    title="Light Paper"></button>
+        <button class="theme-swatch midnight"        data-theme="midnight" title="Midnight"></button>
+        <button class="theme-swatch slate"           data-theme="slate"    title="Slate"></button>
+      </div>
+      <div class="status-pill">
+        <span class="pulse"></span>
+        <span>Live · <span id="topbar-pull">PL-2847</span> · <span id="topbar-wh">WH-01</span> · 14:32 ICT</span>
+      </div>
+      <div class="user-chip">
+        <span>S. Wattana</span>
+        <span class="avatar">SW</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <div class="field-group">
+      <span class="field-label">Pull #</span>
+      <select class="select" id="pull-select">
+        <option value="PL-2847">PL-2847 · Mar 18</option>
+        <option value="PL-2846">PL-2846 · Mar 17</option>
+        <option value="PL-2845">PL-2845 · Mar 16</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Period</span>
+      <select class="select" id="period-select">
+        <option value="07">07:00 — 10:00 · Morning</option>
+        <option value="11" selected>11:00 — 14:00 · Midday</option>
+        <option value="15">15:00 — 18:00 · Afternoon</option>
+        <option value="19">19:00 — 22:00 · Evening</option>
+        <option value="23">23:00 — 02:00 · Night</option>
+        <option value="03">03:00 — 06:00 · Pre-dawn</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Warehouse</span>
+      <select class="select" id="warehouse-select">
+        <option value="WH-01">WH-01 · Bangkok Main</option>
+        <option value="WH-02">WH-02 · Chonburi</option>
+        <option value="WH-03">WH-03 · Rayong</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Filter</span>
+      <select class="select" id="filter-select">
+        <option value="all">All items</option>
+        <option value="received">Fully received</option>
+        <option value="outstanding">Outstanding</option>
+        <option value="canceled">Canceled</option>
+      </select>
+    </div>
+
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-spacer"></div>
+
+    <div class="search-box">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input id="search-input" placeholder="Search item, vendor…">
+    </div>
+
+    <button class="btn" id="btn-transactions" title="View receipt history for this pull">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      Transactions
+    </button>
+    <button class="btn" id="btn-export">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      Export
+    </button>
+    <button class="btn btn-close-pull" id="btn-close-pull" disabled>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"></path><circle cx="12" cy="12" r="10"></circle></svg>
+      <span id="btn-close-pull-label">Close Pull Sheet</span>
+    </button>
+    <button class="btn btn-reopen-pull" id="btn-reopen-pull" style="display: none;" title="Supervisor only — reopen this closed pull for further editing">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+      <span>Reopen</span>
+    </button>
+  </div>
+
+  <!-- PROGRESS STRIP -->
+  <div class="progress-strip">
+    <div class="stat">
+      <span class="stat-label">Items · Active</span>
+      <span class="stat-value" id="stat-items">8 <small>SKUs</small></span>
+      <span class="stat-trend" id="stat-items-sub">2 PCBA · 6 components</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Expected · Period</span>
+      <span class="stat-value" id="stat-exp">14,800 <small>units</small></span>
+      <span class="stat-trend" id="stat-exp-sub">across 32 windows</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Received · Period</span>
+      <span class="stat-value" id="stat-rec">9,184 <small>units</small></span>
+      <span class="stat-trend" id="stat-rec-sub">62.1% of expected</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Outstanding</span>
+      <span class="stat-value" id="stat-out">5,616 <small>units</small></span>
+      <span class="stat-trend warn" id="stat-out-sub">7 windows pending</span>
+    </div>
+    <div class="progress-bar-host">
+      <div class="progress-bar-head">
+        <span>Period progress</span>
+        <span><b id="prog-label">62%</b></span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
+      <div class="progress-bar-head" style="text-transform:none; letter-spacing:0;">
+        <span style="color:var(--text-muted)" id="prog-hint-left">Started 11:00</span>
+        <span style="color:var(--text-muted)" id="prog-hint-right">ETA 14:48</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRID -->
+  <div class="grid-wrap">
+    <table id="grid">
+      <thead>
+        <tr>
+          <th style="min-width:100px">Status</th>
+          <th style="min-width:260px">Item · Description</th>
+          <th style="min-width:180px">Vendor</th>
+          <th style="min-width:140px">Remark</th>
+          <th class="hour-col" data-col="0"><span class="hour-num">11.00</span><span class="hour-tag">Window 1</span></th>
+          <th class="hour-col current" data-col="1"><span class="hour-num">12.00</span><span class="hour-tag">▸ Active</span></th>
+          <th class="hour-col" data-col="2"><span class="hour-num">13.00</span><span class="hour-tag">Window 3</span></th>
+          <th class="hour-col" data-col="3"><span class="hour-num">14.00</span><span class="hour-tag">Window 4</span></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-legend">
+      <span class="legend-dot pending">Pending</span>
+      <span class="legend-dot complete">Complete</span>
+      <span class="legend-dot empty">Not scheduled</span>
+      <span class="legend-dot new">New row</span>
+      <span class="legend-dot canceled">Canceled</span>
+    </div>
+    <div id="footer-meta">Updated 14:32:08 · Viewing period <b id="footer-period">11:00 — 14:00 · Midday</b> · Click status badge to change · Click any cell to receive</div>
+  </footer>
+</div>
+
+<!-- STATUS DROPDOWN MENU -->
+<div class="status-menu" id="status-menu">
+  <div class="status-menu-item normal" data-status="normal">Normal</div>
+  <div class="status-menu-item new" data-status="new">New</div>
+  <div class="status-menu-item canceled" data-status="canceled">Canceled</div>
+</div>
+
+<!-- RECEIVE MODAL -->
+<div class="app-modal-backdrop" id="modal">
+  <div class="app-modal">
+    <div class="app-modal-head">
+      <div class="app-modal-head-info">
+        <div class="app-modal-eyebrow">
+          <span>Receive Goods</span>
+          <span class="scheduled-time">· Scheduled <b id="m-time">12:00</b></span>
+        </div>
+        <div class="app-modal-title" id="m-title">PCBA-AX450-R2</div>
+        <div class="app-modal-subtitle">
+          <b id="m-desc">Main Logic Board · Rev 2</b> · <span id="m-vendor">Foxlink Electronics (FXL-002)</span>
+        </div>
+      </div>
+      <button class="close-btn" id="m-close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="app-modal-body">
+      <div class="qty-cards">
+        <div class="qty-card">
+          <div class="qty-card-label">Expected</div>
+          <div class="qty-card-value" id="m-expected">1,000</div>
+        </div>
+        <div class="qty-card">
+          <div class="qty-card-label">Previously Received</div>
+          <div class="qty-card-value" id="m-prev">0</div>
+        </div>
+        <div class="qty-card outstanding">
+          <div class="qty-card-label">Outstanding (max)</div>
+          <div class="qty-card-value" id="m-out">1,000</div>
+        </div>
+      </div>
+
+      <div class="receive-input-host">
+        <div class="receive-input-label">
+          <div class="small">Receive Now</div>
+          <div class="big">How many units?</div>
+        </div>
+        <div class="receive-input-wrap">
+          <input type="number" class="receive-input" id="m-input" value="1000" min="0">
+          <span class="receive-input-unit">pcs</span>
+        </div>
+      </div>
+
+      <div class="cap-hint" id="cap-hint">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="cap-hint-text">Maximum allowed: <b id="cap-hint-max">1,000</b> pcs. Cannot receive over expected.</span>
+      </div>
+
+      <div class="quick-fill">
+        <button data-fill="all">Fill outstanding</button>
+        <button data-fill="half">½ outstanding</button>
+        <button data-fill="0">Mark zero</button>
+      </div>
+
+      <div class="fields-grid">
+        <div class="field">
+          <label>Lot / Batch</label>
+          <input type="text" placeholder="e.g. LOT-2403-A" value="LOT-2403-118">
+        </div>
+        <div class="field">
+          <label>Pallet ID</label>
+          <input type="text" placeholder="e.g. PLT-00482" value="PLT-00482">
+        </div>
+        <div class="field">
+          <label>Bin / Location</label>
+          <input type="text" placeholder="e.g. A-12-03" value="A-12-03">
+        </div>
+        <div class="field">
+          <label>QC Status</label>
+          <select class="select" style="width:100%; padding-left:12px;">
+            <option>Passed inspection</option>
+            <option>Pending QC</option>
+            <option>Flagged · Hold</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>Note (optional)</label>
+          <textarea placeholder="Any discrepancy, damage, or instruction…"></textarea>
+        </div>
+      </div>
+
+      <!-- ============ READ-ONLY BANNER (shown when pull is closed) ============ -->
+      <div class="m-readonly-banner" id="m-readonly-banner" style="display: none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="4" y="11" width="16" height="10" rx="2"/>
+          <path d="M8 11V7a4 4 0 1 1 8 0v4"/>
+        </svg>
+        <div class="m-readonly-text">
+          <div class="m-readonly-title">Pull sheet is closed</div>
+          <div class="m-readonly-desc">This pull has been signed off and locked. Receiving and cancellations are disabled. <b id="m-readonly-reopen-hint">Only supervisors can reopen this sheet.</b></div>
+        </div>
+      </div>
+
+      <!-- ============ TRANSACTIONS LIST FOR THIS (item, hour) ============ -->
+      <div class="m-tx-section">
+        <div class="m-tx-header">
+          <div class="m-tx-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+            <span>Recent transactions for this slot</span>
+            <span class="m-tx-count" id="m-tx-count">0</span>
+          </div>
+          <a class="m-tx-full" id="m-tx-full" href="#">View all in drawer →</a>
+        </div>
+        <div class="m-tx-list" id="m-tx-list"></div>
+      </div>
+    </div>
+
+    <div class="app-modal-foot">
+      <div class="app-modal-foot-hint">
+        Press <kbd>⌘</kbd><kbd>↵</kbd> to confirm · <kbd>ESC</kbd> to cancel
+      </div>
+      <div class="app-modal-foot-buttons">
+        <button class="btn" id="m-cancel">Cancel</button>
+        <button class="btn btn-primary" id="m-confirm">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          Confirm Receipt
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CLOSE PULL CONFIRMATION MODAL -->
+<div class="app-modal-backdrop" id="close-modal">
+  <div class="app-modal close-modal">
+    <div class="app-modal-head">
+      <div class="app-modal-head-info">
+        <div class="app-modal-eyebrow close-app-modal-eyebrow">
+          <span>Close Pull Sheet · Final Confirmation</span>
+        </div>
+        <div class="app-modal-title">Sign &amp; Close</div>
+        <div class="app-modal-subtitle">
+          <b id="cm-pullid">PL-2847</b> · <span id="cm-warehouse">WH-01 · Bangkok Main</span>
+        </div>
+      </div>
+      <button class="close-btn" id="cm-close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="app-modal-body">
+      <div class="summary-grid">
+        <div class="summary-card accent">
+          <div class="label">Total Received</div>
+          <div class="value" id="cm-received">14,800</div>
+          <div class="sub" id="cm-received-sub">✓ All windows matched</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Active Items</div>
+          <div class="value" id="cm-items">8 SKUs</div>
+          <div class="sub" style="color:var(--text-muted)" id="cm-items-sub">0 canceled · 0 new</div>
+        </div>
+      </div>
+
+      <div class="declaration">
+        I, <b>S. Wattana</b>, confirm that the goods listed in pull sheet <b id="cm-decl-id">PL-2847</b> have been physically received, counted, and verified against the expected quantities at <b id="cm-decl-wh">WH-01 · Bangkok Main</b> on <b id="cm-date">18 Mar 2026, 14:32 ICT</b>. By signing below I acknowledge this closure is final and the records will be locked.
+      </div>
+
+      <div class="field" style="margin-bottom:8px">
+        <label>Signature</label>
+      </div>
+      <div class="signature-host" id="sig-host">
+        <canvas class="signature-canvas" id="sig-canvas" width="600" height="140"></canvas>
+        <div class="signature-placeholder">Sign here</div>
+      </div>
+      <div class="signature-foot">
+        <span class="label">S. Wattana</span>
+        <span class="line"></span>
+        <button class="clear-sig-btn" id="sig-clear">Clear</button>
+      </div>
+    </div>
+
+    <div class="app-modal-foot">
+      <div class="app-modal-foot-hint">
+        Signature required · This action is final
+      </div>
+      <div class="app-modal-foot-buttons">
+        <button class="btn" id="cm-cancel">Cancel</button>
+        <button class="btn btn-primary" id="cm-confirm" disabled>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"></path><circle cx="12" cy="12" r="10"></circle></svg>
+          Sign &amp; Close Pull Sheet
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <div class="toast-icon" id="toast-icon">✓</div>
+  <div class="toast-content">
+    <span id="toast-msg">Receipt confirmed</span>
+    <small id="toast-sub">PCBA-AX450-R2 · 1,000 pcs</small>
+  </div>
+</div>
+<!-- END_BODY:main -->
+
+<!-- BEGIN_JS:main -->
+<script>
+  // ============ THEME SYSTEM ============
+  // Shared with Pull Controller — both use the same localStorage key so theme
+  // choice persists across the two pages.
+  const THEME_KEY = 'pullController.theme';
+  function applyTheme(name) {
+    document.documentElement.setAttribute('data-theme', name);
+    document.querySelectorAll('.theme-swatch').forEach(b => {
+      b.classList.toggle('active', b.dataset.theme === name);
+    });
+    try { localStorage.setItem(THEME_KEY, name); } catch (e) {}
+  }
+  document.querySelectorAll('.theme-swatch').forEach(b => {
+    b.addEventListener('click', () => applyTheme(b.dataset.theme));
+  });
+  (function initTheme() {
+    let saved = 'light';
+    try { saved = localStorage.getItem(THEME_KEY) || 'light'; } catch (e) {}
+    applyTheme(saved);
+  })();
+
+  // ============ DATA ============
+  // status: 'normal' | 'new' | 'canceled'
+  // schedule: keyed by hour 0-23. Each entry { r: received, e: expected }.
+  // Hours not present in schedule are treated as "empty" (no shipment scheduled).
+  // Data is keyed by pull # → warehouse code → items[]
+  const pullData = {
+    'PL-2847': {
+      label: 'PL-2847 · Mar 18',
+      'WH-01': [
+        { code: 'PCBA-AX450-R2', desc: 'Main Logic Board · Rev 2',  tag: 'pcba', status: 'normal', vCode: 'FXL-002', vName: 'Foxlink Electronics', remark: 'Priority — line A',
+          schedule: {
+            7: {r:300,e:300}, 8: {r:300,e:300}, 9: {r:200,e:200}, 10:{r:200,e:200},
+            11:{r:300,e:300}, 12:{r:1000,e:1000}, 14:{r:500,e:500},
+            15:{r:120,e:400}, 16:{r:0,e:400}, 17:{r:0,e:600}, 18:{r:0,e:600},
+            19:{r:0,e:300}, 20:{r:0,e:300}, 22:{r:0,e:200}
+          } },
+        { code: 'PCBA-AX451-R2', desc: 'Daughter Board · Swap pair', tag: 'swap', status: 'normal', vCode: 'FXL-002', vName: 'Foxlink Electronics', remark: 'Pairs with AX450',
+          schedule: {
+            7: {r:300,e:300}, 9: {r:200,e:200}, 10:{r:200,e:200},
+            11:{r:300,e:300}, 12:{r:1000,e:1000}, 14:{r:500,e:500},
+            15:{r:200,e:400}, 16:{r:0,e:400}, 17:{r:0,e:400},
+            20:{r:0,e:600}, 21:{r:0,e:300}
+          } },
+        { code: 'CAP-470UF-25V',  desc: 'Electrolytic Capacitor',    tag: null,   status: 'normal', vCode: 'NCC-114', vName: 'Nichicon Asia', remark: '—',
+          schedule: {
+            7: {r:1500,e:1500}, 8: {r:1500,e:1500}, 9: {r:1500,e:1500},
+            11:{r:2000,e:2000}, 12:{r:2000,e:2000}, 13:{r:1500,e:1500},
+            15:{r:0,e:1000}, 16:{r:0,e:1000}, 17:{r:0,e:1500}, 18:{r:0,e:1500},
+            23:{r:0,e:800}, 0:{r:0,e:800}, 1:{r:0,e:600}
+          } },
+        { code: 'RES-10K-1%',     desc: 'Precision Resistor SMD',    tag: null,   status: 'normal', vCode: 'YAG-088', vName: 'Yageo Corp', remark: 'Reel · 5000',
+          schedule: {
+            7: {r:5000,e:5000}, 9: {r:3000,e:3000},
+            11:{r:5000,e:5000}, 13:{r:5000,e:5000},
+            15:{r:0,e:2000}, 17:{r:0,e:5000},
+            20:{r:0,e:3000}, 4:{r:0,e:2000}
+          } },
+        { code: 'MOSFET-N-30V',   desc: 'Power MOSFET TO-220',       tag: null,   status: 'canceled', vCode: 'INF-201', vName: 'Infineon Tech', remark: 'Vendor cancel',
+          schedule: {
+            12:{r:340,e:500}, 13:{r:0,e:500}, 14:{r:0,e:500}, 15:{r:0,e:500}, 16:{r:0,e:500}
+          } },
+        { code: 'CONN-USB-C-16',  desc: 'USB-C Connector 16-pin',    tag: null,   status: 'normal', vCode: 'JST-040', vName: 'J.S.T. Mfg', remark: '—',
+          schedule: {
+            7: {r:200,e:200}, 8: {r:200,e:200},
+            12:{r:200,e:200}, 13:{r:200,e:200}, 14:{r:200,e:200},
+            15:{r:0,e:200}, 16:{r:0,e:200}, 18:{r:0,e:200},
+            19:{r:0,e:100}, 20:{r:0,e:100}
+          } },
+        { code: 'LCD-3.5-IPS',    desc: '3.5" IPS Display Module',   tag: null,   status: 'new',    vCode: 'TVE-555', vName: 'Truly Display', remark: 'Added today',
+          schedule: {
+            7: {r:50,e:50}, 8: {r:50,e:50}, 9: {r:50,e:50}, 10: {r:50,e:50},
+            11:{r:50,e:50}, 12:{r:50,e:50}, 13:{r:50,e:50}, 14:{r:50,e:50},
+            15:{r:0,e:50}, 16:{r:0,e:50}, 17:{r:0,e:50}, 18:{r:0,e:50},
+            19:{r:0,e:30}, 20:{r:0,e:30}, 3:{r:0,e:20}, 4:{r:0,e:20}
+          } },
+        { code: 'SHIELD-RF-A1',   desc: 'RF Shield Can Type-A',      tag: null,   status: 'normal', vCode: 'ALP-919', vName: 'Alps Alpine', remark: 'Match w/ PCBA',
+          schedule: {
+            7: {r:300,e:300}, 8: {r:300,e:300}, 10: {r:300,e:300},
+            11:{r:300,e:300}, 12:{r:300,e:300}, 13:{r:300,e:300}, 14:{r:300,e:300},
+            15:{r:0,e:300}, 16:{r:0,e:300}, 17:{r:0,e:300},
+            21:{r:0,e:300}, 22:{r:0,e:300}
+          } },
+      ],
+      'WH-02': [
+        { code: 'BATT-LIPO-3.7V', desc: 'Li-Po Battery 2000mAh',     tag: null,   status: 'normal', vCode: 'PNS-301', vName: 'Panasonic Energy', remark: 'Store < 25°C',
+          schedule: {
+            8: {r:500,e:500}, 9: {r:500,e:500},
+            12:{r:0,e:600}, 13:{r:0,e:600},
+            16:{r:0,e:400}
+          } },
+        { code: 'CASE-ABS-BLK',   desc: 'ABS Housing · Matte Black', tag: null,   status: 'normal', vCode: 'TPI-077', vName: 'Thai Plastic Ind.', remark: 'QC at receipt',
+          schedule: {
+            11:{r:1000,e:1000}, 12:{r:1000,e:1000},
+            15:{r:0,e:800}, 17:{r:0,e:800}
+          } },
+        { code: 'SCREW-M2-6MM',   desc: 'Stainless Screw M2×6mm',    tag: null,   status: 'normal', vCode: 'NHT-009', vName: 'Nihon Thread', remark: 'Bulk pack',
+          schedule: {
+            11:{r:10000,e:10000},
+            15:{r:0,e:5000}, 18:{r:0,e:5000}
+          } },
+        { code: 'GASKET-RB-32',   desc: 'Rubber Gasket 32mm',        tag: null,   status: 'canceled', vCode: 'SMR-114', vName: 'Sumitomo Rubber', remark: 'Spec mismatch',
+          schedule: { 14:{r:0,e:200} } },
+        { code: 'PCBA-PWR-V3',    desc: 'Power Board · Rev 3',       tag: 'pcba', status: 'new',    vCode: 'FXL-002', vName: 'Foxlink Electronics', remark: 'New SKU · Apr',
+          schedule: {
+            11:{r:200,e:200}, 12:{r:200,e:200}, 13:{r:200,e:200}, 14:{r:200,e:200},
+            15:{r:0,e:150}, 17:{r:0,e:150}
+          } },
+      ],
+      'WH-03': [
+        { code: 'STEEL-SHEET-2MM',desc: 'Cold Rolled Steel 2mm',     tag: null,   status: 'normal', vCode: 'TGM-202', vName: 'Thai G Steel', remark: 'Heavy · forklift',
+          schedule: {
+            7: {r:50,e:50},
+            11:{r:50,e:50}, 12:{r:50,e:50},
+            15:{r:0,e:40}
+          } },
+        { code: 'PAINT-EPOXY-WT', desc: 'Epoxy Paint · White 20L',   tag: null,   status: 'normal', vCode: 'PPG-451', vName: 'PPG Coatings', remark: 'Ventilated area',
+          schedule: {
+            11:{r:12,e:12}, 13:{r:8,e:8},
+            16:{r:0,e:10}
+          } },
+        { code: 'ALU-EXTRUSION', desc: 'Aluminum Extrusion 6063 T5', tag: null,   status: 'normal', vCode: 'GAS-088', vName: 'Goldsun Aluminum', remark: '6m bars',
+          schedule: {
+            11:{r:200,e:200}, 14:{r:120,e:120},
+            17:{r:0,e:180}
+          } },
+      ],
+    },
+    'PL-2846': {
+      label: 'PL-2846 · Mar 17',
+      'WH-01': [
+        { code: 'PCBA-AX450-R2', desc: 'Main Logic Board · Rev 2', tag: 'pcba', status: 'normal', vCode: 'FXL-002', vName: 'Foxlink Electronics', remark: 'Restock',
+          schedule: {
+            8: {r:200,e:200}, 11:{r:300,e:300}, 14:{r:0,e:400}, 17:{r:0,e:300}
+          } },
+        { code: 'CAP-100UF-16V', desc: 'Capacitor 100µF 16V', tag: null, status: 'normal', vCode: 'NCC-114', vName: 'Nichicon Asia', remark: '—',
+          schedule: {
+            11:{r:1500,e:1500}, 13:{r:1500,e:1500}, 15:{r:0,e:1000}
+          } },
+        { code: 'CONN-USB-C-16', desc: 'USB-C Connector 16-pin', tag: null, status: 'normal', vCode: 'JST-040', vName: 'J.S.T. Mfg', remark: '—',
+          schedule: {
+            11:{r:200,e:200}, 12:{r:200,e:200}, 16:{r:0,e:200}
+          } },
+        { code: 'IC-MCU-STM32', desc: 'STM32 Microcontroller', tag: null, status: 'new', vCode: 'STM-401', vName: 'STMicroelectronics', remark: 'New addition',
+          schedule: {
+            11:{r:100,e:100}, 13:{r:100,e:100}
+          } },
+      ],
+      'WH-02': [
+        { code: 'BATT-LIPO-3.7V', desc: 'Li-Po Battery 2000mAh', tag: null, status: 'normal', vCode: 'PNS-301', vName: 'Panasonic Energy', remark: 'Store < 25°C',
+          schedule: { 11:{r:500,e:500}, 14:{r:0,e:400} } },
+        { code: 'CASE-ABS-WT', desc: 'ABS Housing · White', tag: null, status: 'normal', vCode: 'TPI-077', vName: 'Thai Plastic Ind.', remark: '—',
+          schedule: { 11:{r:800,e:800}, 15:{r:0,e:600} } },
+      ],
+      'WH-03': [
+        { code: 'STEEL-SHEET-2MM', desc: 'Cold Rolled Steel 2mm', tag: null, status: 'normal', vCode: 'TGM-202', vName: 'Thai G Steel', remark: 'Forklift',
+          schedule: { 11:{r:40,e:40}, 14:{r:0,e:30} } },
+      ],
+    },
+    'PL-2845': {
+      label: 'PL-2845 · Mar 16',
+      'WH-01': [
+        { code: 'PCBA-AX450-R2', desc: 'Main Logic Board · Rev 2', tag: 'pcba', status: 'normal', vCode: 'FXL-002', vName: 'Foxlink Electronics', remark: 'Closed pull',
+          schedule: {
+            8: {r:500,e:500}, 11:{r:500,e:500}, 14:{r:500,e:500}
+          } },
+        { code: 'RES-10K-1%', desc: 'Precision Resistor SMD', tag: null, status: 'normal', vCode: 'YAG-088', vName: 'Yageo Corp', remark: 'Reel',
+          schedule: {
+            11:{r:3000,e:3000}, 13:{r:3000,e:3000}
+          } },
+        { code: 'CONN-USB-C-16', desc: 'USB-C Connector 16-pin', tag: null, status: 'normal', vCode: 'JST-040', vName: 'J.S.T. Mfg', remark: '—',
+          schedule: { 11:{r:200,e:200}, 13:{r:200,e:200} } },
+      ],
+      'WH-02': [
+        { code: 'BATT-LIPO-3.7V', desc: 'Li-Po Battery 2000mAh', tag: null, status: 'normal', vCode: 'PNS-301', vName: 'Panasonic Energy', remark: '—',
+          schedule: { 11:{r:300,e:300}, 14:{r:300,e:300} } },
+      ],
+      'WH-03': [],
+    },
+  };
+
+  // Currently selected pull (drives which warehouse table to read from)
+  let currentPull = 'PL-2847';
+
+  // The active items array — points to currentPull[currentWarehouse]
+  let items = pullData[currentPull]['WH-01'] || [];
+
+  function loadPullWarehouse(pullId, whCode) {
+    currentPull = pullId;
+    items = (pullData[pullId] && pullData[pullId][whCode]) || [];
+  }
+
+  function loadWarehouseItems(code) {
+    items = (pullData[currentPull] && pullData[currentPull][code]) || [];
+  }
+
+  // ---- helpers to read/write a cell by absolute hour ----
+  function getCell(item, hour) {
+    const slot = item.schedule[hour];
+    if (!slot) return { r: 0, e: 0, s: 'empty' };
+    const s = (slot.e === 0) ? 'empty'
+            : (slot.r >= slot.e) ? 'complete'
+            : 'pending';
+    return { r: slot.r, e: slot.e, s };
+  }
+  function setReceived(item, hour, newR) {
+    if (!item.schedule[hour]) return;
+    item.schedule[hour].r = newR;
+  }
+
+  // Visible 4 hours = current period start + 0..3, wrapped at 24
+  function currentPeriodHours() {
+    const start = parseInt(document.getElementById('period-select').value);
+    return [0,1,2,3].map(i => (start + i) % 24);
+  }
+
+  // ---- classify an item by the CURRENTLY VISIBLE PERIOD (4 hours) ----
+  // Filter shows items based on what the user is looking at, not the whole sheet.
+  function itemClass(item) {
+    if (item.status === 'canceled') return 'canceled';
+    const hours = currentPeriodHours();
+    let hasExpected = false;
+    let hasOutstanding = false;
+    for (const h of hours) {
+      const slot = item.schedule[h];
+      if (!slot || slot.e <= 0) continue;
+      hasExpected = true;
+      if (slot.r < slot.e) hasOutstanding = true;
+    }
+    if (!hasExpected) return 'received'; // nothing scheduled in this period
+    return hasOutstanding ? 'outstanding' : 'received';
+  }
+
+  function currentFilter() {
+    const el = document.getElementById('filter-select');
+    return el ? el.value : 'all';
+  }
+
+  function currentSearch() {
+    const el = document.getElementById('search-input');
+    return el ? el.value.trim().toLowerCase() : '';
+  }
+
+  function itemPassesFilter(item) {
+    // Status filter
+    const f = currentFilter();
+    if (f !== 'all' && itemClass(item) !== f) return false;
+
+    // Free-text search across item code, description, vendor code, vendor name, remark
+    const q = currentSearch();
+    if (q.length === 0) return true;
+    const haystack = [
+      item.code, item.desc, item.vCode, item.vName, item.remark
+    ].join(' ').toLowerCase();
+    return haystack.includes(q);
+  }
+
+  let pullClosed = false;
+
+  // ============ RENDER ============
+  function render() {
+    const tbody = document.getElementById('rows');
+    tbody.innerHTML = '';
+    let shown = 0;
+    items.forEach((item, ri) => {
+      if (!itemPassesFilter(item)) return;
+      shown++;
+      const tr = document.createElement('tr');
+      if (item.tag === 'pcba') tr.classList.add('pcba');
+      if (item.tag === 'swap') tr.classList.add('swap');
+      if (item.status === 'canceled') tr.classList.add('row-canceled');
+      if (item.status === 'new') tr.classList.add('row-new');
+
+      const tagHtml = item.tag === 'pcba' ? '<span class="tag pcba">PCBA</span>'
+                    : item.tag === 'swap' ? '<span class="tag swap">SWAP</span>' : '';
+
+      const statusLabel = item.status === 'canceled' ? 'Canceled'
+                       : item.status === 'new' ? 'New' : 'Normal';
+
+      tr.innerHTML = `
+        <td class="status-cell">
+          <button class="status-badge ${item.status}" data-row="${ri}">${statusLabel}</button>
+        </td>
+        <td class="info-cell">
+          <div class="item-code">${item.code}${tagHtml}</div>
+          <div class="item-desc">${item.desc}</div>
+        </td>
+        <td class="vendor-cell">
+          <div class="vendor-code">${item.vCode}</div>
+          <div class="vendor-name">${item.vName}</div>
+        </td>
+        <td class="remark-cell">${item.remark}</td>
+      `;
+
+      item.cells = currentPeriodHours().map(h => getCell(item, h));
+      item.cells.forEach((c, ci) => {
+        const td = document.createElement('td');
+        td.className = 'hour-cell';
+        const btn = document.createElement('button');
+        btn.className = 'hour-btn ' + c.s;
+        btn.dataset.row = ri;
+        btn.dataset.col = ci;
+
+        const pct = c.e > 0 ? Math.min(100, Math.round((c.r / c.e) * 100)) : 0;
+
+        if (c.s === 'empty') {
+          btn.innerHTML = `<div class="hour-nums"><span class="label">add</span></div>`;
+        } else {
+          const statusText = c.s === 'complete' ? `✓ ${pct}%` : `${pct}%`;
+          btn.innerHTML = `
+            <div class="hour-nums">
+              <span class="recv">${c.r.toLocaleString()}</span>
+              <span class="sep">/</span>
+              <span class="exp">${c.e.toLocaleString()}</span>
+            </div>
+            <div class="hour-meter"><span style="width:${Math.min(100,pct)}%"></span></div>
+            <div class="hour-status">${statusText}</div>
+          `;
+        }
+        if (item.status !== 'canceled') {
+          btn.addEventListener('click', () => openModal(ri, ci));
+        }
+        td.appendChild(btn);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    // Empty-state row when nothing matches the filter
+    if (shown === 0) {
+      const tr = document.createElement('tr');
+      const q = currentSearch();
+      const f = currentFilter();
+      let msg;
+      if (items.length === 0) {
+        msg = `No items for ${currentPull} in this warehouse`;
+      } else if (q && f !== 'all') {
+        msg = `No "${f}" items match "${q}"`;
+      } else if (q) {
+        msg = `No items match "${q}"`;
+      } else {
+        msg = `No items match the "${f}" filter`;
+      }
+      tr.innerHTML = `<td colspan="8" style="padding:48px 24px;text-align:center;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;">${msg}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    // re-bind status badge clicks
+    document.querySelectorAll('.status-badge').forEach(b => {
+      b.addEventListener('click', (e) => openStatusMenu(e, parseInt(b.dataset.row)));
+    });
+
+    updateStats();
+    updateCloseButton();
+  }
+
+  function updateStats() {
+    let exp = 0, rec = 0, pendingWindows = 0, active = 0, canceled = 0, newCount = 0;
+    const hours = currentPeriodHours();
+    items.forEach(i => {
+      if (i.status === 'canceled') { canceled++; return; }
+      active++;
+      if (i.status === 'new') newCount++;
+      hours.forEach(h => {
+        const c = getCell(i, h);
+        if (c.s !== 'empty') {
+          exp += c.e;
+          rec += c.r;
+          if (c.s === 'pending') pendingWindows++;
+        }
+      });
+    });
+    const pct = exp > 0 ? Math.round((rec / exp) * 100) : 0;
+    const outstanding = exp - rec;
+
+    document.getElementById('stat-items').innerHTML = `${active} <small>SKUs</small>`;
+    document.getElementById('stat-items-sub').textContent = `${canceled} canceled · ${newCount} new`;
+    document.getElementById('stat-exp').innerHTML = `${exp.toLocaleString()} <small>units</small>`;
+    document.getElementById('stat-rec').innerHTML = `${rec.toLocaleString()} <small>units</small>`;
+    document.getElementById('stat-rec-sub').textContent = `${pct}% of expected`;
+    document.getElementById('stat-out').innerHTML = `${outstanding.toLocaleString()} <small>units</small>`;
+    document.getElementById('stat-out-sub').textContent = `${pendingWindows} windows pending`;
+
+    document.getElementById('prog-fill').style.width = pct + '%';
+    document.getElementById('prog-label').textContent = pct + '%';
+  }
+
+  function isFullyReceived() {
+    // Scan EVERY hour in EVERY non-canceled row's schedule (whole pull sheet, not just visible period)
+    let hasAnyExpected = false;
+    for (const i of items) {
+      if (i.status === 'canceled') continue;
+      for (const slot of Object.values(i.schedule)) {
+        if (slot.e <= 0) continue;
+        hasAnyExpected = true;
+        if (slot.r < slot.e) return false;
+      }
+    }
+    return hasAnyExpected;
+  }
+
+  /* Read the current user's role from auth.user. Falls back to operator. */
+  function currentRole() {
+    try {
+      const raw = localStorage.getItem('auth.user');
+      if (raw) {
+        const u = JSON.parse(raw);
+        return (u.roleKey || u.role || 'operator').toLowerCase();
+      }
+    } catch (e) {}
+    return 'operator';
+  }
+  function canReopenPull() {
+    const role = currentRole();
+    return role === 'supervisor' || role === 'admin';
+  }
+
+  function updateCloseButton() {
+    const closeBtn = document.getElementById('btn-close-pull');
+    const reopenBtn = document.getElementById('btn-reopen-pull');
+
+    if (pullClosed) {
+      // Sheet is locked. Show reopen for supervisors; hide close.
+      closeBtn.disabled = true;
+      closeBtn.classList.remove('ready');
+      document.getElementById('btn-close-pull-label').textContent = 'Pull Sheet Closed';
+
+      if (canReopenPull()) {
+        // Supervisor sees a Reopen button instead of the inert "closed" pill
+        closeBtn.style.display = 'none';
+        reopenBtn.style.display = '';
+      } else {
+        // Non-supervisor only sees the locked indicator
+        closeBtn.style.display = '';
+        reopenBtn.style.display = 'none';
+      }
+      return;
+    }
+
+    // Sheet is open
+    reopenBtn.style.display = 'none';
+    closeBtn.style.display = '';
+
+    if (isFullyReceived()) {
+      closeBtn.disabled = false;
+      closeBtn.classList.add('ready');
+      document.getElementById('btn-close-pull-label').textContent = 'Close Pull Sheet';
+    } else {
+      closeBtn.disabled = true;
+      closeBtn.classList.remove('ready');
+      document.getElementById('btn-close-pull-label').textContent = 'Close Pull Sheet';
+    }
+  }
+
+  // ============ STATUS MENU ============
+  const statusMenu = document.getElementById('status-menu');
+  let statusMenuRow = null;
+
+  function openStatusMenu(e, rowIdx) {
+    if (pullClosed) return;
+    e.stopPropagation();
+    statusMenuRow = rowIdx;
+    const rect = e.currentTarget.getBoundingClientRect();
+    statusMenu.style.left = rect.left + 'px';
+    statusMenu.style.top = (rect.bottom + 4) + 'px';
+    statusMenu.classList.add('open');
+  }
+
+  document.querySelectorAll('.status-menu-item').forEach(it => {
+    it.addEventListener('click', () => {
+      if (statusMenuRow !== null) {
+        items[statusMenuRow].status = it.dataset.status;
+        statusMenu.classList.remove('open');
+        statusMenuRow = null;
+        render();
+      }
+    });
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!statusMenu.contains(e.target) && !e.target.classList.contains('status-badge')) {
+      statusMenu.classList.remove('open');
+    }
+  });
+
+  // ============ RECEIVE MODAL ============
+  const modal = document.getElementById('modal');
+  let activeRow = 0, activeCol = 0, activeMax = 0;
+
+  function openModal(ri, ci) {
+    // When pull is closed, still allow opening as VIEW-ONLY so the user can
+    // inspect transactions. Form fields and confirm are disabled below.
+    if (items[ri].status === 'canceled') return;
+
+    activeRow = ri; activeCol = ci;
+    const item = items[ri];
+    const hours = currentPeriodHours();
+    const hour = hours[ci];
+    const cell = getCell(item, hour);
+    const hourStr = String(hour).padStart(2, '0') + ':00';
+
+    // remember which hour we're editing so confirmReceipt can write back even if period changes
+    window._activeHour = hour;
+
+    document.getElementById('m-time').textContent = hourStr;
+    document.getElementById('m-title').textContent = item.code;
+    document.getElementById('m-desc').textContent = item.desc;
+    document.getElementById('m-vendor').textContent = `${item.vName} (${item.vCode})`;
+
+    const expected = cell.e || 0;
+    const prev = cell.r || 0;
+    const outstanding = Math.max(0, expected - prev);
+    activeMax = outstanding;
+
+    document.getElementById('m-expected').textContent = expected.toLocaleString();
+    document.getElementById('m-prev').textContent = prev.toLocaleString();
+    document.getElementById('m-out').textContent = outstanding.toLocaleString();
+    document.getElementById('cap-hint-max').textContent = outstanding.toLocaleString();
+
+    const input = document.getElementById('m-input');
+    input.max = outstanding;
+    input.value = outstanding;
+    input.classList.remove('is-error');
+    document.getElementById('cap-hint').classList.remove('error');
+
+    // ---- Read-only gate when pull is closed ----
+    applyModalReadOnlyMode();
+
+    // ---- Load transactions for this (item, hour) ----
+    renderModalTransactions(item.code, hour);
+
+    modal.classList.add('open');
+    if (!pullClosed) setTimeout(() => input.select(), 100);
+  }
+
+  /* When the pull is closed, the Receive Goods modal becomes view-only:
+     hide the input form, show the read-only banner, disable Confirm. */
+  function applyModalReadOnlyMode() {
+    const banner = document.getElementById('m-readonly-banner');
+    const confirmBtn = document.getElementById('m-confirm');
+    const formInputs = document.querySelectorAll('#modal .field input, #modal .field textarea, #modal .field select, #modal .qty-input, #modal .quick-btn');
+    if (pullClosed) {
+      banner.style.display = 'flex';
+      confirmBtn.style.display = 'none';
+      formInputs.forEach(el => el.setAttribute('disabled', 'disabled'));
+      // Update the supervisor hint based on the current user's role
+      const hint = document.getElementById('m-readonly-reopen-hint');
+      const role = currentRole();
+      hint.textContent = (role === 'supervisor' || role === 'admin')
+        ? 'You can reopen this sheet from the toolbar.'
+        : 'Only supervisors can reopen this sheet.';
+    } else {
+      banner.style.display = 'none';
+      confirmBtn.style.display = '';
+      formInputs.forEach(el => el.removeAttribute('disabled'));
+    }
+  }
+
+  /* Read transactions store, filter for this (pull, item, hour), render rows. */
+  function renderModalTransactions(itemCode, hour) {
+    const pullId = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : document.getElementById('pull-select').value;
+    const allTx = (typeof txLoad === 'function') ? txLoad() : [];
+    const list = allTx
+      .filter(r => r.pullId === pullId && r.itemCode === itemCode && r.hour === hour)
+      .sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+
+    // Update count + drawer link
+    const countEl = document.getElementById('m-tx-count');
+    countEl.textContent = list.length;
+    countEl.classList.toggle('has-tx', list.length > 0);
+    const fullLink = document.getElementById('m-tx-full');
+    fullLink.onclick = (e) => {
+      e.preventDefault();
+      closeModal();
+      // Hand off context so the drawer pre-filters to this exact (item, hour) slot
+      if (typeof openTxDrawer === 'function') openTxDrawer({ hour, itemCode });
+    };
+
+    const wrap = document.getElementById('m-tx-list');
+    if (list.length === 0) {
+      wrap.innerHTML = `<div class="m-tx-empty">No transactions yet for ${itemCode} at ${String(hour).padStart(2,'0')}:00</div>`;
+      return;
+    }
+
+    wrap.innerHTML = list.map(r => {
+      const isReversal = r.qty < 0;
+      const isVoided = !!r.reversedBy;
+      const cls = (isReversal ? 'reversal' : '') + (isVoided ? ' voided' : '');
+      const pillCls = isReversal ? 'cancel' : (isVoided ? 'voided' : 'receive');
+      const pillLabel = isReversal ? 'Cancel' : (isVoided ? 'Voided' : 'Receive');
+      const qtyDisplay = isReversal
+        ? `<span class="m-tx-qty neg">−${Math.abs(r.qty).toLocaleString()}</span>`
+        : `<span class="m-tx-qty">${r.qty.toLocaleString()}</span>`;
+      const canCancel = !isReversal && !isVoided && !pullClosed;
+      const cancelBtnHtml = canCancel
+        ? `<button class="m-tx-cancel-btn" data-tx-cancel="${escAttr(r.id)}" title="Cancel this receipt">
+             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+             Cancel
+           </button>`
+        : '';
+      return `
+        <div class="m-tx-row ${cls}">
+          <div class="m-tx-when">
+            ${formatTxTime(r.receivedAt)}
+            <small>${escAttr(r.id.slice(0, 12))}</small>
+          </div>
+          <div class="m-tx-meta">
+            <b>${escAttr(r.lotBatch || '—')}</b> · ${escAttr(r.palletId || '—')}
+            <br>
+            <span class="m-tx-actor">By ${escAttr(r.receivedBy)}</span>
+          </div>
+          <div>
+            <span class="m-tx-pill ${pillCls}">${pillLabel}</span>
+            ${qtyDisplay}
+          </div>
+          <div class="m-tx-action">${cancelBtnHtml}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /* Small helpers — defined here to avoid relying on drawer-only globals */
+  function escAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function formatTxTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function closeModal() { modal.classList.remove('open'); }
+
+  // Input cap-at-expected enforcement
+  document.getElementById('m-input').addEventListener('input', (e) => {
+    const v = parseInt(e.target.value) || 0;
+    const hint = document.getElementById('cap-hint');
+    if (v > activeMax) {
+      e.target.value = activeMax;
+      e.target.classList.add('is-error');
+      hint.classList.add('error');
+      document.getElementById('cap-hint-text').innerHTML = `Capped at <b>${activeMax.toLocaleString()}</b> pcs · cannot receive over expected`;
+      setTimeout(() => {
+        e.target.classList.remove('is-error');
+        hint.classList.remove('error');
+        document.getElementById('cap-hint-text').innerHTML = `Maximum allowed: <b>${activeMax.toLocaleString()}</b> pcs. Cannot receive over expected.`;
+      }, 1800);
+    } else if (v < 0) {
+      e.target.value = 0;
+    }
+  });
+
+  document.getElementById('m-close').addEventListener('click', closeModal);
+  document.getElementById('m-cancel').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  document.querySelectorAll('.quick-fill button').forEach(b => {
+    b.addEventListener('click', () => {
+      const action = b.dataset.fill;
+      const input = document.getElementById('m-input');
+      if (action === 'all') input.value = activeMax;
+      else if (action === 'half') input.value = Math.floor(activeMax / 2);
+      else if (action === '0') input.value = 0;
+    });
+  });
+
+  document.getElementById('m-confirm').addEventListener('click', confirmReceipt);
+
+  function confirmReceipt() {
+    const inputVal = parseInt(document.getElementById('m-input').value) || 0;
+    // Hard guard: cap at max
+    const newQty = Math.min(inputVal, activeMax);
+    const item = items[activeRow];
+    const hour = window._activeHour;
+    const slot = item.schedule[hour];
+    if (slot) {
+      slot.r = (slot.r || 0) + newQty;
+      if (slot.r > slot.e) slot.r = slot.e; // belt and suspenders
+    }
+
+    render();
+
+    requestAnimationFrame(() => {
+      const updated = document.querySelector(`.hour-btn[data-row="${activeRow}"][data-col="${activeCol}"]`);
+      if (updated) updated.classList.add('just-updated');
+    });
+
+    showToast('Receipt confirmed', `${item.code} · +${newQty.toLocaleString()} pcs`, 'default');
+    closeModal();
+  }
+
+  // ============ CLOSE PULL MODAL ============
+  const closeModalEl = document.getElementById('close-modal');
+  const sigCanvas = document.getElementById('sig-canvas');
+  const sigHost = document.getElementById('sig-host');
+  const sigCtx = sigCanvas.getContext('2d');
+  let sigDrawing = false, sigHasInk = false;
+
+  function setupSignatureCanvas() {
+    const ratio = window.devicePixelRatio || 1;
+    const rect = sigCanvas.getBoundingClientRect();
+    sigCanvas.width = rect.width * ratio;
+    sigCanvas.height = rect.height * ratio;
+    sigCtx.scale(ratio, ratio);
+    sigCtx.strokeStyle = '#1a1d20';
+    sigCtx.lineWidth = 2;
+    sigCtx.lineCap = 'round';
+    sigCtx.lineJoin = 'round';
+  }
+
+  function getSigPos(e) {
+    const rect = sigCanvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+
+  function sigStart(e) {
+    e.preventDefault();
+    sigDrawing = true;
+    const p = getSigPos(e);
+    sigCtx.beginPath();
+    sigCtx.moveTo(p.x, p.y);
+  }
+  function sigMove(e) {
+    if (!sigDrawing) return;
+    e.preventDefault();
+    const p = getSigPos(e);
+    sigCtx.lineTo(p.x, p.y);
+    sigCtx.stroke();
+    if (!sigHasInk) {
+      sigHasInk = true;
+      sigHost.classList.add('signed');
+      document.getElementById('cm-confirm').disabled = false;
+    }
+  }
+  function sigEnd() { sigDrawing = false; }
+
+  sigCanvas.addEventListener('mousedown', sigStart);
+  sigCanvas.addEventListener('mousemove', sigMove);
+  sigCanvas.addEventListener('mouseup', sigEnd);
+  sigCanvas.addEventListener('mouseleave', sigEnd);
+  sigCanvas.addEventListener('touchstart', sigStart);
+  sigCanvas.addEventListener('touchmove', sigMove);
+  sigCanvas.addEventListener('touchend', sigEnd);
+
+  function clearSignature() {
+    sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+    sigHasInk = false;
+    sigHost.classList.remove('signed');
+    document.getElementById('cm-confirm').disabled = true;
+  }
+  document.getElementById('sig-clear').addEventListener('click', clearSignature);
+
+  function openCloseModal() {
+    if (pullClosed) return;
+    if (!isFullyReceived()) return;
+
+    // Populate summary — based on the WHOLE pull sheet (all hours of all schedules)
+    let exp = 0, rec = 0, active = 0, canceled = 0, newCount = 0;
+    items.forEach(i => {
+      if (i.status === 'canceled') { canceled++; return; }
+      active++;
+      if (i.status === 'new') newCount++;
+      Object.values(i.schedule).forEach(slot => {
+        if (slot.e > 0) { exp += slot.e; rec += slot.r; }
+      });
+    });
+
+    const pullId = document.getElementById('pull-select').value;
+    document.getElementById('cm-pullid').textContent = pullId;
+    document.getElementById('cm-decl-id').textContent = pullId;
+    document.getElementById('cm-received').textContent = rec.toLocaleString();
+    document.getElementById('cm-items').textContent = active + ' SKUs';
+    document.getElementById('cm-items-sub').textContent = `${canceled} canceled · ${newCount} new`;
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) +
+      ', ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + ' ICT';
+    document.getElementById('cm-date').textContent = dateStr;
+
+    closeModalEl.classList.add('open');
+    requestAnimationFrame(setupSignatureCanvas);
+    clearSignature();
+  }
+
+  function closeCloseModal() { closeModalEl.classList.remove('open'); }
+
+  document.getElementById('btn-close-pull').addEventListener('click', openCloseModal);
+  document.getElementById('cm-close').addEventListener('click', closeCloseModal);
+  document.getElementById('cm-cancel').addEventListener('click', closeCloseModal);
+  closeModalEl.addEventListener('click', (e) => { if (e.target === closeModalEl) closeCloseModal(); });
+
+  document.getElementById('cm-confirm').addEventListener('click', () => {
+    if (!sigHasInk) return;
+    pullClosed = true;
+    document.body.classList.add('pull-closed');
+    document.getElementById('closed-banner').classList.add('show');
+    updateCloseButton();
+    closeCloseModal();
+    showToast('Pull sheet closed & locked', 'Signature recorded · records archived', 'success-big');
+  });
+
+  // ============ REOPEN HANDLER (supervisor / admin only) ============
+  document.getElementById('btn-reopen-pull').addEventListener('click', () => {
+    if (!pullClosed) return;
+    if (!canReopenPull()) {
+      showToast('Reopen not allowed', 'Supervisors only', 'error');
+      return;
+    }
+    const pullId = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : document.getElementById('pull-select').value;
+    const ok = confirm(
+      `Reopen pull sheet ${pullId}?\n\n` +
+      `This will unlock the sheet for further editing. The previous close signature stays in the audit log, ` +
+      `and a "reopen" event will be recorded with your name and timestamp.`
+    );
+    if (!ok) return;
+
+    pullClosed = false;
+    document.body.classList.remove('pull-closed');
+    document.getElementById('closed-banner').classList.remove('show');
+    updateCloseButton();
+    showToast('Pull sheet reopened', 'Sheet is now editable again');
+    // The reopen event would normally be audit-logged server-side here.
+  });
+
+  // ============ TOAST ============
+  function showToast(msg, sub, kind) {
+    const toast = document.getElementById('toast');
+    toast.className = 'toast' + (kind === 'success-big' ? ' success-big' : kind === 'error' ? ' error' : '');
+    document.getElementById('toast-msg').textContent = msg;
+    document.getElementById('toast-sub').textContent = sub;
+    document.getElementById('toast-icon').textContent = kind === 'error' ? '!' : '✓';
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), 2800);
+  }
+
+  // ============ KEYBOARD ============
+  document.addEventListener('keydown', (e) => {
+    if (modal.classList.contains('open')) {
+      if (e.key === 'Escape') closeModal();
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') confirmReceipt();
+    }
+    if (closeModalEl.classList.contains('open')) {
+      if (e.key === 'Escape') closeCloseModal();
+    }
+  });
+
+  document.getElementById('period-select').addEventListener('change', () => {
+    const sel = document.getElementById('period-select');
+    const start = parseInt(sel.value);
+    document.querySelectorAll('thead th.hour-col').forEach((th, i) => {
+      const h = (start + i) % 24;
+      th.querySelector('.hour-num').textContent = String(h).padStart(2,'0') + '.00';
+    });
+    // Update footer indicator
+    document.getElementById('footer-period').textContent = sel.options[sel.selectedIndex].text;
+    render();
+  });
+
+  // ============ EXPORT TO EXCEL ============
+  function buildExportRows() {
+    const pullId = document.getElementById('pull-select').value;
+    const whSel = document.getElementById('warehouse-select');
+    const warehouse = whSel.options[whSel.selectedIndex].text;
+    const now = new Date();
+    const exportedAt = now.toLocaleString('en-GB');
+
+    // ---- Sheet 1: Detail (one row per item × scheduled hour) ----
+    const detail = [];
+    items.forEach(item => {
+      const hours = Object.keys(item.schedule).map(Number).sort((a,b)=>a-b);
+      hours.forEach(h => {
+        const slot = item.schedule[h];
+        if (slot.e <= 0) return;
+        const outstanding = Math.max(0, slot.e - slot.r);
+        const pct = slot.e > 0 ? (slot.r / slot.e) : 0;
+        const cellStatus = (item.status === 'canceled') ? 'Canceled'
+                         : (slot.r >= slot.e) ? 'Complete'
+                         : (slot.r > 0) ? 'Partial' : 'Pending';
+        detail.push({
+          'Pull #': pullId,
+          'Warehouse': warehouse,
+          'Item Code': item.code,
+          'Description': item.desc,
+          'Type': item.tag ? item.tag.toUpperCase() : '',
+          'Row Status': item.status.charAt(0).toUpperCase() + item.status.slice(1),
+          'Vendor Code': item.vCode,
+          'Vendor Name': item.vName,
+          'Remark': item.remark,
+          'Hour': String(h).padStart(2,'0') + ':00',
+          'Expected': slot.e,
+          'Received': slot.r,
+          'Outstanding': outstanding,
+          'Progress %': Math.round(pct * 100),
+          'Cell Status': cellStatus,
+        });
+      });
+    });
+
+    // ---- Sheet 2: Summary (one row per item with totals across all hours) ----
+    const summary = items.map(item => {
+      let exp = 0, rec = 0, windows = 0;
+      Object.values(item.schedule).forEach(s => {
+        if (s.e > 0) { exp += s.e; rec += s.r; windows++; }
+      });
+      const outstanding = Math.max(0, exp - rec);
+      const pct = exp > 0 ? Math.round((rec/exp)*100) : 0;
+      const itemStatus = (item.status === 'canceled') ? 'Canceled'
+                       : (exp === 0) ? 'No schedule'
+                       : (rec >= exp) ? 'Fully received'
+                       : (rec > 0) ? 'Outstanding' : 'Pending';
+      return {
+        'Pull #': pullId,
+        'Item Code': item.code,
+        'Description': item.desc,
+        'Type': item.tag ? item.tag.toUpperCase() : '',
+        'Row Status': item.status.charAt(0).toUpperCase() + item.status.slice(1),
+        'Vendor': item.vName,
+        'Total Expected': exp,
+        'Total Received': rec,
+        'Total Outstanding': outstanding,
+        'Progress %': pct,
+        'Windows': windows,
+        'Item Status': itemStatus,
+      };
+    });
+
+    // ---- Sheet 3: Header / metadata ----
+    const meta = [
+      { Field: 'Pull #',         Value: pullId },
+      { Field: 'Warehouse',      Value: warehouse },
+      { Field: 'Exported By',    Value: 'S. Wattana' },
+      { Field: 'Exported At',    Value: exportedAt },
+      { Field: 'Pull Status',    Value: pullClosed ? 'CLOSED · LOCKED' : 'OPEN' },
+      { Field: 'Active Items',   Value: items.filter(i => i.status !== 'canceled').length },
+      { Field: 'Canceled Items', Value: items.filter(i => i.status === 'canceled').length },
+      { Field: 'New Items',      Value: items.filter(i => i.status === 'new').length },
+    ];
+
+    return { detail, summary, meta, pullId };
+  }
+
+  function exportToExcel() {
+    try {
+      if (typeof XLSX === 'undefined') {
+        showToast('Export failed', 'Excel library not loaded — please retry', 'error');
+        return;
+      }
+      const { detail, summary, meta, pullId } = buildExportRows();
+
+      const wb = XLSX.utils.book_new();
+
+      // Header sheet
+      const wsMeta = XLSX.utils.json_to_sheet(meta);
+      wsMeta['!cols'] = [{ wch: 18 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, wsMeta, 'Header');
+
+      // Summary sheet
+      const wsSum = XLSX.utils.json_to_sheet(summary);
+      wsSum['!cols'] = [
+        {wch:10},{wch:18},{wch:30},{wch:8},{wch:11},
+        {wch:22},{wch:14},{wch:14},{wch:16},{wch:11},{wch:9},{wch:18}
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
+
+      // Detail sheet — primary working data
+      const wsDet = XLSX.utils.json_to_sheet(detail);
+      wsDet['!cols'] = [
+        {wch:10},{wch:22},{wch:18},{wch:30},{wch:6},{wch:10},
+        {wch:11},{wch:22},{wch:22},{wch:7},{wch:11},{wch:11},
+        {wch:13},{wch:11},{wch:13}
+      ];
+      // Freeze header row
+      wsDet['!freeze'] = { ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, wsDet, 'Detail');
+
+      const dateStamp = new Date().toISOString().slice(0,10);
+      const filename = `${pullId}_${dateStamp}.xlsx`;
+      XLSX.writeFile(wb, filename);
+
+      showToast('Export complete', `${filename} · ${detail.length} rows`, 'success-big');
+    } catch (err) {
+      console.error(err);
+      showToast('Export failed', err.message || 'Unknown error', 'error');
+    }
+  }
+
+  document.getElementById('btn-export').addEventListener('click', exportToExcel);
+
+  // Filter dropdown — re-render to apply
+  document.getElementById('filter-select').addEventListener('change', () => render());
+
+  // Pull # dropdown — switch active pull sheet, then reload warehouse items
+  function applyPull() {
+    const sel = document.getElementById('pull-select');
+    const pullId = sel.value;
+
+    // Reset filter and search so old query terms don't carry across pulls
+    const filterSel = document.getElementById('filter-select');
+    const searchInp = document.getElementById('search-input');
+    if (filterSel) filterSel.value = 'all';
+    if (searchInp) searchInp.value = '';
+
+    // Re-load items for the current warehouse under this pull
+    const whSel = document.getElementById('warehouse-select');
+    loadPullWarehouse(pullId, whSel.value);
+
+    // Update topbar indicator
+    const topbarPull = document.getElementById('topbar-pull');
+    if (topbarPull) topbarPull.textContent = pullId;
+
+    render();
+    showToast('Pull sheet loaded', `${pullId} · ${items.length} item${items.length===1?'':'s'} in ${whSel.value}`, 'success-big');
+  }
+  document.getElementById('pull-select').addEventListener('change', applyPull);
+
+  // Warehouse dropdown — swap dataset, update labels, re-render
+  function applyWarehouse() {
+    const sel = document.getElementById('warehouse-select');
+    const code = sel.value;                                             // e.g. "WH-01"
+    const fullText = sel.options[sel.selectedIndex].text;               // e.g. "WH-01 · Bangkok Main"
+    document.getElementById('topbar-wh').textContent = code;
+    document.getElementById('topbar-pull').textContent = currentPull;   // keep pull indicator in sync
+    document.getElementById('cm-warehouse').textContent = fullText;
+    document.getElementById('cm-decl-wh').textContent = fullText;
+
+    // Swap the active items list (within the current pull) and re-render
+    loadWarehouseItems(code);
+    render();
+  }
+  document.getElementById('warehouse-select').addEventListener('change', applyWarehouse);
+
+  // ============ URL PARAM HANDOFF (from Pull Controller) ============
+  // If launched with ?pull=PL-2847&warehouse=WH-01, pre-select those values
+  // before the first render so the user lands directly in that pull/warehouse.
+  (function applyUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    const pullParam = params.get('pull');
+    const whParam   = params.get('warehouse');
+    const fromController = params.get('from') === 'controller' || pullParam || whParam;
+
+    if (pullParam) {
+      const pullSel = document.getElementById('pull-select');
+      // Only set if the option exists in the dropdown
+      if ([...pullSel.options].some(o => o.value === pullParam)) {
+        pullSel.value = pullParam;
+        currentPull = pullParam;
+      }
+    }
+    if (whParam) {
+      const whSel = document.getElementById('warehouse-select');
+      if ([...whSel.options].some(o => o.value === whParam)) {
+        whSel.value = whParam;
+      }
+    }
+
+    // Show a "Back to Controller" pill in the topbar when we arrived from there
+    if (fromController) {
+      const brand = document.querySelector('.brand');
+      if (brand && !document.getElementById('back-to-controller')) {
+        const back = document.createElement('a');
+        back.id = 'back-to-controller';
+        back.href = 'pull-controller-v2.html';
+        back.style.cssText = `
+          display:inline-flex;align-items:center;gap:6px;
+          padding:5px 11px;margin-left:6px;
+          background:var(--accent-bg);border:1px solid #c5d8c9;
+          border-radius:100px;text-decoration:none;
+          font-family:var(--font-mono);font-size:10px;
+          color:var(--accent);font-weight:600;
+          text-transform:uppercase;letter-spacing:0.1em;
+          transition:all 0.15s;
+        `;
+        back.innerHTML = `
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          Back to Controller
+        `;
+        back.addEventListener('mouseenter', () => {
+          back.style.background = 'var(--accent)';
+          back.style.color = '#fff';
+        });
+        back.addEventListener('mouseleave', () => {
+          back.style.background = 'var(--accent-bg)';
+          back.style.color = 'var(--accent)';
+        });
+        brand.appendChild(back);
+      }
+    }
+  })();
+
+  applyWarehouse(); // sync once on load (also performs the first render)
+
+  // Search box — live filter by item code, description, vendor code, vendor name
+  document.getElementById('search-input').addEventListener('input', () => render());
+</script>
+<!-- END_JS:main -->
+
+<!-- Bootstrap Icons for the drawer (matches the rest of the app) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+<!-- ============ TRANSACTIONS DRAWER (in-context receipt history) ============ -->
+<!-- BEGIN_CSS:tx-drawer -->
+<style>
+  /* Drawer-specific styles — reuses theme tokens already defined above */
+  #txDrawer { width: 580px; max-width: 95vw; }
+  #txDrawer .offcanvas-header {
+    padding: 18px 22px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border-bottom: 1px solid var(--border);
+  }
+  #txDrawer .drawer-eyebrow {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  #txDrawer .drawer-title {
+    font-size: 24px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  #txDrawer .drawer-subtitle {
+    margin-top: 4px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .tx-toolbar {
+    padding: 12px 22px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .tx-toolbar .tx-search {
+    position: relative;
+    flex: 1;
+  }
+  .tx-toolbar .tx-search svg {
+    position: absolute;
+    left: 12px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+  }
+  .tx-toolbar .tx-search input {
+    width: 100%;
+    padding: 8px 12px 8px 34px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .tx-toolbar select {
+    padding: 8px 28px 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tx-toolbar a.tx-full-link {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .tx-toolbar a.tx-full-link:hover { background: var(--surface-2); }
+
+  .tx-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 14px 22px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .tx-summary-cell {
+    text-align: center;
+    border-right: 1px solid var(--border);
+  }
+  .tx-summary-cell:last-child { border-right: none; }
+  .tx-summary-cell .lbl {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .tx-summary-cell .val {
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .tx-summary-cell.error .val { color: var(--over); }
+  .tx-summary-cell.ok .val { color: var(--complete); }
+
+  .tx-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 14px 22px;
+  }
+  .tx-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-top: 8px;
+    transition: all 0.15s ease;
+  }
+  .tx-item:hover { border-color: var(--border-bright); box-shadow: var(--shadow-sm); }
+  .tx-item.reversal {
+    background: color-mix(in srgb, var(--over) 5%, var(--surface));
+    border-color: color-mix(in srgb, var(--over) 25%, var(--border));
+  }
+  .tx-item.voided { opacity: 0.65; }
+  .tx-item.voided .tx-row-main { text-decoration: line-through; }
+
+  .tx-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .tx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+  .tx-pill.receive { color: var(--complete); background: color-mix(in srgb, var(--complete) 12%, transparent); border-color: color-mix(in srgb, var(--complete) 30%, transparent); }
+  .tx-pill.cancel  { color: var(--over);     background: color-mix(in srgb, var(--over) 12%, transparent); border-color: color-mix(in srgb, var(--over) 30%, transparent); }
+  .tx-pill.voided  { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+  .tx-time {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .tx-row-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .tx-item-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .tx-item-code {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .tx-item-meta {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .tx-qty {
+    font-size: 22px;
+    font-weight: 500;
+    font-family: 'Roboto Mono', monospace;
+    color: var(--text);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .tx-qty.neg { color: var(--over); }
+  .tx-qty small {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+  .tx-row-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    gap: 10px;
+  }
+  .tx-actor {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .tx-actor b { color: var(--text); font-weight: 600; }
+  .tx-actions { display: flex; gap: 4px; }
+  .tx-btn-cancel {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--over) 30%, var(--border));
+    color: var(--over);
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .tx-btn-cancel:hover {
+    background: color-mix(in srgb, var(--over) 10%, transparent);
+    border-color: var(--over);
+  }
+  .tx-note {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: var(--surface-2);
+    border-radius: 6px;
+    border-left: 2px solid var(--border-bright);
+  }
+  .tx-reverses-of {
+    display: inline-block;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--over);
+    background: color-mix(in srgb, var(--over) 10%, transparent);
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-top: 4px;
+  }
+  .tx-empty {
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .tx-empty svg { display: block; margin: 0 auto 12px; opacity: 0.5; }
+</style>
+<!-- END_CSS:tx-drawer -->
+
+<!-- BEGIN_BODY:tx-drawer -->
+<div class="app-modal-backdrop" id="txDrawer-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(20,22,24,0.45); z-index: 1040; opacity: 0; transition: opacity 0.2s ease;"></div>
+<div id="txDrawer" style="position: fixed; top: 0; right: 0; bottom: 0; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); z-index: 1041; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.25s ease;">
+  <div class="offcanvas-header" style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0;">
+    <div>
+      <div class="drawer-eyebrow">Receipt History</div>
+      <div class="drawer-title" id="tx-drawer-pull">PL-2847</div>
+      <div class="drawer-subtitle" id="tx-drawer-meta">WH-01 · Bangkok Main</div>
+    </div>
+    <button id="tx-drawer-close" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 8px; font-size: 24px; line-height: 1;">×</button>
+  </div>
+
+  <div class="tx-summary">
+    <div class="tx-summary-cell">
+      <span class="lbl">Receipts</span>
+      <span class="val" id="tx-s-receipts">0</span>
+    </div>
+    <div class="tx-summary-cell error">
+      <span class="lbl">Reversals</span>
+      <span class="val" id="tx-s-reversals">0</span>
+    </div>
+    <div class="tx-summary-cell ok">
+      <span class="lbl">Net Units</span>
+      <span class="val" id="tx-s-net">0</span>
+    </div>
+  </div>
+
+  <div class="tx-toolbar">
+    <div class="tx-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="tx-search" placeholder="Item, lot, pallet, operator…">
+    </div>
+    <select id="tx-filter">
+      <option value="all">All</option>
+      <option value="receive">Receipts</option>
+      <option value="cancel">Reversals</option>
+      <option value="voided">Voided</option>
+    </select>
+    <a class="tx-full-link" id="tx-open-full" href="transactions.html">Open full view ↗</a>
+  </div>
+
+  <!-- Active hour filter chip (only visible when filtered by hour) -->
+  <div id="tx-hour-filter-bar" style="display: none; padding: 8px 22px; background: var(--accent-bg); border-bottom: 1px solid var(--border); align-items: center; gap: 8px;">
+    <span style="font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); font-weight: 600;">Filtered to:</span>
+    <span id="tx-hour-filter-label" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); font-weight: 600; background: var(--surface); padding: 3px 10px; border-radius: 100px; border: 1px solid var(--accent); display: inline-flex; align-items: center; gap: 6px;"></span>
+    <button id="tx-hour-filter-clear" style="background: transparent; border: none; color: var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-left: auto; display: inline-flex; align-items: center; gap: 3px;">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      Clear
+    </button>
+  </div>
+
+  <div class="tx-list" id="tx-drawer-list"></div>
+</div>
+
+<!-- Cancel confirmation modal (inside drawer flow) -->
+<div class="app-modal-backdrop" id="tx-cancel-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(20,22,24,0.55); z-index: 1060; opacity: 0; transition: opacity 0.2s ease; align-items: center; justify-content: center;">
+  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); width: 540px; max-width: 92vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;">
+    <div style="padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0; font-size: 18px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--over)" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+        Cancel Receipt
+      </h3>
+      <button id="tx-cancel-close" style="background: transparent; border: none; color: var(--text-muted); font-size: 24px; line-height: 1; cursor: pointer;">×</button>
+    </div>
+    <div style="padding: 22px; overflow-y: auto;">
+      <p style="margin-top: 0; color: var(--text-dim); font-size: 14px;">
+        Creates a <b>reversal entry</b> (negative quantity). Original receipt and reversal both stay in the journal.
+      </p>
+
+      <div style="background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Receipt ID</div>
+            <div id="tx-c-id" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">When</div>
+            <div id="tx-c-when" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Item</div>
+            <div id="tx-c-item" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 500;">—</div>
+          </div>
+          <div>
+            <div style="font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 2px;">Quantity to reverse</div>
+            <div id="tx-c-qty" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--over); font-weight: 500;">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); display: block; margin-bottom: 8px;">Reason</span>
+        <div id="tx-reason-group" style="display: flex; flex-direction: column; gap: 6px;">
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="miscount"> <span>Miscount — wrong quantity entered</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="wrong-item"> <span>Wrong item — entered against incorrect SKU</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="qc-fail"> <span>QC failure — material rejected after receipt</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="duplicate"> <span>Duplicate — already recorded</span></label>
+          <label class="tx-reason"><input type="radio" name="tx-reason" value="other"> <span>Other</span></label>
+        </div>
+      </div>
+
+      <div>
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-muted); display: block; margin-bottom: 4px;">Note (optional)</span>
+        <textarea id="tx-c-note" rows="2" placeholder="Additional context for audit…" style="width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-family: inherit; font-size: 13px; resize: vertical;"></textarea>
+      </div>
+    </div>
+    <div style="padding: 14px 22px; border-top: 1px solid var(--border); background: var(--surface-2); display: flex; justify-content: flex-end; gap: 8px;">
+      <button id="tx-cancel-keep" class="btn">Keep receipt</button>
+      <button id="tx-cancel-confirm" class="btn" style="background: var(--over); border-color: var(--over); color: white;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+        Create reversal
+      </button>
+    </div>
+  </div>
+</div>
+<!-- END_BODY:tx-drawer -->
+
+<!-- BEGIN_CSS:tx-reason -->
+<style>
+  .tx-reason {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tx-reason:hover { background: var(--surface-2); }
+  .tx-reason input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .tx-reason span { font-size: 14px; color: var(--text-dim); }
+  .tx-reason:has(input:checked) { background: var(--accent-bg); border-color: var(--accent); }
+  .tx-reason:has(input:checked) span { color: var(--text); }
+</style>
+<!-- END_CSS:tx-reason -->
+
+<!-- BEGIN_JS:journal -->
+<script>
+/* =============================================================================
+ * RECEIPT JOURNAL — same store as transactions.html
+ * =========================================================================== */
+const TX_STORE_KEY = 'ops.receipts';
+
+function txLoad() {
+  try { return JSON.parse(localStorage.getItem(TX_STORE_KEY)) || []; } catch (e) { return []; }
+}
+function txSave(arr) {
+  try { localStorage.setItem(TX_STORE_KEY, JSON.stringify(arr)); } catch (e) {}
+}
+function txCurrentActor() {
+  try {
+    const raw = localStorage.getItem('auth.user');
+    if (raw) { const u = JSON.parse(raw); return u.name || u.username || 'Unknown'; }
+  } catch (e) {}
+  return 'S. Wattana';
+}
+
+function txEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function txFmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+function txFmtFull(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/* =============================================================================
+ * DRAWER OPEN/CLOSE
+ * =========================================================================== */
+/* openTxDrawer(ctx?) — when called without args, lists all receipts for the current pull.
+   When called with { hour, itemCode } from the Receive Goods modal, pre-fills the search
+   box so only that slot's transactions are visible (the modal hands off context). */
+function openTxDrawer(ctx) {
+  const pull = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : (document.getElementById('topbar-pull')?.textContent || 'PL-2847');
+  const wh   = (typeof currentWarehouse !== 'undefined' && currentWarehouse) ? currentWarehouse : (document.getElementById('topbar-wh')?.textContent || 'WH-01');
+  document.getElementById('tx-drawer-pull').textContent = pull;
+  document.getElementById('tx-drawer-meta').textContent = wh + (typeof currentWhName !== 'undefined' && currentWhName ? ' · ' + currentWhName : '');
+
+  // Pre-filter when context is provided. Search box accepts item code; we filter
+  // by hour after the fact in renderTxDrawer (see below).
+  const searchEl = document.getElementById('tx-search');
+  if (ctx && ctx.itemCode) {
+    searchEl.value = ctx.itemCode;
+  } else {
+    searchEl.value = '';
+  }
+  // Stash the hour filter on the drawer element so renderTxDrawer can apply it
+  document.getElementById('txDrawer').dataset.hourFilter = (ctx && Number.isInteger(ctx.hour)) ? String(ctx.hour) : '';
+
+  // Build a deep link for the standalone Transactions page — include hour when present
+  const params = new URLSearchParams({ pull, warehouse: wh });
+  if (ctx && Number.isInteger(ctx.hour))    params.set('hour', String(ctx.hour));
+  if (ctx && ctx.itemCode)                  params.set('item', ctx.itemCode);
+  document.getElementById('tx-open-full').href = 'transactions.html?' + params.toString();
+
+  const backdrop = document.getElementById('txDrawer-backdrop');
+  const drawer = document.getElementById('txDrawer');
+  backdrop.style.display = 'block';
+  drawer.style.display = 'flex';
+  // Force reflow before triggering animation
+  void backdrop.offsetWidth;
+  backdrop.style.opacity = '1';
+  drawer.style.transform = 'translateX(0)';
+
+  renderTxDrawer();
+}
+
+function closeTxDrawer() {
+  const backdrop = document.getElementById('txDrawer-backdrop');
+  const drawer = document.getElementById('txDrawer');
+  backdrop.style.opacity = '0';
+  drawer.style.transform = 'translateX(100%)';
+  setTimeout(() => {
+    backdrop.style.display = 'none';
+  }, 250);
+}
+
+document.getElementById('btn-transactions').addEventListener('click', openTxDrawer);
+document.getElementById('tx-drawer-close').addEventListener('click', closeTxDrawer);
+document.getElementById('txDrawer-backdrop').addEventListener('click', closeTxDrawer);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('txDrawer-backdrop').style.opacity === '1') closeTxDrawer();
+});
+
+/* =============================================================================
+ * DRAWER RENDER
+ * =========================================================================== */
+function renderTxDrawer() {
+  const pull = document.getElementById('tx-drawer-pull').textContent;
+  const filter = document.getElementById('tx-filter').value;
+  const q = document.getElementById('tx-search').value.trim().toLowerCase();
+  const hourFilterStr = document.getElementById('txDrawer').dataset.hourFilter || '';
+  const hourFilter = hourFilterStr === '' ? null : parseInt(hourFilterStr, 10);
+  const all = txLoad();
+  let list = all.filter(r => r.pullId === pull);
+
+  // Hour filter (set when drawer is opened from a Receive Goods modal cell)
+  if (hourFilter !== null && !isNaN(hourFilter)) {
+    list = list.filter(r => r.hour === hourFilter);
+  }
+
+  // Apply secondary filter
+  if (filter === 'receive') list = list.filter(r => r.qty > 0 && !r.reversedBy);
+  else if (filter === 'cancel') list = list.filter(r => r.qty < 0);
+  else if (filter === 'voided') list = list.filter(r => r.reversedBy);
+
+  if (q) {
+    list = list.filter(r => `${r.itemCode} ${r.itemDesc} ${r.lotBatch} ${r.palletId} ${r.receivedBy} ${r.note || ''}`.toLowerCase().includes(q));
+  }
+
+  // Update drawer subtitle to reflect the active hour filter
+  const metaEl = document.getElementById('tx-drawer-meta');
+  const wh = (typeof currentWarehouse !== 'undefined' && currentWarehouse) ? currentWarehouse : (document.getElementById('topbar-wh')?.textContent || 'WH-01');
+  const baseMeta = wh + (typeof currentWhName !== 'undefined' && currentWhName ? ' · ' + currentWhName : '');
+  metaEl.textContent = baseMeta;
+
+  // Show/hide the hour-filter chip
+  const hourBar = document.getElementById('tx-hour-filter-bar');
+  const hourLabel = document.getElementById('tx-hour-filter-label');
+  if (hourFilter !== null && !isNaN(hourFilter)) {
+    hourBar.style.display = 'flex';
+    const itemCtx = q ? ` · ${q.toUpperCase()}` : '';
+    hourLabel.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${String(hourFilter).padStart(2,'0')}:00${itemCtx}`;
+  } else {
+    hourBar.style.display = 'none';
+  }
+
+  // Sort: newest first
+  list.sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+
+  // Stats
+  const positive = list.filter(r => r.qty > 0).length;
+  const negative = list.filter(r => r.qty < 0).length;
+  const net = list.reduce((s, r) => s + r.qty, 0);
+  document.getElementById('tx-s-receipts').textContent = positive;
+  document.getElementById('tx-s-reversals').textContent = negative;
+  document.getElementById('tx-s-net').textContent = net.toLocaleString();
+
+  const wrap = document.getElementById('tx-drawer-list');
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="tx-empty">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+      No transactions yet for this pull
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = list.map(r => {
+    const isReversal = r.qty < 0;
+    const isVoided = !!r.reversedBy;
+    const cls = (isReversal ? 'reversal' : '') + (isVoided ? ' voided' : '');
+    const pillCls = isReversal ? 'cancel' : (isVoided ? 'voided' : 'receive');
+    const pillLabel = isReversal ? 'Cancel' : (isVoided ? 'Voided' : 'Receive');
+    const qtyDisplay = isReversal ? `−${Math.abs(r.qty).toLocaleString()}` : r.qty.toLocaleString();
+    const reverseLink = r.reverses
+      ? `<span class="tx-reverses-of">↺ Reverses ${txEsc(r.reverses)}</span>`
+      : (r.reversedBy ? `<span class="tx-reverses-of">↩ Voided by ${txEsc(r.reversedBy)}</span>` : '');
+    const canCancel = !isReversal && !isVoided;
+    return `
+      <div class="tx-item ${cls}" data-id="${txEsc(r.id)}">
+        <div class="tx-row-top">
+          <span class="tx-pill ${pillCls}">${pillLabel}</span>
+          <span class="tx-time">${txFmtTime(r.receivedAt)} · ${txEsc(String(r.hour).padStart(2,'0'))}:00</span>
+        </div>
+        <div class="tx-row-main">
+          <div class="tx-item-info">
+            <div class="tx-item-code">${txEsc(r.itemCode)}</div>
+            <div class="tx-item-meta">${txEsc(r.lotBatch || '—')} · ${txEsc(r.palletId || '—')} · ${txEsc(r.binLocation || '—')}</div>
+            ${reverseLink}
+          </div>
+          <div class="tx-qty ${isReversal ? 'neg' : ''}">${qtyDisplay}<small>pcs</small></div>
+        </div>
+        ${r.note ? `<div class="tx-note">${txEsc(r.note)}</div>` : ''}
+        <div class="tx-row-foot">
+          <span class="tx-actor">By <b>${txEsc(r.receivedBy)}</b></span>
+          <div class="tx-actions">
+            ${canCancel ? `<button class="tx-btn-cancel" data-tx-cancel="${txEsc(r.id)}">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v6h6"/></svg>
+              Cancel
+            </button>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+document.getElementById('tx-search').addEventListener('input', renderTxDrawer);
+document.getElementById('tx-filter').addEventListener('change', renderTxDrawer);
+document.getElementById('tx-hour-filter-clear').addEventListener('click', () => {
+  document.getElementById('txDrawer').dataset.hourFilter = '';
+  document.getElementById('tx-search').value = '';
+  renderTxDrawer();
+});
+
+/* =============================================================================
+ * CANCEL FLOW (drawer-level)
+ * =========================================================================== */
+let txCancelTarget = null;
+
+function openTxCancelModal(receiptId) {
+  const all = txLoad();
+  const r = all.find(x => x.id === receiptId);
+  if (!r) return;
+  txCancelTarget = r;
+  document.getElementById('tx-c-id').textContent = r.id;
+  document.getElementById('tx-c-when').textContent = txFmtFull(r.receivedAt);
+  document.getElementById('tx-c-item').textContent = r.itemCode;
+  document.getElementById('tx-c-qty').textContent = '−' + r.qty.toLocaleString() + ' pcs';
+  document.getElementById('tx-c-note').value = '';
+  document.querySelectorAll('input[name="tx-reason"]').forEach(rb => rb.checked = false);
+
+  const backdrop = document.getElementById('tx-cancel-backdrop');
+  backdrop.style.display = 'flex';
+  void backdrop.offsetWidth;
+  backdrop.style.opacity = '1';
+}
+
+function closeTxCancelModal() {
+  const backdrop = document.getElementById('tx-cancel-backdrop');
+  backdrop.style.opacity = '0';
+  setTimeout(() => { backdrop.style.display = 'none'; }, 200);
+  txCancelTarget = null;
+}
+
+document.getElementById('tx-cancel-close').addEventListener('click', closeTxCancelModal);
+document.getElementById('tx-cancel-keep').addEventListener('click', closeTxCancelModal);
+document.getElementById('tx-cancel-backdrop').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('tx-cancel-backdrop')) closeTxCancelModal();
+});
+
+document.getElementById('tx-cancel-confirm').addEventListener('click', () => {
+  if (!txCancelTarget) return;
+  const reasonRadio = document.querySelector('input[name="tx-reason"]:checked');
+  if (!reasonRadio) {
+    // Use the existing toast on the page
+    if (typeof showToast === 'function') showToast('Pick a reason first');
+    return;
+  }
+  const reason = reasonRadio.value;
+  const note = document.getElementById('tx-c-note').value.trim();
+  const reasonLabel = ({
+    'miscount': 'Miscount — wrong quantity entered',
+    'wrong-item': 'Wrong item — entered against incorrect SKU',
+    'qc-fail': 'QC failure — material rejected after receipt',
+    'duplicate': 'Duplicate — already recorded',
+    'other': 'Other'
+  })[reason] || reason;
+
+  const orig = txCancelTarget;
+  const reversal = {
+    id: 'r-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+    pullId: orig.pullId,
+    warehouse: orig.warehouse,
+    pullItemId: orig.pullItemId,
+    itemCode: orig.itemCode,
+    itemDesc: orig.itemDesc,
+    hour: orig.hour,
+    qty: -orig.qty,
+    lotBatch: orig.lotBatch,
+    palletId: orig.palletId,
+    binLocation: orig.binLocation,
+    qcStatus: orig.qcStatus,
+    note: note ? `${reasonLabel}. ${note}` : reasonLabel,
+    receivedBy: txCurrentActor(),
+    receivedAt: new Date().toISOString(),
+    reverses: orig.id,
+    reversedBy: null,
+    reason,
+  };
+
+  const all = txLoad();
+  all.unshift(reversal);
+  const idx = all.findIndex(x => x.id === orig.id);
+  if (idx >= 0) all[idx] = { ...all[idx], reversedBy: reversal.id };
+  txSave(all);
+
+  // ---- Sync with the hour-grid ----
+  // If the host receiving page exposes the data structure used to render the grid,
+  // decrement the received qty for this (item, hour) so the UI reflects the reversal.
+  // This is best-effort: the back-end must enforce the same change in production.
+  try {
+    if (typeof pullData !== 'undefined' && pullData && pullData[orig.pullId] && pullData[orig.pullId][orig.warehouse]) {
+      const items = pullData[orig.pullId][orig.warehouse];
+      const targetItem = items.find(it => it.code === orig.itemCode || it.itemCode === orig.itemCode);
+      if (targetItem && targetItem.schedule && targetItem.schedule[orig.hour]) {
+        const cell = targetItem.schedule[orig.hour];
+        cell.r = Math.max(0, (cell.r || 0) - orig.qty);
+      }
+      // Re-render the grid if a render function exists
+      if (typeof render === 'function') render();
+    }
+  } catch (e) { console.warn('Could not sync hour-grid:', e); }
+
+  closeTxCancelModal();
+  renderTxDrawer();
+
+  // Also refresh the in-modal transactions list if the Receive Goods modal is open
+  // (the user might have triggered cancel from there instead of from the drawer).
+  try {
+    const receiveModal = document.getElementById('modal');
+    if (receiveModal && receiveModal.classList.contains('open') && typeof renderModalTransactions === 'function') {
+      const itemCode = document.getElementById('m-title').textContent;
+      const hour = window._activeHour;
+      if (itemCode && hour !== undefined) {
+        renderModalTransactions(itemCode, hour);
+        // Also refresh the qty cards (Previously Received / Outstanding) since the cell changed
+        if (typeof items !== 'undefined' && typeof activeRow !== 'undefined' && typeof getCell === 'function') {
+          const item = items[activeRow];
+          if (item) {
+            const cell = getCell(item, hour);
+            const expected = cell.e || 0;
+            const prev = cell.r || 0;
+            const outstanding = Math.max(0, expected - prev);
+            const out = document.getElementById('m-out');
+            const prevEl = document.getElementById('m-prev');
+            const capMax = document.getElementById('cap-hint-max');
+            if (out) out.textContent = outstanding.toLocaleString();
+            if (prevEl) prevEl.textContent = prev.toLocaleString();
+            if (capMax) capMax.textContent = outstanding.toLocaleString();
+            const input = document.getElementById('m-input');
+            if (input && !pullClosed) {
+              input.max = outstanding;
+              input.value = outstanding;
+            }
+            if (typeof activeMax !== 'undefined') window.activeMax = outstanding;
+          }
+        }
+      }
+    }
+  } catch (e) { console.warn('Could not refresh modal:', e); }
+
+  if (typeof showToast === 'function') showToast('Reversal created', `${reversal.id} · −${Math.abs(reversal.qty).toLocaleString()} pcs`);
+});
+
+// Row-level cancel button (delegated)
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-tx-cancel]');
+  if (btn) openTxCancelModal(btn.getAttribute('data-tx-cancel'));
+});
+
+/* =============================================================================
+ * SEED ON FIRST RUN
+ * =========================================================================== */
+// If transactions.html hasn't been opened yet, the receipt store is empty.
+// Seed a few entries for the current pull so the drawer shows something useful.
+(function ensureSeeded() {
+  const existing = txLoad();
+  if (existing.length > 0) return;
+  // Minimal seed: just a couple of receipts for the default pull
+  const now = new Date();
+  function at(hour, min) { const d = new Date(); d.setHours(hour, min, 0, 0); return d.toISOString(); }
+  txSave([
+    { id: 'r-1001', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2', hour: 8,  qty: 500, lotBatch: 'LOT-2401-018', palletId: 'PLT-00471', binLocation: 'A-12-01', qcStatus: 'passed', note: '', receivedBy: 'S. Wattana', receivedAt: at(8, 24),  reverses: null, reversedBy: null },
+    { id: 'r-1002', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2', hour: 9,  qty: 800, lotBatch: 'LOT-2401-018', palletId: 'PLT-00472', binLocation: 'A-12-01', qcStatus: 'passed', note: '', receivedBy: 'S. Wattana', receivedAt: at(9, 12),  reverses: null, reversedBy: null },
+    { id: 'r-1003', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-101', itemCode: 'CAP-470UF-25V', itemDesc: 'Aluminum electrolytic capacitor', hour: 9, qty: 1200, lotBatch: 'LOT-2403-044', palletId: 'PLT-00473', binLocation: 'B-05-03', qcStatus: 'passed', note: '', receivedBy: 'P. Somchai', receivedAt: at(9, 45), reverses: null, reversedBy: null },
+  ]);
+})();
+</script>
+<!-- END_JS:journal -->
+
+<!-- Shared app nav (also handles auth guard) -->
+<script src="app-nav.js"></script>
+
+<!-- Bootstrap JS bundle (for any future Bootstrap component use) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+</body>
+</html>

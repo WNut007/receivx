@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transactions · Receiving Operations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700;900&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- BEGIN_CSS:main -->
+<style>
+  /* ============ THEME TOKENS (shared) ============ */
+  :root, [data-theme="light"] {
+    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #faf9f6; --surface-3: #f0eee8;
+    --border: #e6e3dc; --border-bright: #d4d0c6;
+    --text: #1a1d20; --text-dim: #5a626c; --text-muted: #8a8f97;
+    --accent: #1f4d2b; --accent-bg: #e8f0ea; --accent-hover: #163a20; --accent-fg: #ffffff; --accent-2: #0a8a92;
+    --error: #c0392b; --error-bg: #fceae7;
+    --warn: #b86e00; --warn-bg: #fdf4e3;
+    --ok: #2d7d4f; --ok-bg: #e7f3ec;
+    --info: #1f6fb8; --info-bg: #e3eef9;
+    --shadow-sm: 0 1px 2px rgba(20, 22, 24, 0.04);
+    --shadow-md: 0 4px 16px rgba(20, 22, 24, 0.06);
+    --shadow-lg: 0 20px 60px rgba(20, 22, 24, 0.12);
+    --grid-line: rgba(0,0,0,0.018);
+    --ambient-1: rgba(31, 77, 43, 0.04);
+    --ambient-2: rgba(10, 138, 146, 0.03);
+  }
+  [data-theme="midnight"] {
+    --bg: #0e1116; --surface: #161a21; --surface-2: #1c2128; --surface-3: #232932;
+    --border: #2a313c; --border-bright: #3a4250;
+    --text: #e6e8ea; --text-dim: #9aa3b0; --text-muted: #6b7382;
+    --accent: #5fd49a; --accent-bg: rgba(95, 212, 154, 0.12); --accent-hover: #4dbf85; --accent-fg: #0e1116; --accent-2: #4cd4dc;
+    --error: #ff6b6b; --error-bg: rgba(255,107,107,0.12);
+    --warn: #f0a73a; --warn-bg: rgba(240,167,58,0.12);
+    --ok: #5fd49a; --ok-bg: rgba(95,212,154,0.12);
+    --info: #5aa8e8; --info-bg: rgba(90,168,232,0.12);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 20px 60px rgba(0,0,0,0.6);
+    --grid-line: rgba(255,255,255,0.025);
+    --ambient-1: rgba(95, 212, 154, 0.05);
+    --ambient-2: rgba(76, 212, 220, 0.04);
+  }
+  [data-theme="slate"] {
+    --bg: #eef1f4; --surface: #ffffff; --surface-2: #f7f9fb; --surface-3: #e9edf2;
+    --border: #dce2e9; --border-bright: #c5cdd6;
+    --text: #1c2530; --text-dim: #4a5562; --text-muted: #7d8794;
+    --accent: #2e4d6b; --accent-bg: #e3ebf3; --accent-hover: #213a52; --accent-fg: #ffffff; --accent-2: #1e6fc4;
+    --error: #c43b3b; --error-bg: #fbe7e7;
+    --warn: #c47611; --warn-bg: #fef0dc;
+    --ok: #2d8a5d; --ok-bg: #e0f0e7;
+    --info: #1e6fc4; --info-bg: #e0edfa;
+    --shadow-sm: 0 1px 3px rgba(28, 37, 48, 0.05);
+    --shadow-md: 0 4px 18px rgba(28, 37, 48, 0.08);
+    --shadow-lg: 0 24px 64px rgba(28, 37, 48, 0.15);
+    --grid-line: rgba(28, 37, 48, 0.02);
+    --ambient-1: rgba(46, 77, 107, 0.04);
+    --ambient-2: rgba(30, 111, 196, 0.03);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Roboto', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    min-height: 100vh;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  body { font-weight: 400; }
+  body::before {
+    content: ''; position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% 0%, var(--ambient-1), transparent 65%),
+      radial-gradient(ellipse 700px 400px at 85% 100%, var(--ambient-2), transparent 65%);
+    pointer-events: none;
+  }
+  body::after {
+    content: ''; position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+  .app { position: relative; z-index: 1; }
+
+  /* Bootstrap overrides */
+  .form-select, .form-control {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    font-size: 14px;
+    border-radius: 8px;
+  }
+  .form-select:focus, .form-control:focus {
+    background-color: var(--surface);
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .form-control::placeholder { color: var(--text-muted); }
+  .modal-content { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .modal-header { border-bottom-color: var(--border); padding: 18px 22px; }
+  .modal-footer { border-top-color: var(--border); padding: 14px 22px; background: var(--surface-2); }
+  .modal-body { padding: 22px; }
+  .modal-title { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+
+  /* Page */
+  .page-wrap {
+    max-width: 1480px;
+    margin: 24px auto;
+    padding: 0 24px 72px;
+  }
+  .page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 22px;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .page-eyebrow {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .page-title {
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .page-subtitle { color: var(--text-dim); font-size: 14px; }
+
+  /* Stats */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: var(--shadow-sm);
+  }
+  .stat-card .label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .stat-card .value {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+    margin-top: 2px;
+  }
+  .stat-card .value small {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+  .stat-card .sub { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--text-dim); }
+  .stat-card.error .value { color: var(--error); }
+  .stat-card.ok .value { color: var(--ok); }
+
+  /* Section */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 18px;
+  }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    flex-wrap: wrap;
+  }
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .section-title i { color: var(--accent); }
+
+  /* Filter bar */
+  .filter-bar {
+    display: grid;
+    grid-template-columns: 1fr 170px 170px 170px 150px auto auto;
+    gap: 10px;
+    padding: 14px 20px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    align-items: end;
+  }
+  .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .field-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    padding-left: 2px;
+  }
+  .search-box { position: relative; }
+  .search-box i {
+    position: absolute;
+    left: 12px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+    pointer-events: none;
+  }
+  .search-box .form-control { padding-left: 36px; }
+
+  /* Buttons */
+  .btn {
+    border-radius: 8px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: var(--shadow-sm);
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--surface-2); border-color: var(--border-bright); }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+  .btn-danger {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 30%, var(--border));
+  }
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--error) 10%, transparent);
+    border-color: var(--error);
+  }
+  .btn-icon {
+    padding: 6px 8px;
+    font-size: 13px;
+    background: transparent;
+    border: 1px solid transparent;
+    box-shadow: none;
+  }
+  .btn-icon:hover { background: var(--surface-2); border-color: var(--border); }
+  .btn-icon.danger { color: var(--error); }
+  .btn-icon.danger:hover { background: var(--error-bg); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 1100px;
+  }
+  .data-table thead th {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .data-table thead th.num { text-align: right; }
+  .data-table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .data-table tbody td.num {
+    text-align: right;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+  }
+  .data-table tbody tr { transition: background 0.1s ease; }
+  .data-table tbody tr:hover { background: var(--surface-2); }
+  .data-table tbody tr.voided td {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .data-table tbody tr.voided td.no-strike,
+  .data-table tbody tr.voided td.actions-cell { text-decoration: none; }
+  .data-table tbody tr.reversal td {
+    background: color-mix(in srgb, var(--error) 4%, transparent);
+  }
+  .data-table tbody tr.reversal td.num { color: var(--error); }
+
+  .empty-row {
+    padding: 56px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .empty-row i {
+    display: block;
+    font-size: 32px;
+    margin-bottom: 10px;
+    opacity: 0.5;
+  }
+
+  /* Action type pill */
+  .action-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .action-pill.receive { color: var(--ok); background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .action-pill.cancel  { color: var(--error); background: var(--error-bg); border-color: color-mix(in srgb, var(--error) 30%, transparent); }
+  .action-pill.voided  { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+
+  /* Item cell */
+  .item-cell { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; min-width: 0; }
+  .item-code {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .item-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 240px;
+  }
+  .pull-link {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .pull-link:hover { text-decoration: underline; }
+  .pull-meta {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 1px;
+  }
+
+  /* QC badge */
+  .qc-badge {
+    display: inline-flex;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .qc-badge.passed { background: var(--ok-bg); color: var(--ok); }
+  .qc-badge.hold { background: var(--warn-bg); color: var(--warn); }
+  .qc-badge.rejected { background: var(--error-bg); color: var(--error); }
+  .qc-badge.pending { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+  .actor-cell { display: flex; flex-direction: column; gap: 1px; line-height: 1.2; }
+  .actor-name { font-size: 13px; color: var(--text); font-weight: 500; }
+  .actor-when { font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-muted); }
+
+  .meta-line {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .meta-line b { font-weight: 600; color: var(--text); }
+  .meta-line .sep { color: var(--text-muted); margin: 0 4px; }
+
+  /* Reversal link indicator */
+  .reversal-of {
+    display: inline-block;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--error);
+    background: var(--error-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-top: 3px;
+    cursor: pointer;
+  }
+  .reversal-of:hover { text-decoration: underline; }
+
+  /* Cancel modal */
+  .receipt-summary {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .summary-grid .lbl {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 2px;
+  }
+  .summary-grid .val {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .reason-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .reason-radio {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .reason-radio:hover { background: var(--surface-2); border-color: var(--border-bright); }
+  .reason-radio input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .reason-radio input:checked + span { color: var(--accent); font-weight: 500; }
+  .reason-radio input:checked ~ * { color: var(--text); }
+  .reason-radio:has(input:checked) { background: var(--accent-bg); border-color: var(--accent); }
+  .reason-radio span { font-size: 14px; color: var(--text-dim); }
+
+  /* Toast */
+  .toast-host {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    pointer-events: none;
+  }
+  .custom-toast {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-left: 3px solid var(--accent);
+    padding: 12px 18px;
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s ease;
+    max-width: 400px;
+  }
+  .custom-toast.show { opacity: 1; transform: translateY(0); }
+  .custom-toast.danger { border-color: var(--error); border-left-color: var(--error); }
+  .custom-toast .icon-wrap {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: grid; place-items: center;
+    font-size: 13px;
+  }
+  .custom-toast.danger .icon-wrap { background: var(--error-bg); color: var(--error); }
+  .custom-toast .msg { font-size: 13px; color: var(--text); }
+  .custom-toast .msg small {
+    display: block;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  /* Footer */
+  .footer {
+    padding: 12px 20px;
+    background: var(--surface-2);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  @media (max-width: 1100px) {
+    .filter-bar { grid-template-columns: 1fr 1fr; }
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+<!-- END_CSS:main -->
+</head>
+<body data-app-page="transactions">
+<!-- BEGIN_BODY:main -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-eyebrow">Audit · Receipts</div>
+        <h1 class="page-title">Transactions</h1>
+        <p class="page-subtitle">Every receive and cancel across all pulls. Cancellations create reversal entries so the audit trail stays intact.</p>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn" id="btn-refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button class="btn" id="btn-export"><i class="bi bi-download"></i> Export</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-strip">
+      <div class="stat-card">
+        <span class="label">Total Transactions</span>
+        <span class="value" id="s-total">0</span>
+        <span class="sub" id="s-total-sub">matching filter</span>
+      </div>
+      <div class="stat-card ok">
+        <span class="label">Receipts</span>
+        <span class="value" id="s-receipts">0</span>
+        <span class="sub" id="s-receipts-sub">positive entries</span>
+      </div>
+      <div class="stat-card error">
+        <span class="label">Reversals</span>
+        <span class="value" id="s-reversals">0</span>
+        <span class="sub" id="s-reversals-sub">negative entries</span>
+      </div>
+      <div class="stat-card">
+        <span class="label">Net Units</span>
+        <span class="value" id="s-net">0</span>
+        <span class="sub">after reversals</span>
+      </div>
+      <div class="stat-card">
+        <span class="label">Operators</span>
+        <span class="value" id="s-operators">0</span>
+        <span class="sub">unique actors</span>
+      </div>
+    </div>
+
+    <!-- Section -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">
+          <i class="bi bi-list-columns-reverse"></i> Receipt Journal
+        </div>
+        <div class="meta-line" id="result-count">0 of 0 records</div>
+      </div>
+
+      <!-- Hour filter banner (only when arrived from a specific cell with ?hour=) -->
+      <div id="hour-filter-banner" style="display: none; padding: 10px 20px; background: var(--accent-bg); border-bottom: 1px solid var(--border); align-items: center; gap: 10px;">
+        <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 600;">Filtered to slot:</span>
+        <span id="hour-filter-label" style="font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text); font-weight: 600; background: var(--surface); padding: 4px 12px; border-radius: 100px; border: 1px solid var(--accent); display: inline-flex; align-items: center; gap: 6px;"></span>
+        <button id="hour-filter-clear" class="btn" style="margin-left: auto; padding: 6px 10px;">
+          <i class="bi bi-x"></i> Clear hour filter
+        </button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <div class="field-group search-box">
+          <span class="field-label">Search</span>
+          <div style="position: relative;">
+            <i class="bi bi-search"></i>
+            <input type="text" class="form-control" id="f-search" placeholder="Pull #, item code, lot, pallet, operator…">
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Warehouse</span>
+          <select class="form-select" id="f-warehouse">
+            <option value="all">All warehouses</option>
+            <option value="WH-01">WH-01 · Bangkok Main</option>
+            <option value="WH-02">WH-02 · Chonburi</option>
+            <option value="WH-03">WH-03 · Rayong</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Action</span>
+          <select class="form-select" id="f-action">
+            <option value="all">All actions</option>
+            <option value="receive">Receive</option>
+            <option value="cancel">Cancel</option>
+            <option value="voided">Voided receipts</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Date Range</span>
+          <select class="form-select" id="f-date">
+            <option value="all">All time</option>
+            <option value="today" selected>Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="week">This week</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Operator</span>
+          <select class="form-select" id="f-operator">
+            <option value="all">All operators</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-clear-filters" title="Clear filters">
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+
+      <!-- Table -->
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 130px;">Time</th>
+              <th style="width: 90px;">Action</th>
+              <th>Pull / Warehouse</th>
+              <th>Item</th>
+              <th style="width: 60px;" class="num">Hour</th>
+              <th style="width: 110px;" class="num">Qty</th>
+              <th>Lot / Pallet</th>
+              <th>QC</th>
+              <th>Operator</th>
+              <th style="width: 110px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span id="footer-summary">—</span>
+        <span>Click any row's <b>cancel</b> action to create a reversal entry</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CANCEL MODAL ============ -->
+<div class="modal fade" id="cancelModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise" style="color: var(--error); margin-right: 6px;"></i> Cancel Receipt</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top: 0; color: var(--text-dim);">
+          This creates a <b>reversal entry</b> with negative quantity. Both the original receipt and the reversal remain in the journal — nothing is deleted.
+        </p>
+
+        <div class="receipt-summary">
+          <div class="summary-grid">
+            <div>
+              <div class="lbl">Receipt ID</div>
+              <div class="val" id="c-id">—</div>
+            </div>
+            <div>
+              <div class="lbl">When received</div>
+              <div class="val" id="c-when">—</div>
+            </div>
+            <div>
+              <div class="lbl">Item</div>
+              <div class="val" id="c-item">—</div>
+            </div>
+            <div>
+              <div class="lbl">Quantity to reverse</div>
+              <div class="val" id="c-qty" style="color: var(--error);">—</div>
+            </div>
+            <div>
+              <div class="lbl">Pull / Hour</div>
+              <div class="val" id="c-pull">—</div>
+            </div>
+            <div>
+              <div class="lbl">Originally by</div>
+              <div class="val" id="c-by">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group" style="margin-bottom: 14px;">
+          <span class="field-label" style="margin-bottom: 6px;">Reason</span>
+          <div class="reason-radio-group" id="reason-group">
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="miscount">
+              <span>Miscount — wrong quantity entered</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="wrong-item">
+              <span>Wrong item — entered against incorrect SKU</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="qc-fail">
+              <span>QC failure — material rejected after receipt</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="duplicate">
+              <span>Duplicate — already recorded elsewhere</span>
+            </label>
+            <label class="reason-radio">
+              <input type="radio" name="reason" value="other">
+              <span>Other (specify note below)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <span class="field-label" style="margin-bottom: 4px;">Note (optional)</span>
+          <textarea class="form-control" id="c-note" rows="2" placeholder="Additional context for the audit trail…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Keep receipt</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-cancel">
+          <i class="bi bi-arrow-counterclockwise"></i> Create reversal entry
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap" id="toast-icon">✓</div>
+    <div class="msg">
+      <span id="toast-msg">Saved</span>
+      <small id="toast-sub"></small>
+    </div>
+  </div>
+</div>
+
+<!-- END_BODY:main -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="app-nav.js"></script>
+
+<!-- BEGIN_JS:main -->
+<script>
+/* =============================================================================
+ * TRANSACTIONS — receipts journal with cancel/reverse logic
+ * Storage: localStorage under "ops.receipts" (array). Falls back to seed data.
+ * =========================================================================== */
+
+const STORE = {
+  load(key, fallback) {
+    try {
+      const raw = localStorage.getItem('ops.' + key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  },
+  save(key, val) {
+    try { localStorage.setItem('ops.' + key, JSON.stringify(val)); } catch (e) {}
+  },
+};
+
+/* ---- Seed data (12 hours back through "today") ---- */
+function seedReceipts() {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  function at(day, hour, min) {
+    const d = new Date(day);
+    d.setHours(hour, min, 0, 0);
+    return d.toISOString();
+  }
+  // Random-ish seed but deterministic enough to demo
+  return [
+    // PL-2847 · WH-01 · Today
+    { id: 'r-1001', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 8,  qty: 500, lotBatch: 'LOT-2401-018', palletId: 'PLT-00471', binLocation: 'A-12-01', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 8, 24),  reverses: null, reversedBy: null },
+    { id: 'r-1002', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 9,  qty: 800, lotBatch: 'LOT-2401-018', palletId: 'PLT-00472', binLocation: 'A-12-01', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 9, 12),  reverses: null, reversedBy: null },
+    { id: 'r-1003', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-101', itemCode: 'CAP-470UF-25V', itemDesc: 'Aluminum electrolytic capacitor',   hour: 9,  qty: 1200,lotBatch: 'LOT-2403-044', palletId: 'PLT-00473', binLocation: 'B-05-03', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 9, 45),  reverses: null, reversedBy: null },
+    { id: 'r-1004', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 10, qty: 1000,lotBatch: 'LOT-2401-019', palletId: 'PLT-00474', binLocation: 'A-12-02', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 10, 8),  reverses: null, reversedBy: null },
+    { id: 'r-1005', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-102', itemCode: 'RES-10K-0805',  itemDesc: 'Resistor 10kΩ 0805 1%',             hour: 10, qty: 1500,lotBatch: 'LOT-2402-091', palletId: 'PLT-00475', binLocation: 'B-08-01', qcStatus: 'hold',    note: 'Awaiting QC sample', receivedBy: 'P. Somchai',    receivedAt: at(today, 10, 33), reverses: null, reversedBy: null },
+    { id: 'r-1006', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 11, qty: 1500,lotBatch: 'LOT-2401-019', palletId: 'PLT-00476', binLocation: 'A-12-02', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 11, 5),  reverses: null, reversedBy: null },
+    // A reversal: r-1007 reverses r-1005 (Hold cleared, item rejected)
+    { id: 'r-1007', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-102', itemCode: 'RES-10K-0805',  itemDesc: 'Resistor 10kΩ 0805 1%',             hour: 10, qty: -1500,lotBatch: 'LOT-2402-091', palletId: 'PLT-00475', binLocation: 'B-08-01', qcStatus: 'rejected',note: 'QC rejected — wrong tolerance band (5% not 1%)', receivedBy: 'S. Wattana', receivedAt: at(today, 12, 18), reverses: 'r-1005', reversedBy: null, reason: 'qc-fail' },
+    { id: 'r-1008', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-103', itemCode: 'CONN-USB-C-16', itemDesc: 'USB-C connector 16-pin',            hour: 11, qty: 600, lotBatch: 'LOT-2403-118', palletId: 'PLT-00482', binLocation: 'C-03-01', qcStatus: 'passed',  note: '', receivedBy: 'N. Patcharin',  receivedAt: at(today, 11, 27), reverses: null, reversedBy: null },
+    { id: 'r-1009', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 12, qty: 1200,lotBatch: 'LOT-2401-020', palletId: 'PLT-00477', binLocation: 'A-12-03', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 12, 41), reverses: null, reversedBy: null },
+    { id: 'r-1010', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-104', itemCode: 'IC-MCU-STM32',  itemDesc: 'STM32F405 microcontroller',         hour: 13, qty: 100, lotBatch: 'LOT-2403-201', palletId: 'PLT-00478', binLocation: 'D-01-05', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 13, 9),  reverses: null, reversedBy: null },
+    { id: 'r-1011', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 13, qty: 500, lotBatch: 'LOT-2401-020', palletId: 'PLT-00479', binLocation: 'A-12-03', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 13, 50), reverses: null, reversedBy: null },
+    { id: 'r-1012', pullId: 'PL-2847', warehouse: 'WH-01', pullItemId: 'pi-100', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 14, qty: 500, lotBatch: 'LOT-2401-020', palletId: 'PLT-00480', binLocation: 'A-12-04', qcStatus: 'passed',  note: '', receivedBy: 'S. Wattana',   receivedAt: at(today, 14, 18), reverses: null, reversedBy: null },
+
+    // PL-2848 · WH-01 · Today
+    { id: 'r-2001', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-200', itemCode: 'CAP-470UF-25V', itemDesc: 'Aluminum electrolytic capacitor',   hour: 8,  qty: 800, lotBatch: 'LOT-2403-045', palletId: 'PLT-00461', binLocation: 'B-05-04', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 8, 12),  reverses: null, reversedBy: null },
+    // Cancelled receipt: r-2002 originally entered then reversed by r-2003
+    { id: 'r-2002', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-201', itemCode: 'RES-10K-0805',  itemDesc: 'Resistor 10kΩ 0805 1%',             hour: 9,  qty: 2000,lotBatch: 'LOT-2402-092', palletId: 'PLT-00462', binLocation: 'B-08-02', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 9, 24),  reverses: null, reversedBy: 'r-2003' },
+    { id: 'r-2003', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-201', itemCode: 'RES-10K-0805',  itemDesc: 'Resistor 10kΩ 0805 1%',             hour: 9,  qty: -2000,lotBatch: 'LOT-2402-092', palletId: 'PLT-00462', binLocation: 'B-08-02', qcStatus: 'passed',  note: 'Wrong quantity entered — should be 200 not 2000', receivedBy: 'P. Somchai', receivedAt: at(today, 9, 27),  reverses: 'r-2002', reversedBy: null, reason: 'miscount' },
+    { id: 'r-2004', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-201', itemCode: 'RES-10K-0805',  itemDesc: 'Resistor 10kΩ 0805 1%',             hour: 9,  qty: 200, lotBatch: 'LOT-2402-092', palletId: 'PLT-00463', binLocation: 'B-08-02', qcStatus: 'passed',  note: 'Re-entered after correction', receivedBy: 'P. Somchai', receivedAt: at(today, 9, 29), reverses: null, reversedBy: null },
+    { id: 'r-2005', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-202', itemCode: 'BATT-LIPO-3.7V',itemDesc: 'Li-Po battery 3.7V 2000mAh',        hour: 13, qty: 240, lotBatch: 'LOT-2403-073', palletId: 'PLT-00464', binLocation: 'D-04-01', qcStatus: 'pending', note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 13, 55), reverses: null, reversedBy: null },
+    { id: 'r-2006', pullId: 'PL-2848', warehouse: 'WH-01', pullItemId: 'pi-200', itemCode: 'CAP-470UF-25V', itemDesc: 'Aluminum electrolytic capacitor',   hour: 14, qty: 800, lotBatch: 'LOT-2403-045', palletId: 'PLT-00465', binLocation: 'B-05-04', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(today, 14, 5),  reverses: null, reversedBy: null },
+
+    // PL-2846 · WH-01 · Yesterday
+    { id: 'r-3001', pullId: 'PL-2846', warehouse: 'WH-01', pullItemId: 'pi-300', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 9,  qty: 1500,lotBatch: 'LOT-2401-014', palletId: 'PLT-00351', binLocation: 'A-11-01', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(yesterday, 9, 1),  reverses: null, reversedBy: null },
+    { id: 'r-3002', pullId: 'PL-2846', warehouse: 'WH-01', pullItemId: 'pi-300', itemCode: 'PCBA-AX450-R2', itemDesc: 'PCBA assembly, rev 2 (4-layer FR4)', hour: 10, qty: 1200,lotBatch: 'LOT-2401-014', palletId: 'PLT-00352', binLocation: 'A-11-01', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(yesterday, 10, 22), reverses: null, reversedBy: null },
+    { id: 'r-3003', pullId: 'PL-2846', warehouse: 'WH-01', pullItemId: 'pi-301', itemCode: 'IC-MCU-STM32',  itemDesc: 'STM32F405 microcontroller',         hour: 13, qty: 100, lotBatch: 'LOT-2403-198', palletId: 'PLT-00353', binLocation: 'D-01-04', qcStatus: 'passed',  note: '', receivedBy: 'P. Somchai',    receivedAt: at(yesterday, 13, 42), reverses: null, reversedBy: null },
+
+    // PL-2844 · WH-02 · Yesterday
+    { id: 'r-4001', pullId: 'PL-2844', warehouse: 'WH-02', pullItemId: 'pi-400', itemCode: 'BATT-LIPO-3.7V',itemDesc: 'Li-Po battery 3.7V 2000mAh',        hour: 11, qty: 200, lotBatch: 'LOT-2403-074', palletId: 'PLT-00251', binLocation: 'E-01-01', qcStatus: 'passed',  note: '', receivedBy: 'N. Patcharin',  receivedAt: at(yesterday, 11, 14), reverses: null, reversedBy: null },
+    { id: 'r-4002', pullId: 'PL-2844', warehouse: 'WH-02', pullItemId: 'pi-401', itemCode: 'CASE-ABS-V2',   itemDesc: 'ABS plastic enclosure, rev 2',      hour: 12, qty: 400, lotBatch: 'LOT-2402-217', palletId: 'PLT-00252', binLocation: 'E-04-02', qcStatus: 'passed',  note: '', receivedBy: 'N. Patcharin',  receivedAt: at(yesterday, 12, 15), reverses: null, reversedBy: null },
+  ];
+}
+
+let receipts = STORE.load('receipts', null);
+if (!receipts) {
+  receipts = seedReceipts();
+  STORE.save('receipts', receipts);
+}
+
+function persist() { STORE.save('receipts', receipts); }
+
+/* =============================================================================
+ * AUTH context (for actor name)
+ * =========================================================================== */
+function currentActor() {
+  try {
+    const raw = localStorage.getItem('auth.user');
+    if (raw) {
+      const u = JSON.parse(raw);
+      return u.name || u.username || 'Unknown';
+    }
+  } catch (e) {}
+  return 'S. Wattana';
+}
+
+/* =============================================================================
+ * FILTERING
+ * =========================================================================== */
+function nowMs() { return Date.now(); }
+function todayStart() { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function yesterdayStart() { return todayStart() - 86400000; }
+function weekStart() {
+  const d = new Date(); d.setHours(0,0,0,0);
+  const day = d.getDay() || 7; // Sunday=0 → 7
+  d.setDate(d.getDate() - (day - 1));
+  return d.getTime();
+}
+
+function filteredReceipts() {
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  // Split search into AND tokens so "PL-2847 PCBA-AX450" matches rows containing both
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const wh = document.getElementById('f-warehouse').value;
+  const act = document.getElementById('f-action').value;
+  const dateF = document.getElementById('f-date').value;
+  const op = document.getElementById('f-operator').value;
+  const hourFilter = (typeof window.__urlHourFilter === 'number') ? window.__urlHourFilter : null;
+
+  let from = null, to = null;
+  if (dateF === 'today') from = todayStart();
+  else if (dateF === 'yesterday') { from = yesterdayStart(); to = todayStart(); }
+  else if (dateF === 'week') from = weekStart();
+
+  return receipts.filter(r => {
+    if (wh !== 'all' && r.warehouse !== wh) return false;
+    if (hourFilter !== null && r.hour !== hourFilter) return false;
+    if (act === 'receive' && r.qty < 0) return false;
+    if (act === 'cancel' && r.qty >= 0) return false;
+    if (act === 'voided' && !r.reversedBy) return false;
+    if (op !== 'all' && r.receivedBy !== op) return false;
+    if (from !== null) {
+      const t = new Date(r.receivedAt).getTime();
+      if (t < from) return false;
+      if (to !== null && t >= to) return false;
+    }
+    if (tokens.length > 0) {
+      const h = `${r.pullId} ${r.warehouse} ${r.itemCode} ${r.itemDesc} ${r.lotBatch} ${r.palletId} ${r.binLocation} ${r.receivedBy} ${r.note || ''}`.toLowerCase();
+      for (const t of tokens) {
+        if (!h.includes(t)) return false;
+      }
+    }
+    return true;
+  }).sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+}
+
+/* =============================================================================
+ * RENDER
+ * =========================================================================== */
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function formatTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function formatFull(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function actionPillHtml(r) {
+  if (r.qty < 0) return `<span class="action-pill cancel"><i class="bi bi-arrow-counterclockwise"></i> Cancel</span>`;
+  if (r.reversedBy) return `<span class="action-pill voided"><i class="bi bi-slash-circle"></i> Voided</span>`;
+  return `<span class="action-pill receive"><i class="bi bi-plus-circle"></i> Receive</span>`;
+}
+
+function render() {
+  const list = filteredReceipts();
+  const tbody = document.getElementById('tx-tbody');
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">
+      <i class="bi bi-inbox"></i>
+      No transactions match your filter
+    </td></tr>`;
+  } else {
+    tbody.innerHTML = list.map(r => {
+      const isReversal = r.qty < 0;
+      const isVoided = !!r.reversedBy;
+      const cls = (isReversal ? 'reversal' : '') + (isVoided ? ' voided' : '');
+      const qtyDisplay = isReversal ? `−${Math.abs(r.qty).toLocaleString()}` : r.qty.toLocaleString();
+      const lotPallet = `
+        <div class="meta-line">
+          <b>${escHtml(r.lotBatch || '—')}</b>
+          <span class="sep">·</span>
+          ${escHtml(r.palletId || '—')}
+        </div>
+        <div class="meta-line" style="color: var(--text-muted);">Bin ${escHtml(r.binLocation || '—')}</div>
+      `;
+      const reversalLink = r.reverses
+        ? `<span class="reversal-of" data-jump="${escHtml(r.reverses)}">↺ Reverses ${escHtml(r.reverses)}</span>`
+        : (r.reversedBy
+          ? `<span class="reversal-of" data-jump="${escHtml(r.reversedBy)}">↩ Reversed by ${escHtml(r.reversedBy)}</span>`
+          : '');
+      const actions = isReversal
+        ? '<span style="color: var(--text-muted); font-family: \'Roboto Mono\', monospace; font-size: 10px;">REVERSAL</span>'
+        : (isVoided
+          ? '<span style="color: var(--text-muted); font-family: \'Roboto Mono\', monospace; font-size: 10px;">VOIDED</span>'
+          : `<button class="btn btn-icon danger" data-act="cancel" data-id="${escHtml(r.id)}" title="Cancel this receipt"><i class="bi bi-arrow-counterclockwise"></i> Cancel</button>`);
+      return `
+        <tr class="${cls}" data-id="${escHtml(r.id)}">
+          <td class="no-strike">
+            <div class="actor-cell">
+              <span class="actor-name" style="font-family: 'Roboto Mono', monospace; font-size: 12px;">${formatTime(r.receivedAt)}</span>
+              <span class="actor-when">${escHtml(r.id)}</span>
+            </div>
+          </td>
+          <td class="no-strike">${actionPillHtml(r)}</td>
+          <td>
+            <a class="pull-link" data-jump-pull="${escHtml(r.pullId)}">${escHtml(r.pullId)}</a>
+            <div class="pull-meta">${escHtml(r.warehouse)}</div>
+          </td>
+          <td>
+            <div class="item-cell">
+              <span class="item-code">${escHtml(r.itemCode)}</span>
+              <span class="item-desc">${escHtml(r.itemDesc)}</span>
+              ${reversalLink}
+            </div>
+          </td>
+          <td class="num">${String(r.hour).padStart(2,'0')}:00</td>
+          <td class="num" style="${isReversal ? 'color: var(--error);' : ''}">${qtyDisplay}</td>
+          <td>${lotPallet}</td>
+          <td><span class="qc-badge ${r.qcStatus}">${escHtml(r.qcStatus)}</span></td>
+          <td>
+            <div class="actor-cell">
+              <span class="actor-name">${escHtml(r.receivedBy)}</span>
+              ${r.note ? `<span class="actor-when" style="text-transform: none; letter-spacing: 0;">${escHtml(r.note)}</span>` : ''}
+            </div>
+          </td>
+          <td class="actions-cell" style="text-align: right;">${actions}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+  renderStats(list);
+}
+
+function renderStats(list) {
+  document.getElementById('s-total').textContent = list.length;
+  const receipts = list.filter(r => r.qty > 0);
+  const reversals = list.filter(r => r.qty < 0);
+  document.getElementById('s-receipts').textContent = receipts.length;
+  document.getElementById('s-reversals').textContent = reversals.length;
+  const net = list.reduce((sum, r) => sum + r.qty, 0);
+  document.getElementById('s-net').textContent = net.toLocaleString();
+  const operators = new Set(list.map(r => r.receivedBy));
+  document.getElementById('s-operators').textContent = operators.size;
+
+  const totalAll = window.receipts ? window.receipts.length : list.length;
+  document.getElementById('result-count').innerHTML = `<b style="color: var(--text);">${list.length}</b> of ${receipts.length + reversals.length + (list.length - receipts.length - reversals.length)} records`;
+  document.getElementById('footer-summary').textContent =
+    list.length === 0 ? '—' :
+    `${list.length} transactions · ${receipts.length} receipts (+${receipts.reduce((a,r) => a+r.qty, 0).toLocaleString()}) · ${reversals.length} reversals (${reversals.reduce((a,r) => a+r.qty, 0).toLocaleString()}) · net ${net.toLocaleString()}`;
+}
+
+function refreshOperators() {
+  const ops = [...new Set(receipts.map(r => r.receivedBy))].sort();
+  const sel = document.getElementById('f-operator');
+  const cur = sel.value;
+  sel.innerHTML = `<option value="all">All operators</option>` + ops.map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
+  sel.value = ops.includes(cur) || cur === 'all' ? cur : 'all';
+}
+
+/* =============================================================================
+ * CANCEL FLOW
+ * =========================================================================== */
+let cancelTarget = null;
+function openCancelModal(receiptId) {
+  const r = receipts.find(x => x.id === receiptId);
+  if (!r) return;
+  if (r.qty < 0) return showToast('Cannot cancel a reversal entry', '', 'danger');
+  if (r.reversedBy) return showToast('This receipt is already voided', '', 'danger');
+
+  cancelTarget = r;
+  document.getElementById('c-id').textContent = r.id;
+  document.getElementById('c-when').textContent = formatFull(r.receivedAt);
+  document.getElementById('c-item').textContent = r.itemCode + ' · ' + r.itemDesc;
+  document.getElementById('c-qty').textContent = '−' + r.qty.toLocaleString() + ' pcs';
+  document.getElementById('c-pull').textContent = r.pullId + ' · ' + String(r.hour).padStart(2,'0') + ':00';
+  document.getElementById('c-by').textContent = r.receivedBy;
+  document.getElementById('c-note').value = '';
+  document.querySelectorAll('input[name="reason"]').forEach(rb => rb.checked = false);
+  new bootstrap.Modal(document.getElementById('cancelModal')).show();
+}
+
+function confirmCancel() {
+  if (!cancelTarget) return;
+  const reasonRadio = document.querySelector('input[name="reason"]:checked');
+  if (!reasonRadio) return showToast('Pick a reason', 'Required to create reversal', 'danger');
+  const reason = reasonRadio.value;
+  const note = document.getElementById('c-note').value.trim();
+
+  const reasonLabel = ({
+    'miscount': 'Miscount — wrong quantity entered',
+    'wrong-item': 'Wrong item — entered against incorrect SKU',
+    'qc-fail': 'QC failure — material rejected after receipt',
+    'duplicate': 'Duplicate — already recorded elsewhere',
+    'other': 'Other'
+  })[reason] || reason;
+
+  // Build reversal entry
+  const orig = cancelTarget;
+  const reversal = {
+    id: 'r-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+    pullId: orig.pullId,
+    warehouse: orig.warehouse,
+    pullItemId: orig.pullItemId,
+    itemCode: orig.itemCode,
+    itemDesc: orig.itemDesc,
+    hour: orig.hour,
+    qty: -orig.qty,                   // negative qty = reversal
+    lotBatch: orig.lotBatch,
+    palletId: orig.palletId,
+    binLocation: orig.binLocation,
+    qcStatus: orig.qcStatus,
+    note: note ? `${reasonLabel}. ${note}` : reasonLabel,
+    receivedBy: currentActor(),       // actor performing the cancel
+    receivedAt: new Date().toISOString(),
+    reverses: orig.id,
+    reversedBy: null,
+    reason,
+  };
+
+  // Insert reversal + mark original as voided
+  receipts.unshift(reversal);
+  const idx = receipts.findIndex(x => x.id === orig.id);
+  if (idx >= 0) receipts[idx] = { ...receipts[idx], reversedBy: reversal.id };
+  persist();
+
+  bootstrap.Modal.getInstance(document.getElementById('cancelModal')).hide();
+  cancelTarget = null;
+  refreshOperators();
+  render();
+  showToast('Reversal created', `${reversal.id} · −${Math.abs(reversal.qty).toLocaleString()} pcs`, 'danger');
+}
+
+/* =============================================================================
+ * EXPORT
+ * =========================================================================== */
+function exportToExcel() {
+  try {
+    if (typeof XLSX === 'undefined') return showToast('Export failed', 'Library not loaded', 'danger');
+    const list = filteredReceipts();
+    if (list.length === 0) return showToast('Nothing to export', '', 'danger');
+
+    const now = new Date();
+    const wb = XLSX.utils.book_new();
+
+    const meta = [
+      { Field: 'Report',         Value: 'Receipt Transactions Journal' },
+      { Field: 'Exported By',    Value: currentActor() },
+      { Field: 'Exported At',    Value: now.toLocaleString('en-GB') },
+      { Field: 'Total',          Value: list.length },
+      { Field: 'Receipts',       Value: list.filter(r => r.qty > 0).length },
+      { Field: 'Reversals',      Value: list.filter(r => r.qty < 0).length },
+      { Field: 'Net Units',      Value: list.reduce((a,r) => a+r.qty, 0) },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(meta), 'Header');
+
+    const rows = list.map(r => ({
+      'Receipt ID':    r.id,
+      'Type':          r.qty < 0 ? 'Reversal' : (r.reversedBy ? 'Voided' : 'Receipt'),
+      'When':          formatFull(r.receivedAt),
+      'Pull':          r.pullId,
+      'Warehouse':     r.warehouse,
+      'Item Code':     r.itemCode,
+      'Description':   r.itemDesc,
+      'Hour':          String(r.hour).padStart(2,'0') + ':00',
+      'Quantity':      r.qty,
+      'Lot/Batch':     r.lotBatch,
+      'Pallet':        r.palletId,
+      'Bin':           r.binLocation,
+      'QC':            r.qcStatus,
+      'Note':          r.note,
+      'Operator':      r.receivedBy,
+      'Reverses':      r.reverses || '',
+      'Reversed By':   r.reversedBy || '',
+      'Reason':        r.reason || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      {wch:18},{wch:10},{wch:18},{wch:10},{wch:8},{wch:18},{wch:32},
+      {wch:6},{wch:9},{wch:16},{wch:12},{wch:10},{wch:10},{wch:32},{wch:14},{wch:18},{wch:18},{wch:14}
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
+
+    XLSX.writeFile(wb, `transactions_${now.toISOString().slice(0,10)}.xlsx`);
+    showToast('Export complete', `${list.length} transactions`);
+  } catch (e) {
+    console.error(e);
+    showToast('Export failed', e.message, 'danger');
+  }
+}
+
+/* =============================================================================
+ * TOAST
+ * =========================================================================== */
+function showToast(msg, sub, kind) {
+  const t = document.getElementById('toast');
+  document.getElementById('toast-msg').textContent = msg;
+  document.getElementById('toast-sub').textContent = sub || '';
+  t.classList.toggle('danger', kind === 'danger');
+  document.getElementById('toast-icon').textContent = kind === 'danger' ? '!' : '✓';
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* =============================================================================
+ * EVENTS
+ * =========================================================================== */
+['f-search', 'f-warehouse', 'f-action', 'f-date', 'f-operator'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener(id === 'f-search' ? 'input' : 'change', render);
+});
+
+document.getElementById('btn-clear-filters').addEventListener('click', () => {
+  document.getElementById('f-search').value = '';
+  document.getElementById('f-warehouse').value = 'all';
+  document.getElementById('f-action').value = 'all';
+  document.getElementById('f-date').value = 'all';
+  document.getElementById('f-operator').value = 'all';
+  render();
+});
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  render();
+  showToast('Refreshed');
+});
+
+document.getElementById('btn-export').addEventListener('click', exportToExcel);
+document.getElementById('btn-confirm-cancel').addEventListener('click', confirmCancel);
+
+document.addEventListener('click', (e) => {
+  const cancelBtn = e.target.closest('[data-act="cancel"]');
+  if (cancelBtn) {
+    openCancelModal(cancelBtn.getAttribute('data-id'));
+    return;
+  }
+  const jump = e.target.closest('[data-jump]');
+  if (jump) {
+    const targetId = jump.getAttribute('data-jump');
+    const row = document.querySelector(`tr[data-id="${targetId}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.style.transition = 'background 0.3s ease';
+      const orig = row.style.background;
+      row.style.background = 'var(--accent-bg)';
+      setTimeout(() => { row.style.background = orig; }, 1200);
+    }
+    return;
+  }
+  const pullLink = e.target.closest('[data-jump-pull]');
+  if (pullLink) {
+    const pullId = pullLink.getAttribute('data-jump-pull');
+    window.location.href = `receiving-mockup-v2-fullreceived.html?pull=${encodeURIComponent(pullId)}&from=transactions`;
+  }
+});
+
+// Read URL params: ?pull=PL-2847&warehouse=WH-01&hour=10&item=PCBA-AX450-R2 → pre-filter
+(function applyUrlFilters() {
+  const params = new URLSearchParams(window.location.search);
+  const searchTerms = [];
+  if (params.get('pull')) searchTerms.push(params.get('pull'));
+  if (params.get('item')) searchTerms.push(params.get('item'));
+  if (searchTerms.length > 0) {
+    document.getElementById('f-search').value = searchTerms.join(' ');
+    document.getElementById('f-date').value = 'all';
+  }
+  if (params.get('warehouse')) document.getElementById('f-warehouse').value = params.get('warehouse');
+  // Hour filter is honored at the data level (see filteredReceipts patch below)
+  const hour = params.get('hour');
+  if (hour !== null && hour !== '') {
+    window.__urlHourFilter = parseInt(hour, 10);
+    if (isNaN(window.__urlHourFilter)) window.__urlHourFilter = null;
+  }
+
+  // Show the hour-filter banner if active
+  if (typeof window.__urlHourFilter === 'number') {
+    const banner = document.getElementById('hour-filter-banner');
+    banner.style.display = 'flex';
+    const label = document.getElementById('hour-filter-label');
+    const hh = String(window.__urlHourFilter).padStart(2, '0');
+    const ctx = [];
+    if (params.get('pull')) ctx.push(params.get('pull'));
+    if (params.get('item')) ctx.push(params.get('item'));
+    label.innerHTML = `<i class="bi bi-clock"></i> ${hh}:00${ctx.length ? ' · ' + ctx.join(' · ') : ''}`;
+  }
+})();
+
+document.getElementById('hour-filter-clear').addEventListener('click', () => {
+  window.__urlHourFilter = null;
+  document.getElementById('hour-filter-banner').style.display = 'none';
+  render();
+});
+
+refreshOperators();
+render();
+</script>
+<!-- END_JS:main -->
+
+</body>
+</html>

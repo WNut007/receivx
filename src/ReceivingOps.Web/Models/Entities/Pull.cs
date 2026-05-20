@@ -1,0 +1,22 @@
+namespace ReceivingOps.Web.Models.Entities;
+
+public class Pull
+{
+    public Guid Id { get; set; }
+    public string PullNumber { get; set; } = "";
+    public Guid WarehouseId { get; set; }
+    public DateTime PullDate { get; set; }
+    public string Status { get; set; } = "pending";  // pending|in_progress|fully_received|closed
+    public string? Eta { get; set; }
+    public string? Notes { get; set; }
+    public Guid? CreatedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? FirstReceiptAt { get; set; }
+    public DateTime? LastActivityAt { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public Guid? ClosedBy { get; set; }
+    public string? SignatureSvg { get; set; }
+    public DateTime? ReopenedAt { get; set; }
+    public Guid? ReopenedBy { get; set; }
+    public string? ReopenReason { get; set; }
+}

@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pull Request Controller v2</title>
+
+<!-- Roboto -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700;900&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Bootstrap 5.3 -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<!-- Bootstrap Icons -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<!-- SheetJS for Excel export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+  /* ============ THEME TOKENS ============ */
+  /* Default = Light Paper theme */
+  :root, [data-theme="light"] {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #faf9f6;
+    --surface-3: #f0eee8;
+    --border: #e6e3dc;
+    --border-bright: #d4d0c6;
+    --text: #1a1d20;
+    --text-dim: #5a626c;
+    --text-muted: #8a8f97;
+
+    --accent: #1f4d2b;
+    --accent-bg: #e8f0ea;
+    --accent-hover: #163a20;
+    --accent-fg: #ffffff;
+
+    --pending: #b86e00;       --pending-bg: #fdf4e3;       --pending-border: #f0d896;
+    --progress: #1f6fb8;      --progress-bg: #e3eef9;      --progress-border: #b8d2eb;
+    --complete: #2d7d4f;      --complete-bg: #e7f3ec;      --complete-border: #b3d9c0;
+    --closed: #5a626c;        --closed-bg: #eeece6;        --closed-border: #d4d0c6;
+    --over: #c0392b;
+
+    --shadow-sm: 0 1px 2px rgba(20, 22, 24, 0.04);
+    --shadow-md: 0 4px 16px rgba(20, 22, 24, 0.06);
+    --shadow-lg: 0 20px 60px rgba(20, 22, 24, 0.12);
+
+    --grid-line: rgba(0,0,0,0.018);
+    --ambient-1: rgba(31, 77, 43, 0.04);
+    --ambient-2: rgba(10, 138, 146, 0.03);
+  }
+
+  /* Midnight (dark) */
+  [data-theme="midnight"] {
+    --bg: #0e1116;
+    --surface: #161a21;
+    --surface-2: #1c2128;
+    --surface-3: #232932;
+    --border: #2a313c;
+    --border-bright: #3a4250;
+    --text: #e6e8ea;
+    --text-dim: #9aa3b0;
+    --text-muted: #6b7382;
+
+    --accent: #5fd49a;
+    --accent-bg: rgba(95, 212, 154, 0.12);
+    --accent-hover: #4dbf85;
+    --accent-fg: #0e1116;
+
+    --pending: #f0a73a;       --pending-bg: rgba(240, 167, 58, 0.12);   --pending-border: rgba(240, 167, 58, 0.3);
+    --progress: #5aa8e8;      --progress-bg: rgba(90, 168, 232, 0.12);  --progress-border: rgba(90, 168, 232, 0.3);
+    --complete: #5fd49a;      --complete-bg: rgba(95, 212, 154, 0.12);  --complete-border: rgba(95, 212, 154, 0.3);
+    --closed: #7a8090;        --closed-bg: rgba(122, 128, 144, 0.12);   --closed-border: rgba(122, 128, 144, 0.3);
+    --over: #ff6b6b;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 20px 60px rgba(0,0,0,0.6);
+
+    --grid-line: rgba(255,255,255,0.025);
+    --ambient-1: rgba(95, 212, 154, 0.05);
+    --ambient-2: rgba(90, 168, 232, 0.04);
+  }
+
+  /* Slate (cool grey) */
+  [data-theme="slate"] {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #f7f9fb;
+    --surface-3: #e9edf2;
+    --border: #dce2e9;
+    --border-bright: #c5cdd6;
+    --text: #1c2530;
+    --text-dim: #4a5562;
+    --text-muted: #7d8794;
+
+    --accent: #2e4d6b;
+    --accent-bg: #e3ebf3;
+    --accent-hover: #213a52;
+    --accent-fg: #ffffff;
+
+    --pending: #c47611;       --pending-bg: #fef0dc;       --pending-border: #f0cb89;
+    --progress: #1e6fc4;      --progress-bg: #e0edfa;      --progress-border: #a8c8e8;
+    --complete: #2d8a5d;      --complete-bg: #e0f0e7;      --complete-border: #a8d2bb;
+    --closed: #6b7480;        --closed-bg: #e9edf2;        --closed-border: #c5cdd6;
+    --over: #c43b3b;
+
+    --shadow-sm: 0 1px 3px rgba(28, 37, 48, 0.05);
+    --shadow-md: 0 4px 18px rgba(28, 37, 48, 0.08);
+    --shadow-lg: 0 24px 64px rgba(28, 37, 48, 0.15);
+
+    --grid-line: rgba(28, 37, 48, 0.02);
+    --ambient-1: rgba(46, 77, 107, 0.04);
+    --ambient-2: rgba(30, 111, 196, 0.03);
+  }
+
+  /* ============ BASE ============ */
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Roboto', system-ui, sans-serif;
+    font-size: 15px;          /* +2px from previous 13px */
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    height: 100vh;
+    overflow: hidden;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% 0%, var(--ambient-1), transparent 65%),
+      radial-gradient(ellipse 700px 400px at 85% 100%, var(--ambient-2), transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+    transition: opacity 0.25s ease;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative;
+    z-index: 1;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto auto auto 1fr auto;
+    min-height: 0;
+  }
+
+  /* ============ BOOTSTRAP OVERRIDES — theme-aware ============ */
+  .form-select, .form-control {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    font-size: 14px;
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.15s ease;
+  }
+  .form-select:focus, .form-control:focus {
+    background-color: var(--surface);
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  .form-select { padding: 8px 36px 8px 12px; font-family: 'Roboto Mono', monospace; font-weight: 500; }
+  .form-control::placeholder { color: var(--text-muted); }
+
+  .btn {
+    border-radius: 8px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 8px 14px;
+    transition: all 0.15s ease;
+  }
+  .btn-outline-secondary {
+    color: var(--text);
+    border-color: var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-outline-secondary:hover {
+    color: var(--text);
+    background: var(--surface-2);
+    border-color: var(--border-bright);
+  }
+  .btn-primary, .btn-success {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .btn-primary:hover, .btn-primary:focus,
+  .btn-success:hover, .btn-success:focus {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: var(--accent-fg);
+  }
+  .btn:disabled, .btn.disabled { opacity: 0.45; }
+
+  .dropdown-menu {
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+  }
+  .dropdown-item {
+    color: var(--text);
+    border-radius: 6px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+  }
+  .dropdown-item:hover, .dropdown-item:focus {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .dropdown-item.active { background: var(--accent-bg); color: var(--accent); }
+
+  .badge { font-family: 'Roboto Mono', monospace; font-weight: 600; }
+
+  .modal-content, .offcanvas {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .modal-header, .offcanvas-header { border-bottom-color: var(--border); }
+  .modal-footer { border-top-color: var(--border); background: var(--surface-2); }
+  .offcanvas { box-shadow: var(--shadow-lg); }
+
+  .progress { background: var(--surface-3); border-radius: 4px; height: 6px; }
+  .progress-bar { background: var(--accent); transition: width 0.4s ease; }
+
+  /* ============ TOPBAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 75%, transparent);
+    backdrop-filter: blur(20px);
+  }
+  .brand { display: flex; align-items: baseline; gap: 14px; }
+  .brand-mark {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .brand-mark span {
+    color: var(--accent);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-left: 6px;
+  }
+  .brand-path {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .brand-path b { color: var(--text-dim); font-weight: 500; }
+
+  .topbar-right { display: flex; align-items: center; gap: 14px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    box-shadow: var(--shadow-sm);
+  }
+  .pulse {
+    width: 7px; height: 7px;
+    background: var(--complete);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--complete) 50%, transparent); }
+    70% { box-shadow: 0 0 0 8px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .user-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 4px 4px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    font-size: 13px;
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+  .user-chip .avatar {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #0a8a92);
+    color: var(--accent-fg);
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 11px;
+    font-family: 'Roboto Mono', monospace;
+  }
+
+  /* Theme switcher */
+  .theme-switch {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 3px;
+    gap: 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .theme-swatch {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.15s ease;
+  }
+  .theme-swatch:hover { transform: scale(1.08); }
+  .theme-swatch.active::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+  }
+  .theme-swatch.light    { background: linear-gradient(135deg, #f6f5f1 50%, #ffffff 50%); border: 1px solid #d4d0c6; }
+  .theme-swatch.midnight { background: linear-gradient(135deg, #0e1116 50%, #5fd49a 50%); }
+  .theme-swatch.slate    { background: linear-gradient(135deg, #eef1f4 50%, #2e4d6b 50%); }
+
+  /* ============ SUMMARY STRIP ============ */
+  .summary-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .summary-cell {
+    padding: 16px 24px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .summary-cell:last-child { border-right: none; }
+  .summary-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--text-muted);
+  }
+  .summary-value {
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    font-weight: 500;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .summary-value small {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .summary-sub {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .summary-sub.warn { color: var(--pending); }
+  .summary-sub.ok { color: var(--complete); }
+
+  /* ============ TOOLBAR ============ */
+  .toolbar {
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .field-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    padding-left: 2px;
+  }
+  .field-group .form-select { min-width: 170px; }
+  .toolbar-spacer { flex: 1; }
+
+  .search-box { position: relative; }
+  .search-box .form-control {
+    padding-left: 36px;
+    width: 280px;
+  }
+  .search-box .bi-search {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  /* Date range pickers (hidden unless custom selected) */
+  .custom-date-row {
+    display: none;
+    padding: 0 28px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    gap: 12px;
+    align-items: flex-end;
+  }
+  .custom-date-row.visible { display: flex; flex-wrap: wrap; }
+  .custom-date-row .form-control { width: 160px; font-family: 'Roboto Mono', monospace; }
+  .date-arrow {
+    align-self: flex-end;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: 18px;
+  }
+
+  /* ============ KANBAN ============ */
+  .kanban-wrap {
+    overflow: auto;
+    padding: 20px 22px;
+    min-height: 0;
+  }
+  .kanban {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(300px, 1fr));
+    gap: 16px;
+    min-width: 1280px;
+    height: 100%;
+  }
+  .column {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .column-head {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .column-title { display: flex; align-items: center; gap: 10px; }
+  .column-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+  }
+  .column-dot.pending { background: var(--pending); }
+  .column-dot.in_progress { background: var(--progress); }
+  .column-dot.fully_received { background: var(--complete); }
+  .column-dot.closed { background: var(--closed); }
+  .column-name {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .column-count {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    padding: 2px 10px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .column-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  .column-body::-webkit-scrollbar { width: 6px; }
+  .column-body::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+  .empty-col {
+    padding: 48px 12px;
+    text-align: center;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  /* ============ CARD ============ */
+  .card-pull {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+  }
+  .card-pull:hover {
+    border-color: var(--border-bright);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .card-pull.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), var(--shadow-md);
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 6px;
+  }
+  .card-id {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .card-date {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .card-wh {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+  }
+  .card-wh::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+  .card-progress { margin-bottom: 10px; }
+  .card-progress-head {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  .card-progress-head .pct { color: var(--text); font-weight: 600; }
+  .card-progress-track {
+    height: 5px;
+    background: var(--surface-3);
+    border-radius: 2.5px;
+    overflow: hidden;
+  }
+  .card-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #3a7a4d);
+    border-radius: 2.5px;
+    transition: width 0.4s ease;
+  }
+  .card-pull.status-pending .card-progress-fill { background: linear-gradient(90deg, var(--pending), #d18a2a); }
+  .card-pull.status-in_progress .card-progress-fill { background: linear-gradient(90deg, var(--progress), #4a92cf); }
+  .card-pull.status-fully_received .card-progress-fill { background: linear-gradient(90deg, var(--complete), #4a9c69); }
+  .card-pull.status-closed .card-progress-fill { background: linear-gradient(90deg, var(--closed), #7a818a); }
+  .card-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+  .card-meta-item { display: flex; flex-direction: column; gap: 1px; }
+  .card-meta-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .card-meta-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .card-meta-value.dim { font-size: 11px; color: var(--text-dim); }
+  .card-tags {
+    display: flex;
+    gap: 5px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .tag-pill {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+  .tag-pill.urgent { color: var(--pending); border-color: var(--pending-border); background: var(--pending-bg); }
+  .tag-pill.new { color: var(--progress); border-color: var(--progress-border); background: var(--progress-bg); }
+  .tag-pill.late { color: var(--over); border-color: color-mix(in srgb, var(--over) 30%, transparent); background: color-mix(in srgb, var(--over) 10%, transparent); }
+  .card-locked {
+    position: absolute;
+    top: 12px; right: 12px;
+    width: 18px; height: 18px;
+    color: var(--closed);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    padding: 12px 28px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .footer-legend { display: flex; gap: 20px; flex-wrap: wrap; }
+  .legend-dot { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-dot::before { content: ''; width: 9px; height: 9px; border-radius: 50%; }
+  .legend-dot.pending::before { background: var(--pending); }
+  .legend-dot.in_progress::before { background: var(--progress); }
+  .legend-dot.fully_received::before { background: var(--complete); }
+  .legend-dot.closed::before { background: var(--closed); }
+
+  /* ============ OFFCANVAS / DRAWER ============ */
+  .offcanvas-end { width: 520px; max-width: 92vw; }
+  .offcanvas-header {
+    padding: 22px 24px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  }
+  .drawer-eyebrow {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .drawer-title {
+    font-size: 30px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .drawer-subtitle {
+    margin-top: 6px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .offcanvas-body { padding: 22px 24px; }
+
+  .drawer-section { margin-bottom: 24px; }
+  .drawer-section-title {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  .progress-block {
+    background: linear-gradient(180deg, var(--accent-bg), color-mix(in srgb, var(--accent-bg) 60%, var(--surface-3)));
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .progress-block.status-pending {
+    background: linear-gradient(180deg, var(--pending-bg), color-mix(in srgb, var(--pending-bg) 60%, var(--surface-3)));
+    border-color: var(--pending-border);
+  }
+  .progress-block.status-in_progress {
+    background: linear-gradient(180deg, var(--progress-bg), color-mix(in srgb, var(--progress-bg) 60%, var(--surface-3)));
+    border-color: var(--progress-border);
+  }
+  .progress-block.status-closed {
+    background: linear-gradient(180deg, var(--closed-bg), color-mix(in srgb, var(--closed-bg) 60%, var(--surface-3)));
+    border-color: var(--closed-border);
+  }
+  .progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .progress-pct {
+    font-size: 44px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+  }
+  .progress-pct small {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 600;
+    margin-left: 4px;
+  }
+  .progress-status-pill {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 100px;
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  .progress-status-pill.pending { color: var(--pending); }
+  .progress-status-pill.in_progress { color: var(--progress); }
+  .progress-status-pill.fully_received { color: var(--complete); }
+  .progress-status-pill.closed { color: var(--closed); }
+  .progress-track-large {
+    height: 9px;
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    border-radius: 4.5px;
+    overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .progress-fill-large {
+    height: 100%;
+    border-radius: 4.5px;
+    transition: width 0.6s ease;
+  }
+  .progress-fill-large.pending { background: var(--pending); }
+  .progress-fill-large.in_progress { background: var(--progress); }
+  .progress-fill-large.fully_received { background: var(--complete); }
+  .progress-fill-large.closed { background: var(--closed); }
+  .progress-foot {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat-card-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 4px;
+  }
+  .stat-card-value {
+    font-size: 24px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+  }
+  .stat-card-value small {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+  .stat-card-sub {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .timeline { display: flex; flex-direction: column; gap: 8px; }
+  .timeline-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 14px;
+    padding: 10px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    align-items: center;
+  }
+  .timeline-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .timeline-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* Offcanvas footer using flex column */
+  .offcanvas-footer {
+    padding: 18px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .offcanvas-footer-hint {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .offcanvas-footer-hint kbd {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin: 0 2px;
+  }
+  .offcanvas { display: flex; flex-direction: column; }
+  .offcanvas-body { flex: 1; overflow-y: auto; }
+
+  /* Toast */
+  .toast-host {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    pointer-events: none;
+  }
+  .custom-toast {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-left: 3px solid var(--accent);
+    padding: 14px 20px;
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+  }
+  .custom-toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .custom-toast .icon-wrap {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .custom-toast .msg { font-size: 14px; color: var(--text); }
+  .custom-toast .msg small {
+    display: block;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  /* Drawer footer needs to come outside .offcanvas-body for fixed positioning */
+</style>
+</head>
+<body data-app-page="pull">
+
+<div class="app">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">Pull Controller<span>v2.0</span></div>
+      <div class="brand-path">Operations <b>/</b> Inbound <b>/</b> Pull Requests</div>
+    </div>
+    <div class="topbar-right">
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button class="theme-swatch light active"    data-theme="light"    title="Light Paper"></button>
+        <button class="theme-swatch midnight"        data-theme="midnight" title="Midnight"></button>
+        <button class="theme-swatch slate"           data-theme="slate"    title="Slate"></button>
+      </div>
+      <div class="status-pill">
+        <span class="pulse"></span>
+        <span>Live · 14:32 ICT · 18 Mar 2026</span>
+      </div>
+      <div class="user-chip">
+        <span>S. Wattana</span>
+        <span class="avatar">SW</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- SUMMARY STRIP -->
+  <div class="summary-strip">
+    <div class="summary-cell">
+      <span class="summary-label">Total Pulls</span>
+      <span class="summary-value" id="sum-total">12</span>
+      <span class="summary-sub">across all warehouses</span>
+    </div>
+    <div class="summary-cell">
+      <span class="summary-label">In Progress</span>
+      <span class="summary-value" id="sum-inprogress">5</span>
+      <span class="summary-sub warn">3 due today</span>
+    </div>
+    <div class="summary-cell">
+      <span class="summary-label">Ready to Close</span>
+      <span class="summary-value" id="sum-ready">2</span>
+      <span class="summary-sub ok">fully received · awaiting signature</span>
+    </div>
+    <div class="summary-cell">
+      <span class="summary-label">Items · Today</span>
+      <span class="summary-value" id="sum-items">128 <small>SKUs</small></span>
+      <span class="summary-sub">8,420 units expected</span>
+    </div>
+    <div class="summary-cell">
+      <span class="summary-label">Throughput · Last 24h</span>
+      <span class="summary-value" id="sum-thru">6,134 <small>units</small></span>
+      <span class="summary-sub ok" id="sum-thru-sub">72.8% of expected</span>
+    </div>
+  </div>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <div class="field-group">
+      <span class="field-label">Warehouse</span>
+      <select class="form-select" id="wh-filter">
+        <option value="all">All warehouses</option>
+        <option value="WH-01">WH-01 · Bangkok Main</option>
+        <option value="WH-02">WH-02 · Chonburi</option>
+        <option value="WH-03">WH-03 · Rayong</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <span class="field-label">Date Range</span>
+      <select class="form-select" id="date-filter">
+        <option value="all">All dates</option>
+        <option value="today">Today</option>
+        <option value="yesterday">Yesterday</option>
+        <option value="this_week">This week</option>
+        <option value="last_week">Last week</option>
+        <option value="custom">Custom range…</option>
+      </select>
+    </div>
+    <div class="toolbar-spacer"></div>
+    <div class="search-box field-group">
+      <span class="field-label">Search</span>
+      <div style="position: relative;">
+        <i class="bi bi-search"></i>
+        <input id="search-input" class="form-control" placeholder="Pull #, vendor, item…">
+      </div>
+    </div>
+    <button class="btn btn-outline-secondary" id="btn-export">
+      <i class="bi bi-download me-1"></i>
+      Export
+    </button>
+    <button class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>
+      New Pull
+    </button>
+  </div>
+
+  <!-- CUSTOM DATE ROW -->
+  <div class="custom-date-row" id="custom-date-row">
+    <div class="field-group">
+      <span class="field-label">From</span>
+      <input type="date" class="form-control" id="date-from">
+    </div>
+    <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+    <div class="field-group">
+      <span class="field-label">To</span>
+      <input type="date" class="form-control" id="date-to">
+    </div>
+    <button class="btn btn-outline-secondary" id="date-apply">
+      <i class="bi bi-funnel me-1"></i> Apply
+    </button>
+    <button class="btn btn-outline-secondary" id="date-clear">
+      <i class="bi bi-x me-1"></i> Clear
+    </button>
+  </div>
+
+  <!-- KANBAN -->
+  <div class="kanban-wrap">
+    <div class="kanban" id="kanban"></div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-legend">
+      <span class="legend-dot pending">Pending</span>
+      <span class="legend-dot in_progress">In Progress</span>
+      <span class="legend-dot fully_received">Fully Received</span>
+      <span class="legend-dot closed">Closed</span>
+    </div>
+    <div>Click any card to see details</div>
+  </footer>
+</div>
+
+<!-- DETAIL DRAWER (Bootstrap offcanvas) -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="detailDrawer" aria-labelledby="drawerLabel">
+  <div class="offcanvas-header d-flex justify-content-between align-items-start">
+    <div>
+      <div class="drawer-eyebrow" id="d-eyebrow">Pull Sheet Detail</div>
+      <div class="drawer-title" id="d-title">PL-2847</div>
+      <div class="drawer-subtitle" id="d-subtitle">WH-01 · Bangkok Main · 18 Mar 2026</div>
+    </div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+
+  <div class="offcanvas-body">
+    <!-- Progress -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">Progress</div>
+      <div class="progress-block" id="d-progress-block">
+        <div class="progress-head">
+          <div class="progress-pct"><span id="d-pct">62</span><small>% complete</small></div>
+          <div class="progress-status-pill in_progress" id="d-status-pill">In Progress</div>
+        </div>
+        <div class="progress-track-large">
+          <div class="progress-fill-large in_progress" id="d-progress-fill" style="width: 62%"></div>
+        </div>
+        <div class="progress-foot">
+          <span>Started <b id="d-started">07:24</b></span>
+          <span>ETA <b id="d-eta">15:00</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Summary -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">Item Summary</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-card-label">Items</div>
+          <div class="stat-card-value" id="d-items">8 <small>SKUs</small></div>
+          <div class="stat-card-sub" id="d-items-sub">1 canceled · 1 new</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Expected</div>
+          <div class="stat-card-value" id="d-expected">14,800 <small>units</small></div>
+          <div class="stat-card-sub" id="d-expected-sub">across 32 windows</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Received</div>
+          <div class="stat-card-value" id="d-received">9,184 <small>units</small></div>
+          <div class="stat-card-sub" id="d-received-sub">62.1% of expected</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Outstanding</div>
+          <div class="stat-card-value" id="d-outstanding">5,616 <small>units</small></div>
+          <div class="stat-card-sub" id="d-outstanding-sub">7 windows pending</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">Timeline</div>
+      <div class="timeline">
+        <div class="timeline-row">
+          <span class="timeline-label">First Receipt</span>
+          <span class="timeline-value" id="d-first">07:24 · 18 Mar</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-label">Last Activity</span>
+          <span class="timeline-value" id="d-last">14:18 · PCBA-AX450 +500 pcs</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-label">Elapsed</span>
+          <span class="timeline-value" id="d-elapsed">6h 54m · in progress</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-label">Operator</span>
+          <span class="timeline-value" id="d-operator">S. Wattana + 3 others</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="offcanvas-footer">
+    <span class="offcanvas-footer-hint">Press <kbd>↵</kbd> open · <kbd>ESC</kbd> close</span>
+    <button class="btn btn-primary" id="d-launch">
+      <i class="bi bi-box-arrow-up-right me-1"></i>
+      Open in Receiving v3.2
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap">✓</div>
+    <div class="msg">
+      <span id="toast-msg">Launching Receiving v3.2</span>
+      <small id="toast-sub">PL-2847 · WH-01</small>
+    </div>
+  </div>
+</div>
+
+<!-- Shared app nav (also handles auth guard) -->
+<script src="app-nav.js"></script>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+  // ============ THEME SYSTEM ============
+  const THEME_KEY = 'pullController.theme';
+  function applyTheme(name) {
+    document.documentElement.setAttribute('data-theme', name);
+    document.querySelectorAll('.theme-swatch').forEach(b => {
+      b.classList.toggle('active', b.dataset.theme === name);
+    });
+    try { localStorage.setItem(THEME_KEY, name); } catch (e) {}
+  }
+  document.querySelectorAll('.theme-swatch').forEach(b => {
+    b.addEventListener('click', () => applyTheme(b.dataset.theme));
+  });
+  (function initTheme() {
+    let saved = 'light';
+    try { saved = localStorage.getItem(THEME_KEY) || 'light'; } catch (e) {}
+    applyTheme(saved);
+  })();
+
+  // ============ DATA ============
+  // dateGroup categories used for the date-range filter
+  const pulls = [
+    { id: 'PL-2851', date: '18 Mar 2026', dateISO: '2026-03-18', dateGroup: 'today', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'pending', itemCount: 6, canceled: 0, newCount: 1, expected: 4200, received: 0, windows: 24, pendingWindows: 24,
+      firstReceipt: null, lastActivity: null, operator: 'S. Wattana', operatorCount: 1, eta: '19:00', tags: ['urgent'],
+      searchTerms: 'PCBA-AX450 PCBA-AX451 LCD-3.5 IPS Foxlink Truly Display Nichicon capacitor display' },
+    { id: 'PL-2850', date: '18 Mar 2026', dateISO: '2026-03-18', dateGroup: 'today', warehouse: 'WH-02', whName: 'Chonburi',
+      status: 'pending', itemCount: 4, canceled: 0, newCount: 0, expected: 2800, received: 0, windows: 16, pendingWindows: 16,
+      firstReceipt: null, lastActivity: null, operator: 'N. Patcharin', operatorCount: 1, eta: '18:30', tags: [],
+      searchTerms: 'BATT-LIPO CASE-ABS Panasonic Thai Plastic battery housing' },
+    { id: 'PL-2849', date: '18 Mar 2026', dateISO: '2026-03-18', dateGroup: 'today', warehouse: 'WH-03', whName: 'Rayong',
+      status: 'pending', itemCount: 3, canceled: 0, newCount: 0, expected: 180, received: 0, windows: 9, pendingWindows: 9,
+      firstReceipt: null, lastActivity: null, operator: 'K. Anucha', operatorCount: 1, eta: '17:00', tags: [],
+      searchTerms: 'STEEL-SHEET PAINT-EPOXY ALU-EXTRUSION Thai G Steel PPG Goldsun Aluminum' },
+    { id: 'PL-2848', date: '18 Mar 2026', dateISO: '2026-03-18', dateGroup: 'today', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'in_progress', itemCount: 5, canceled: 0, newCount: 0, expected: 6800, received: 5440, windows: 18, pendingWindows: 4,
+      firstReceipt: '08:12 · 18 Mar', lastActivity: '14:05 · CAP-470UF +800 pcs', elapsed: '6h 20m',
+      operator: 'P. Somchai', operatorCount: 2, eta: '16:00', tags: [],
+      searchTerms: 'CAP-470UF RES-10K MOSFET Nichicon Yageo Infineon capacitor resistor' },
+    { id: 'PL-2847', date: '18 Mar 2026', dateISO: '2026-03-18', dateGroup: 'today', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'in_progress', itemCount: 8, canceled: 1, newCount: 1, expected: 14800, received: 9184, windows: 32, pendingWindows: 7,
+      firstReceipt: '07:24 · 18 Mar', lastActivity: '14:18 · PCBA-AX450 +500 pcs', elapsed: '6h 54m',
+      operator: 'S. Wattana', operatorCount: 4, eta: '15:00', tags: ['urgent'],
+      searchTerms: 'PCBA-AX450 PCBA-AX451 CAP-470UF RES-10K MOSFET CONN-USB-C LCD SHIELD Foxlink Nichicon Yageo Infineon JST Truly Alps' },
+    { id: 'PL-2846', date: '17 Mar 2026', dateISO: '2026-03-17', dateGroup: 'yesterday', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'in_progress', itemCount: 4, canceled: 0, newCount: 1, expected: 4900, received: 4100, windows: 11, pendingWindows: 3,
+      firstReceipt: '09:01 · 17 Mar', lastActivity: '13:42 · IC-MCU-STM32 +100 pcs', elapsed: '1d 5h',
+      operator: 'P. Somchai', operatorCount: 3, eta: 'Today 16:00', tags: ['late'],
+      searchTerms: 'PCBA-AX450 CAP-100UF CONN-USB-C IC-MCU-STM32 Foxlink Nichicon JST STMicroelectronics' },
+    { id: 'PL-2844', date: '17 Mar 2026', dateISO: '2026-03-17', dateGroup: 'yesterday', warehouse: 'WH-02', whName: 'Chonburi',
+      status: 'in_progress', itemCount: 6, canceled: 0, newCount: 0, expected: 3200, received: 2480, windows: 14, pendingWindows: 4,
+      firstReceipt: '10:30 · 17 Mar', lastActivity: '12:15 · BATT-LIPO +200 pcs', elapsed: '1d 4h',
+      operator: 'N. Patcharin', operatorCount: 2, eta: 'Today 17:00', tags: [],
+      searchTerms: 'BATT-LIPO CASE-ABS Panasonic Thai Plastic battery housing' },
+    { id: 'PL-2845', date: '16 Mar 2026', dateISO: '2026-03-16', dateGroup: 'this_week', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'fully_received', itemCount: 3, canceled: 0, newCount: 0, expected: 5500, received: 5500, windows: 7, pendingWindows: 0,
+      firstReceipt: '08:00 · 16 Mar', lastActivity: '13:50 · CONN-USB-C +200 pcs', elapsed: '5h 50m',
+      operator: 'S. Wattana', operatorCount: 2, eta: '—', tags: [],
+      searchTerms: 'PCBA-AX450 RES-10K CONN-USB-C Foxlink Yageo JST' },
+    { id: 'PL-2843', date: '16 Mar 2026', dateISO: '2026-03-16', dateGroup: 'this_week', warehouse: 'WH-03', whName: 'Rayong',
+      status: 'fully_received', itemCount: 2, canceled: 0, newCount: 0, expected: 600, received: 600, windows: 4, pendingWindows: 0,
+      firstReceipt: '09:15 · 16 Mar', lastActivity: '14:20 · ALU-EXTRUSION +120 pcs', elapsed: '5h 5m',
+      operator: 'K. Anucha', operatorCount: 1, eta: '—', tags: [],
+      searchTerms: 'STEEL-SHEET ALU-EXTRUSION Thai G Steel Goldsun Aluminum' },
+    { id: 'PL-2842', date: '15 Mar 2026', dateISO: '2026-03-15', dateGroup: 'this_week', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'closed', itemCount: 5, canceled: 0, newCount: 0, expected: 7200, received: 7200, windows: 16, pendingWindows: 0,
+      firstReceipt: '07:48 · 15 Mar', lastActivity: 'Closed by S. Wattana · 16:10', elapsed: '8h 22m',
+      operator: 'S. Wattana', operatorCount: 3, eta: '—', tags: [],
+      searchTerms: 'PCBA-AX450 CAP-470UF RES-10K CONN-USB-C SHIELD Foxlink Nichicon Yageo JST Alps' },
+    { id: 'PL-2841', date: '12 Mar 2026', dateISO: '2026-03-12', dateGroup: 'last_week', warehouse: 'WH-02', whName: 'Chonburi',
+      status: 'closed', itemCount: 4, canceled: 1, newCount: 0, expected: 4000, received: 3800, windows: 10, pendingWindows: 0,
+      firstReceipt: '08:20 · 12 Mar', lastActivity: 'Closed by N. Patcharin · 15:45', elapsed: '7h 25m',
+      operator: 'N. Patcharin', operatorCount: 2, eta: '—', tags: [],
+      searchTerms: 'BATT-LIPO CASE-ABS GASKET-RB Panasonic Thai Plastic Sumitomo Rubber' },
+    { id: 'PL-2840', date: '10 Mar 2026', dateISO: '2026-03-10', dateGroup: 'last_week', warehouse: 'WH-01', whName: 'Bangkok Main',
+      status: 'closed', itemCount: 7, canceled: 1, newCount: 0, expected: 11000, received: 10800, windows: 26, pendingWindows: 0,
+      firstReceipt: '07:30 · 10 Mar', lastActivity: 'Closed by P. Somchai · 16:55', elapsed: '9h 25m',
+      operator: 'P. Somchai', operatorCount: 4, eta: '—', tags: [],
+      searchTerms: 'PCBA-AX450 CAP-470UF RES-10K CONN-USB-C SHIELD LCD MOSFET Foxlink Nichicon Yageo JST Alps Truly' },
+  ];
+
+  const COLUMNS = [
+    { key: 'pending',        label: 'Pending' },
+    { key: 'in_progress',    label: 'In Progress' },
+    { key: 'fully_received', label: 'Fully Received' },
+    { key: 'closed',         label: 'Closed' },
+  ];
+
+  let selectedPullId = null;
+  let customRange = null; // { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
+
+  // ============ FILTERS ============
+  function currentWhFilter()   { return document.getElementById('wh-filter').value; }
+  function currentDateFilter() { return document.getElementById('date-filter').value; }
+  function currentSearch()     { return document.getElementById('search-input').value.trim().toLowerCase(); }
+
+  function pullPasses(p) {
+    if (currentWhFilter() !== 'all' && p.warehouse !== currentWhFilter()) return false;
+    const d = currentDateFilter();
+    if (d !== 'all') {
+      if (d === 'custom') {
+        if (!customRange) return true; // no range applied yet → show all
+        if (p.dateISO < customRange.from || p.dateISO > customRange.to) return false;
+      } else if (p.dateGroup !== d) return false;
+    }
+    const q = currentSearch();
+    if (q) {
+      const h = `${p.id} ${p.warehouse} ${p.whName} ${p.operator} ${p.searchTerms || ''}`.toLowerCase();
+      if (!h.includes(q)) return false;
+    }
+    return true;
+  }
+
+  // ============ KANBAN RENDER ============
+  function render() {
+    const board = document.getElementById('kanban');
+    board.innerHTML = '';
+    const filtered = pulls.filter(pullPasses);
+
+    COLUMNS.forEach(col => {
+      const colItems = filtered.filter(p => p.status === col.key);
+      const column = document.createElement('div');
+      column.className = 'column';
+      column.innerHTML = `
+        <div class="column-head">
+          <div class="column-title">
+            <span class="column-dot ${col.key}"></span>
+            <span class="column-name">${col.label}</span>
+          </div>
+          <span class="column-count">${colItems.length}</span>
+        </div>
+        <div class="column-body"></div>
+      `;
+      board.appendChild(column);
+      const body = column.querySelector('.column-body');
+      if (colItems.length === 0) {
+        body.innerHTML = `<div class="empty-col">No pulls</div>`;
+      } else {
+        colItems.forEach(p => body.appendChild(renderCard(p)));
+      }
+    });
+
+    updateSummary(filtered);
+  }
+
+  function renderCard(p) {
+    const pct = p.expected > 0 ? Math.round((p.received / p.expected) * 100) : 0;
+    const card = document.createElement('div');
+    card.className = `card-pull status-${p.status}` + (p.id === selectedPullId ? ' selected' : '');
+    card.dataset.id = p.id;
+
+    const tagsHtml = p.tags.map(t => `<span class="tag-pill ${t}">${t}</span>`).join('');
+    const lockedIcon = p.status === 'closed'
+      ? `<svg class="card-locked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></svg>`
+      : '';
+    const progressLabel = p.status === 'pending' ? 'Not started'
+                       : p.status === 'closed' ? 'Closed'
+                       : p.status === 'fully_received' ? 'Ready to close'
+                       : 'In progress';
+
+    card.innerHTML = `
+      ${lockedIcon}
+      <div class="card-head">
+        <span class="card-id">${p.id}</span>
+        <span class="card-date">${p.date.split(' ').slice(0,2).join(' ')}</span>
+      </div>
+      <div class="card-wh">${p.warehouse} · ${p.whName}</div>
+      <div class="card-progress">
+        <div class="card-progress-head">
+          <span>${progressLabel}</span>
+          <span class="pct">${pct}%</span>
+        </div>
+        <div class="card-progress-track">
+          <div class="card-progress-fill" style="width: ${pct}%"></div>
+        </div>
+      </div>
+      <div class="card-meta">
+        <div class="card-meta-item">
+          <span class="card-meta-label">Items</span>
+          <span class="card-meta-value">${p.itemCount} SKU${p.itemCount===1?'':'s'}</span>
+        </div>
+        <div class="card-meta-item">
+          <span class="card-meta-label">Units</span>
+          <span class="card-meta-value">${p.received.toLocaleString()} / ${p.expected.toLocaleString()}</span>
+        </div>
+        <div class="card-meta-item">
+          <span class="card-meta-label">${p.status === 'closed' ? 'Duration' : p.lastActivity ? 'Last activity' : 'ETA'}</span>
+          <span class="card-meta-value dim">${
+            p.status === 'closed' ? (p.elapsed || '—') :
+            p.lastActivity ? p.lastActivity.split(' · ')[0] : p.eta
+          }</span>
+        </div>
+        <div class="card-meta-item">
+          <span class="card-meta-label">${p.elapsed ? 'Elapsed' : 'Assigned'}</span>
+          <span class="card-meta-value dim">${p.elapsed || p.operator.split(' ').slice(0,2).join(' ')}</span>
+        </div>
+      </div>
+      ${tagsHtml ? `<div class="card-tags">${tagsHtml}</div>` : ''}
+    `;
+    card.addEventListener('click', () => openDrawer(p.id));
+    return card;
+  }
+
+  function updateSummary(filtered) {
+    document.getElementById('sum-total').textContent = filtered.length;
+    document.getElementById('sum-inprogress').textContent = filtered.filter(p => p.status === 'in_progress').length;
+    document.getElementById('sum-ready').textContent = filtered.filter(p => p.status === 'fully_received').length;
+    const totalItems = filtered.reduce((a, p) => a + p.itemCount, 0);
+    const totalExp = filtered.reduce((a, p) => a + p.expected, 0);
+    const totalRec = filtered.reduce((a, p) => a + p.received, 0);
+    document.getElementById('sum-items').innerHTML = `${totalItems} <small>SKUs</small>`;
+    document.getElementById('sum-thru').innerHTML = `${totalRec.toLocaleString()} <small>units</small>`;
+    const pct = totalExp > 0 ? ((totalRec/totalExp)*100).toFixed(1) : 0;
+    document.getElementById('sum-thru-sub').textContent = `${pct}% of expected`;
+  }
+
+  // ============ DRAWER ============
+  const drawerEl = document.getElementById('detailDrawer');
+  const drawer = new bootstrap.Offcanvas(drawerEl);
+
+  function openDrawer(pullId) {
+    const p = pulls.find(x => x.id === pullId);
+    if (!p) return;
+    selectedPullId = pullId;
+
+    document.querySelectorAll('.card-pull').forEach(c => {
+      c.classList.toggle('selected', c.dataset.id === pullId);
+    });
+
+    const pct = p.expected > 0 ? Math.round((p.received / p.expected) * 100) : 0;
+    const outstanding = Math.max(0, p.expected - p.received);
+
+    const eyebrowMap = {
+      pending: 'Awaiting Start',
+      in_progress: 'In Progress',
+      fully_received: 'Ready to Close',
+      closed: 'Closed & Locked'
+    };
+    document.getElementById('d-eyebrow').textContent = eyebrowMap[p.status] + ' · ' + p.date;
+    document.getElementById('d-title').textContent = p.id;
+    document.getElementById('d-subtitle').textContent = `${p.warehouse} · ${p.whName} · ${p.date}`;
+
+    const block = document.getElementById('d-progress-block');
+    block.className = 'progress-block status-' + p.status;
+    document.getElementById('d-pct').textContent = pct;
+    const statusLabel = p.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const sp = document.getElementById('d-status-pill');
+    sp.className = 'progress-status-pill ' + p.status;
+    sp.textContent = statusLabel;
+    const fill = document.getElementById('d-progress-fill');
+    fill.className = 'progress-fill-large ' + p.status;
+    fill.style.width = pct + '%';
+    document.getElementById('d-started').textContent = p.firstReceipt ? p.firstReceipt.split(' · ')[0] : '—';
+    document.getElementById('d-eta').textContent = p.eta;
+
+    document.getElementById('d-items').innerHTML = `${p.itemCount} <small>SKUs</small>`;
+    document.getElementById('d-items-sub').textContent = `${p.canceled} canceled · ${p.newCount} new`;
+    document.getElementById('d-expected').innerHTML = `${p.expected.toLocaleString()} <small>units</small>`;
+    document.getElementById('d-expected-sub').textContent = `across ${p.windows} windows`;
+    document.getElementById('d-received').innerHTML = `${p.received.toLocaleString()} <small>units</small>`;
+    document.getElementById('d-received-sub').textContent = `${pct}% of expected`;
+    document.getElementById('d-outstanding').innerHTML = `${outstanding.toLocaleString()} <small>units</small>`;
+    document.getElementById('d-outstanding-sub').textContent = `${p.pendingWindows} window${p.pendingWindows===1?'':'s'} pending`;
+
+    document.getElementById('d-first').textContent = p.firstReceipt || 'Not started yet';
+    document.getElementById('d-last').textContent = p.lastActivity || 'No activity yet';
+    document.getElementById('d-elapsed').textContent = p.elapsed
+      ? `${p.elapsed} · ${p.status === 'closed' ? 'closed' : 'in progress'}`
+      : 'Not started';
+    document.getElementById('d-operator').textContent = p.operatorCount > 1
+      ? `${p.operator} + ${p.operatorCount - 1} other${p.operatorCount === 2 ? '' : 's'}`
+      : p.operator;
+
+    const launchBtn = document.getElementById('d-launch');
+    if (p.status === 'closed') {
+      launchBtn.innerHTML = `<i class="bi bi-eye me-1"></i> View (read-only)`;
+    } else {
+      launchBtn.innerHTML = `<i class="bi bi-box-arrow-up-right me-1"></i> Open in Receiving v3.2`;
+    }
+
+    drawer.show();
+  }
+
+  drawerEl.addEventListener('hidden.bs.offcanvas', () => {
+    selectedPullId = null;
+    document.querySelectorAll('.card-pull.selected').forEach(c => c.classList.remove('selected'));
+  });
+
+  // ============ LAUNCH ============
+  document.getElementById('d-launch').addEventListener('click', launchReceiving);
+  function launchReceiving() {
+    if (!selectedPullId) return;
+    const p = pulls.find(x => x.id === selectedPullId);
+    if (!p) return;
+    showToast('Launching Receiving v3.2', `${p.id} · ${p.warehouse}`);
+    const target = `receiving-mockup-v2-fullreceived.html?pull=${encodeURIComponent(p.id)}&warehouse=${encodeURIComponent(p.warehouse)}&from=controller`;
+    setTimeout(() => { window.location.href = target; }, 450);
+  }
+
+  // ============ TOAST ============
+  function showToast(msg, sub, kind) {
+    const t = document.getElementById('toast');
+    document.getElementById('toast-msg').textContent = msg;
+    document.getElementById('toast-sub').textContent = sub;
+    t.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+
+  // ============ EXPORT TO EXCEL ============
+  function exportToExcel() {
+    try {
+      if (typeof XLSX === 'undefined') {
+        showToast('Export failed', 'Excel library not loaded');
+        return;
+      }
+      const filtered = pulls.filter(pullPasses);
+      if (filtered.length === 0) {
+        showToast('Nothing to export', 'Adjust filters and try again');
+        return;
+      }
+
+      const now = new Date();
+      const stamp = now.toISOString().slice(0,10);
+      const wb = XLSX.utils.book_new();
+
+      // ---- Sheet 1: Header / metadata ----
+      const meta = [
+        { Field: 'Report Type',     Value: 'Pull Sheet Controller — Active Pulls' },
+        { Field: 'Exported By',     Value: 'S. Wattana' },
+        { Field: 'Exported At',     Value: now.toLocaleString('en-GB') },
+        { Field: 'Warehouse Filter',Value: currentWhFilter() === 'all' ? 'All warehouses' : currentWhFilter() },
+        { Field: 'Date Filter',     Value: currentDateFilter() === 'custom' && customRange
+                                            ? `Custom: ${customRange.from} → ${customRange.to}`
+                                            : currentDateFilter() },
+        { Field: 'Search Query',    Value: currentSearch() || '(none)' },
+        { Field: 'Total Pulls',     Value: filtered.length },
+        { Field: 'Pending',         Value: filtered.filter(p => p.status === 'pending').length },
+        { Field: 'In Progress',     Value: filtered.filter(p => p.status === 'in_progress').length },
+        { Field: 'Fully Received',  Value: filtered.filter(p => p.status === 'fully_received').length },
+        { Field: 'Closed',          Value: filtered.filter(p => p.status === 'closed').length },
+      ];
+      const wsMeta = XLSX.utils.json_to_sheet(meta);
+      wsMeta['!cols'] = [{ wch: 22 }, { wch: 50 }];
+      XLSX.utils.book_append_sheet(wb, wsMeta, 'Header');
+
+      // ---- Sheet 2: Pull List ----
+      const statusLabels = {
+        pending: 'Pending',
+        in_progress: 'In Progress',
+        fully_received: 'Fully Received',
+        closed: 'Closed'
+      };
+      const rows = filtered.map(p => {
+        const pct = p.expected > 0 ? Math.round((p.received / p.expected) * 100) : 0;
+        const outstanding = Math.max(0, p.expected - p.received);
+        return {
+          'Pull #':           p.id,
+          'Date':             p.date,
+          'Warehouse':        p.warehouse,
+          'Warehouse Name':   p.whName,
+          'Status':           statusLabels[p.status] || p.status,
+          'Items (SKUs)':     p.itemCount,
+          'Canceled Items':   p.canceled,
+          'New Items':        p.newCount,
+          'Expected (units)': p.expected,
+          'Received (units)': p.received,
+          'Outstanding':      outstanding,
+          'Progress %':       pct,
+          'Windows':          p.windows,
+          'Pending Windows':  p.pendingWindows,
+          'First Receipt':    p.firstReceipt || '—',
+          'Last Activity':    p.lastActivity || '—',
+          'Elapsed':          p.elapsed || '—',
+          'ETA':              p.eta,
+          'Operator':         p.operator + (p.operatorCount > 1 ? ` (+${p.operatorCount-1})` : ''),
+          'Tags':             (p.tags || []).join(', '),
+        };
+      });
+      const wsList = XLSX.utils.json_to_sheet(rows);
+      wsList['!cols'] = [
+        {wch:10},{wch:13},{wch:8},{wch:18},{wch:15},{wch:11},{wch:13},{wch:10},
+        {wch:14},{wch:14},{wch:11},{wch:10},{wch:9},{wch:15},
+        {wch:18},{wch:32},{wch:11},{wch:14},{wch:22},{wch:18}
+      ];
+      wsList['!freeze'] = { ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, wsList, 'Pulls');
+
+      // ---- Sheet 3: Status breakdown ----
+      const breakdown = ['pending','in_progress','fully_received','closed'].map(s => {
+        const group = filtered.filter(p => p.status === s);
+        const exp = group.reduce((a,p) => a + p.expected, 0);
+        const rec = group.reduce((a,p) => a + p.received, 0);
+        return {
+          'Status':       statusLabels[s],
+          'Pull Count':   group.length,
+          'Total Items':  group.reduce((a,p) => a + p.itemCount, 0),
+          'Expected':     exp,
+          'Received':     rec,
+          'Outstanding':  Math.max(0, exp - rec),
+          'Progress %':   exp > 0 ? Math.round(rec/exp*100) : 0,
+        };
+      });
+      const wsBreak = XLSX.utils.json_to_sheet(breakdown);
+      wsBreak['!cols'] = [{wch:18},{wch:11},{wch:13},{wch:13},{wch:13},{wch:13},{wch:11}];
+      XLSX.utils.book_append_sheet(wb, wsBreak, 'Breakdown');
+
+      const filename = `pull-controller_${stamp}.xlsx`;
+      XLSX.writeFile(wb, filename);
+
+      showToast('Export complete', `${filename} · ${filtered.length} pull${filtered.length===1?'':'s'}`);
+    } catch (err) {
+      console.error(err);
+      showToast('Export failed', err.message || 'Unknown error');
+    }
+  }
+  document.getElementById('btn-export').addEventListener('click', exportToExcel);
+
+  // ============ KEYBOARD ============
+  document.addEventListener('keydown', (e) => {
+    if (drawerEl.classList.contains('show')) {
+      if (e.key === 'Enter') launchReceiving();
+    }
+  });
+
+  // ============ FILTER LISTENERS ============
+  document.getElementById('wh-filter').addEventListener('change', render);
+  document.getElementById('search-input').addEventListener('input', render);
+
+  document.getElementById('date-filter').addEventListener('change', (e) => {
+    const row = document.getElementById('custom-date-row');
+    row.classList.toggle('visible', e.target.value === 'custom');
+    if (e.target.value !== 'custom') {
+      customRange = null;
+    }
+    render();
+  });
+
+  document.getElementById('date-apply').addEventListener('click', () => {
+    const from = document.getElementById('date-from').value;
+    const to = document.getElementById('date-to').value;
+    if (!from || !to) {
+      showToast('Pick both dates', 'From and To required');
+      return;
+    }
+    if (from > to) {
+      showToast('Invalid range', '"From" must be earlier than "To"');
+      return;
+    }
+    customRange = { from, to };
+    render();
+    showToast('Range applied', `${from} → ${to}`);
+  });
+
+  document.getElementById('date-clear').addEventListener('click', () => {
+    document.getElementById('date-from').value = '';
+    document.getElementById('date-to').value = '';
+    customRange = null;
+    render();
+  });
+
+  // Initial render
+  render();
+</script>
+
+</body>
+</html>

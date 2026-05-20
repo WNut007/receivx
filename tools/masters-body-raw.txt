@@ -1,0 +1,378 @@
+<!-- ===== BODY:main (from masters.html) ===== -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-eyebrow">Administration</div>
+        <h1 class="page-title">Master Data</h1>
+        <p class="page-subtitle">Manage users, warehouses, and their assignments.</p>
+      </div>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="users">
+          <i class="bi bi-people"></i> Users <span class="count" id="count-users">0</span>
+        </button>
+        <button class="tab" data-tab="warehouses">
+          <i class="bi bi-buildings"></i> Warehouses <span class="count" id="count-warehouses">0</span>
+        </button>
+        <button class="tab" data-tab="audit">
+          <i class="bi bi-clock-history"></i> Audit Log <span class="count" id="count-audit">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ USERS ============ -->
+    <div class="tab-panel active" data-panel="users">
+      <div class="stats-strip">
+        <div class="stat-card">
+          <span class="label">Total Users</span>
+          <span class="value" id="s-users-total">0</span>
+          <span class="sub" id="s-users-sub">across the org</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Active</span>
+          <span class="value" id="s-users-active">0</span>
+          <span class="sub">can sign in</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Disabled</span>
+          <span class="value" id="s-users-disabled">0</span>
+          <span class="sub">blocked from login</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Avg Warehouses</span>
+          <span class="value" id="s-users-avg-wh">0</span>
+          <span class="sub">per active user</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-people"></i> Users</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-users" placeholder="Search name, username, role…">
+            </div>
+            <select class="form-select" id="filter-users-role" style="width: 170px;">
+              <option value="all">All roles</option>
+              <option value="admin">Administrator</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="operator">Operator</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <select class="form-select" id="filter-users-status" style="width: 150px;">
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="disabled">Disabled only</option>
+            </select>
+            <button class="btn btn-primary" id="btn-new-user">
+              <i class="bi bi-plus-lg"></i> New User
+            </button>
+          </div>
+        </div>
+        <div id="users-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 30%;">User</th>
+                <th>Role</th>
+                <th>Warehouses</th>
+                <th>Status</th>
+                <th>Last sign-in</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ WAREHOUSES ============ -->
+    <div class="tab-panel" data-panel="warehouses">
+      <div class="stats-strip">
+        <div class="stat-card">
+          <span class="label">Total Warehouses</span>
+          <span class="value" id="s-wh-total">0</span>
+          <span class="sub">facilities</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Active</span>
+          <span class="value" id="s-wh-active">0</span>
+          <span class="sub">operational</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Total Capacity</span>
+          <span class="value" id="s-wh-capacity">0 <small>m²</small></span>
+          <span class="sub">across all sites</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Avg Users</span>
+          <span class="value" id="s-wh-avg-users">0</span>
+          <span class="sub">assigned per warehouse</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-buildings"></i> Warehouses</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-warehouses" placeholder="Search code, name, city…">
+            </div>
+            <select class="form-select" id="filter-warehouses-status" style="width: 150px;">
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="disabled">Disabled only</option>
+            </select>
+            <button class="btn btn-primary" id="btn-new-warehouse">
+              <i class="bi bi-plus-lg"></i> New Warehouse
+            </button>
+          </div>
+        </div>
+        <div id="warehouses-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 14%;">Code</th>
+                <th>Name</th>
+                <th>Location</th>
+                <th>Capacity</th>
+                <th>Users</th>
+                <th>Status</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="warehouses-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ AUDIT LOG ============ -->
+    <div class="tab-panel" data-panel="audit">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title"><i class="bi bi-clock-history"></i> Audit Log</div>
+          <div class="toolbar-row">
+            <div class="search-input">
+              <i class="bi bi-search"></i>
+              <input type="text" class="form-control" id="search-audit" placeholder="Search action, entity, actor…">
+            </div>
+            <select class="form-select" id="filter-audit-action" style="width: 170px;">
+              <option value="all">All actions</option>
+              <option value="create">Create</option>
+              <option value="update">Update</option>
+              <option value="delete">Delete</option>
+              <option value="assign">Assignment</option>
+            </select>
+            <button class="btn btn-danger" id="btn-clear-audit">
+              <i class="bi bi-trash"></i> Clear log
+            </button>
+          </div>
+        </div>
+        <div id="audit-list"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ USER MODAL ============ -->
+<div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="userModalTitle">New User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="u-id">
+        <div class="form-grid">
+          <div class="form-field" id="ff-u-username">
+            <label for="u-username">Username</label>
+            <input type="text" class="form-control" id="u-username" placeholder="e.g. swattana" autocomplete="off">
+            <span class="err-msg" id="err-u-username">Username is required</span>
+            <span class="help">Letters and numbers only. Used for login.</span>
+          </div>
+          <div class="form-field" id="ff-u-name">
+            <label for="u-name">Full Name</label>
+            <input type="text" class="form-control" id="u-name" placeholder="e.g. S. Wattana">
+            <span class="err-msg" id="err-u-name">Name is required</span>
+          </div>
+          <div class="form-field" id="ff-u-email">
+            <label for="u-email">Email</label>
+            <input type="email" class="form-control" id="u-email" placeholder="user@company.com">
+            <span class="err-msg" id="err-u-email">Invalid email</span>
+          </div>
+          <div class="form-field">
+            <label for="u-phone">Phone (optional)</label>
+            <input type="tel" class="form-control" id="u-phone" placeholder="+66 ...">
+          </div>
+          <div class="form-field">
+            <label for="u-role">Primary Role</label>
+            <select class="form-select" id="u-role">
+              <option value="admin">Administrator — all warehouses</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="operator" selected>Operator</option>
+              <option value="viewer">Viewer — read-only</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="u-password">Password</label>
+            <input type="text" class="form-control" id="u-password" placeholder="Set initial password">
+            <span class="help" id="u-password-help">Required for new users. Leave blank to keep existing.</span>
+          </div>
+          <div class="form-field full">
+            <label>Warehouse Assignments</label>
+            <span class="help" style="margin-top:0; margin-bottom: 6px;">User can sign in to selected warehouses. Pick a role per warehouse.</span>
+            <div class="assign-list" id="u-warehouses"></div>
+          </div>
+          <div class="form-field full">
+            <div class="switch-row">
+              <div class="switch-row-info">
+                <div class="name">Account active</div>
+                <div class="help">Disabled users cannot sign in but their data is preserved.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="u-active" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-user"><i class="bi bi-check2"></i> Save User</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WAREHOUSE MODAL ============ -->
+<div class="modal fade" id="warehouseModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="warehouseModalTitle">New Warehouse</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="w-id">
+        <div class="form-grid">
+          <div class="form-field" id="ff-w-code">
+            <label for="w-code">Code</label>
+            <input type="text" class="form-control" id="w-code" placeholder="e.g. WH-01" autocomplete="off">
+            <span class="err-msg" id="err-w-code">Code is required and must be unique</span>
+            <span class="help">Short ID used in pull sheets and reports.</span>
+          </div>
+          <div class="form-field" id="ff-w-name">
+            <label for="w-name">Name</label>
+            <input type="text" class="form-control" id="w-name" placeholder="e.g. Bangkok Main">
+            <span class="err-msg" id="err-w-name">Name is required</span>
+          </div>
+          <div class="form-field">
+            <label for="w-city">City</label>
+            <input type="text" class="form-control" id="w-city" placeholder="e.g. Bangkok">
+          </div>
+          <div class="form-field">
+            <label for="w-country">Country</label>
+            <select class="form-select" id="w-country">
+              <option value="TH">Thailand</option>
+              <option value="VN">Vietnam</option>
+              <option value="MY">Malaysia</option>
+              <option value="ID">Indonesia</option>
+              <option value="SG">Singapore</option>
+              <option value="CN">China</option>
+              <option value="JP">Japan</option>
+            </select>
+          </div>
+          <div class="form-field full">
+            <label for="w-address">Address (optional)</label>
+            <input type="text" class="form-control" id="w-address" placeholder="Street, district, postal code">
+          </div>
+          <div class="form-field">
+            <label for="w-capacity">Capacity (m²)</label>
+            <input type="number" min="0" class="form-control" id="w-capacity" placeholder="0">
+          </div>
+          <div class="form-field">
+            <label for="w-timezone">Timezone</label>
+            <select class="form-select" id="w-timezone">
+              <option value="Asia/Bangkok">ICT · Asia/Bangkok</option>
+              <option value="Asia/Ho_Chi_Minh">ICT · Asia/Ho_Chi_Minh</option>
+              <option value="Asia/Kuala_Lumpur">MYT · Asia/Kuala_Lumpur</option>
+              <option value="Asia/Jakarta">WIB · Asia/Jakarta</option>
+              <option value="Asia/Singapore">SGT · Asia/Singapore</option>
+              <option value="Asia/Shanghai">CST · Asia/Shanghai</option>
+              <option value="Asia/Tokyo">JST · Asia/Tokyo</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="w-manager">Manager (optional)</label>
+            <select class="form-select" id="w-manager">
+              <option value="">— None —</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="w-phone">Phone (optional)</label>
+            <input type="tel" class="form-control" id="w-phone" placeholder="+66 ...">
+          </div>
+          <div class="form-field full">
+            <div class="switch-row">
+              <div class="switch-row-info">
+                <div class="name">Warehouse active</div>
+                <div class="help">Disabled warehouses are hidden from login and new pulls.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w-active" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-warehouse"><i class="bi bi-check2"></i> Save Warehouse</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM MODAL ============ -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="confirmTitle">Confirm</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMsg" style="margin: 0;"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-ok"><i class="bi bi-trash"></i> Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TOAST ============ -->
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap" id="toast-icon">✓</div>
+    <div class="msg">
+      <span id="toast-msg">Saved</span>
+      <small id="toast-sub"></small>
+    </div>
+  </div>
+</div>
+
+

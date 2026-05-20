@@ -1,0 +1,257 @@
+@{
+    ViewData["Title"] = "Pull Controller";
+    ViewData["PageId"] = "pull";
+    Layout = null;  // The mockup owns its own theme stylesheet + DOM structure.
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pull Controller · Receiving Operations</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@@300;400;500;600;700;900&family=Roboto+Mono:wght@@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <link rel="stylesheet" href="~/css/dashboard.css">
+</head>
+<body data-app-page="pull">
+
+<div class="app">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">Pull Controller<span>v2.0</span></div>
+            <div class="brand-path">Operations <b>/</b> Inbound <b>/</b> Pull Requests</div>
+        </div>
+        <div class="topbar-right">
+            <div class="theme-switch" role="group" aria-label="Theme">
+                <button type="button" class="theme-swatch light active" data-theme="light"    title="Light Paper"></button>
+                <button type="button" class="theme-swatch midnight"     data-theme="midnight" title="Midnight"></button>
+                <button type="button" class="theme-swatch slate"        data-theme="slate"    title="Slate"></button>
+            </div>
+            <div class="status-pill">
+                <span class="pulse"></span>
+                <span>Live · @DateTime.UtcNow.AddHours(7).ToString("HH:mm") ICT · @DateTime.UtcNow.AddHours(7).ToString("dd MMM yyyy")</span>
+            </div>
+            <div class="user-chip">
+                <span>@(User.FindFirst("displayName")?.Value ?? "Guest")</span>
+                <span class="avatar">@(GetInitials(User.FindFirst("displayName")?.Value ?? ""))</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- SUMMARY STRIP -->
+    <div class="summary-strip">
+        <div class="summary-cell">
+            <span class="summary-label">Total Pulls</span>
+            <span class="summary-value" id="sum-total">—</span>
+            <span class="summary-sub">across all warehouses</span>
+        </div>
+        <div class="summary-cell">
+            <span class="summary-label">In Progress</span>
+            <span class="summary-value" id="sum-inprogress">—</span>
+            <span class="summary-sub warn">due today</span>
+        </div>
+        <div class="summary-cell">
+            <span class="summary-label">Ready to Close</span>
+            <span class="summary-value" id="sum-ready">—</span>
+            <span class="summary-sub ok">fully received · awaiting signature</span>
+        </div>
+        <div class="summary-cell">
+            <span class="summary-label">Items · Today</span>
+            <span class="summary-value" id="sum-items">— <small>SKUs</small></span>
+            <span class="summary-sub">across filtered pulls</span>
+        </div>
+        <div class="summary-cell">
+            <span class="summary-label">Throughput · Filtered</span>
+            <span class="summary-value" id="sum-thru">— <small>units</small></span>
+            <span class="summary-sub ok" id="sum-thru-sub">— of expected</span>
+        </div>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div class="toolbar">
+        <div class="field-group">
+            <span class="field-label">Warehouse</span>
+            <select class="form-select" id="wh-filter">
+                <option value="all">All warehouses</option>
+                <option value="WH-01">WH-01 · Bangkok Main</option>
+                <option value="WH-02">WH-02 · Chonburi</option>
+                <option value="WH-03">WH-03 · Rayong</option>
+            </select>
+        </div>
+        <div class="field-group">
+            <span class="field-label">Date Range</span>
+            <select class="form-select" id="date-filter">
+                <option value="all">All dates</option>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="this_week">This week</option>
+                <option value="last_week">Last week</option>
+                <option value="custom">Custom range…</option>
+            </select>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <div class="search-box field-group">
+            <span class="field-label">Search</span>
+            <div style="position: relative;">
+                <i class="bi bi-search"></i>
+                <input id="search-input" class="form-control" placeholder="Pull #, warehouse, operator…">
+            </div>
+        </div>
+        <button type="button" class="btn btn-outline-secondary" id="btn-export">
+            <i class="bi bi-download me-1"></i> Export
+        </button>
+        <button type="button" class="btn btn-primary">
+            <i class="bi bi-plus-lg me-1"></i> New Pull
+        </button>
+    </div>
+
+    <div class="custom-date-row" id="custom-date-row">
+        <div class="field-group">
+            <span class="field-label">From</span>
+            <input type="date" class="form-control" id="date-from">
+        </div>
+        <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+        <div class="field-group">
+            <span class="field-label">To</span>
+            <input type="date" class="form-control" id="date-to">
+        </div>
+        <button type="button" class="btn btn-outline-secondary" id="date-apply"><i class="bi bi-funnel me-1"></i> Apply</button>
+        <button type="button" class="btn btn-outline-secondary" id="date-clear"><i class="bi bi-x me-1"></i> Clear</button>
+    </div>
+
+    <!-- KANBAN -->
+    <div class="kanban-wrap">
+        <div class="kanban" id="kanban"></div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-legend">
+            <span class="legend-dot pending">Pending</span>
+            <span class="legend-dot in_progress">In Progress</span>
+            <span class="legend-dot fully_received">Fully Received</span>
+            <span class="legend-dot closed">Closed</span>
+        </div>
+        <div>Click any card to see details</div>
+    </footer>
+</div>
+
+<!-- DETAIL DRAWER -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="detailDrawer" aria-labelledby="drawerLabel">
+    <div class="offcanvas-header d-flex justify-content-between align-items-start">
+        <div>
+            <div class="drawer-eyebrow" id="d-eyebrow">Pull Sheet Detail</div>
+            <div class="drawer-title" id="d-title">—</div>
+            <div class="drawer-subtitle" id="d-subtitle">—</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+
+    <div class="offcanvas-body">
+        <div class="drawer-section">
+            <div class="drawer-section-title">Progress</div>
+            <div class="progress-block" id="d-progress-block">
+                <div class="progress-head">
+                    <div class="progress-pct"><span id="d-pct">0</span><small>% complete</small></div>
+                    <div class="progress-status-pill in_progress" id="d-status-pill">In Progress</div>
+                </div>
+                <div class="progress-track-large">
+                    <div class="progress-fill-large in_progress" id="d-progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="progress-foot">
+                    <span>Started <b id="d-started">—</b></span>
+                    <span>ETA <b id="d-eta">—</b></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-section-title">Item Summary</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-label">Items</div>
+                    <div class="stat-card-value" id="d-items">— <small>SKUs</small></div>
+                    <div class="stat-card-sub" id="d-items-sub">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-label">Expected</div>
+                    <div class="stat-card-value" id="d-expected">— <small>units</small></div>
+                    <div class="stat-card-sub" id="d-expected-sub">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-label">Received</div>
+                    <div class="stat-card-value" id="d-received">— <small>units</small></div>
+                    <div class="stat-card-sub" id="d-received-sub">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-label">Outstanding</div>
+                    <div class="stat-card-value" id="d-outstanding">— <small>units</small></div>
+                    <div class="stat-card-sub" id="d-outstanding-sub">—</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-section-title">Timeline</div>
+            <div class="timeline">
+                <div class="timeline-row">
+                    <span class="timeline-label">First Receipt</span>
+                    <span class="timeline-value" id="d-first">—</span>
+                </div>
+                <div class="timeline-row">
+                    <span class="timeline-label">Last Activity</span>
+                    <span class="timeline-value" id="d-last">—</span>
+                </div>
+                <div class="timeline-row">
+                    <span class="timeline-label">Elapsed</span>
+                    <span class="timeline-value" id="d-elapsed">—</span>
+                </div>
+                <div class="timeline-row">
+                    <span class="timeline-label">Operator</span>
+                    <span class="timeline-value" id="d-operator">—</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="offcanvas-footer">
+        <span class="offcanvas-footer-hint">Press <kbd>↵</kbd> open · <kbd>ESC</kbd> close</span>
+        <button type="button" class="btn btn-primary" id="d-launch">
+            <i class="bi bi-box-arrow-up-right me-1"></i> Open in Receiving v3.2
+        </button>
+    </div>
+</div>
+
+<div class="toast-host">
+    <div class="custom-toast" id="toast">
+        <div class="icon-wrap">✓</div>
+        <div class="msg">
+            <span id="toast-msg">—</span>
+            <small id="toast-sub">—</small>
+        </div>
+    </div>
+</div>
+
+<script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="~/js/dashboard.js" asp-append-version="true"></script>
+
+</body>
+</html>
+
+@functions {
+    static string GetInitials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "??";
+        var parts = name.Split(new[] { ' ', '.', '-' }, StringSplitOptions.RemoveEmptyEntries);
+        return string.Concat(parts.Take(2).Select(p => char.ToUpperInvariant(p[0])));
+    }
+}
