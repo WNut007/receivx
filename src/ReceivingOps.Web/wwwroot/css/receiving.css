@@ -1091,7 +1091,25 @@
     text-overflow: ellipsis;
   }
   .m-tx-row .m-tx-meta b { color: var(--text); font-weight: 600; }
-  .m-tx-row .m-tx-meta .m-tx-actor { color: var(--text-muted); }
+  .m-tx-row .m-tx-meta .m-tx-actor { color: var(--text-muted); display: block; margin-top: 2px; }
+  /* v2 §4.8 — PO context badge on every transaction row */
+  .m-tx-row .m-tx-po {
+    margin-top: 3px;
+    color: var(--accent, var(--ok));
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .m-tx-row .m-tx-po b { color: var(--accent, var(--ok)); }
+  .tx-item-info .tx-po {
+    margin-top: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent, var(--ok));
+  }
+  .tx-item-info .tx-po b { color: var(--accent, var(--ok)); font-weight: 700; }
   .m-tx-row .m-tx-qty {
     font-family: var(--font-mono);
     font-size: 14px;
@@ -1263,6 +1281,36 @@
     color: var(--over);
     background: var(--over-bg);
     border-color: var(--over-border);
+    font-weight: 600;
+  }
+  /* v2 §7.1 — overage on the hour is allowed; only show a soft yellow hint */
+  .cap-hint.warn {
+    color: var(--warn);
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+    font-weight: 600;
+  }
+  /* v2 §7.2 — FIFO allocation preview (rendered by receiving.js refreshAllocationPreview) */
+  .alloc-preview {
+    margin: -8px 0 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    line-height: 1.45;
+    display: none;
+  }
+  .alloc-preview.show { display: block; }
+  .alloc-preview.ok {
+    color: var(--ok);
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-border, var(--ok));
+  }
+  .alloc-preview.warn {
+    color: var(--over);
+    background: var(--over-bg);
+    border: 1px solid var(--over-border);
     font-weight: 600;
   }
   .cap-hint .ico {

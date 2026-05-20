@@ -382,6 +382,16 @@
     white-space: nowrap;
     max-width: 240px;
   }
+  /* v2 §4.8 — PO context inside the Item cell */
+  .item-cell .po-badge {
+    margin-top: 2px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .item-cell .po-badge b { font-weight: 700; }
   .pull-link {
     font-family: 'Roboto Mono', monospace;
     font-size: 13px;

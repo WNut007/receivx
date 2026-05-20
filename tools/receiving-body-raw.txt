@@ -219,6 +219,10 @@
         <span id="cap-hint-text">Maximum allowed: <b id="cap-hint-max">1,000</b> pcs. Cannot receive over expected.</span>
       </div>
 
+      <!-- v2 §7.2 — FIFO allocation preview (populated by receiving.js) -->
+      <div class="alloc-preview ok" id="m-alloc-list"></div>
+      <div class="alloc-preview warn" id="m-alloc-warning"></div>
+
       <div class="quick-fill">
         <button data-fill="all">Fill outstanding</button>
         <button data-fill="half">½ outstanding</button>

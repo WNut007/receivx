@@ -380,6 +380,10 @@
     // ---- Load transactions for this (item, hour) ----
     renderModalTransactions(item.code, hour);
 
+    // ---- Fire initial FIFO preview for the pre-filled qty ----
+    hideAllocPanel();
+    setTimeout(refreshAllocationPreview, 0);
+
     modal.classList.add('open');
     if (!pullClosed) setTimeout(() => input.select(), 100);
   }
@@ -449,6 +453,9 @@
              Cancel
            </button>`
         : '';
+      const poBadge = r.poNumber
+        ? `<div class="m-tx-po"><b>${escAttr(r.poNumber)}</b>${r.poLineNumber ? ' · LINE ' + escAttr(String(r.poLineNumber)) : ''}</div>`
+        : '';
       return `
         <div class="m-tx-row ${cls}">
           <div class="m-tx-when">
@@ -457,7 +464,7 @@
           </div>
           <div class="m-tx-meta">
             <b>${escAttr(r.lotBatch || '—')}</b> · ${escAttr(r.palletId || '—')}
-            <br>
+            ${poBadge}
             <span class="m-tx-actor">By ${escAttr(r.receivedBy)}</span>
           </div>
           <div>
@@ -482,25 +489,92 @@
     return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function closeModal() { modal.classList.remove('open'); }
+  function closeModal() {
+    hideAllocPanel();
+    modal.classList.remove('open');
+  }
 
-  // Input cap-at-expected enforcement
+  /* ============================================================================
+     v2 §7.2 FIFO allocation preview.
+     - Replaces the v1 cap-at-expected input enforcement: per-hour overage is
+       now allowed (the PO is the hard cap, §7.1 v2).
+     - Calls GET /api/receipts/preview on debounced qty input and renders
+       either "Will allocate: 1500 from PO-… + 500 from PO-…" (good case)
+       or an "Insufficient PO capacity" warning (which also disables Confirm).
+     ============================================================================ */
+  let _allocDebounce = null;
+  let _allocRequestSeq = 0;
+
+  function hideAllocPanel() {
+    const list = document.getElementById('m-alloc-list');
+    const warn = document.getElementById('m-alloc-warning');
+    if (list) list.classList.remove('show');
+    if (warn) warn.classList.remove('show');
+    const btn = document.getElementById('m-confirm');
+    if (btn) btn.disabled = false;
+  }
+
+  async function refreshAllocationPreview() {
+    const item = items[activeRow];
+    const pullItemId = item?.pullItemId;
+    const list = document.getElementById('m-alloc-list');
+    const warn = document.getElementById('m-alloc-warning');
+    const btn  = document.getElementById('m-confirm');
+    if (!pullItemId || !list || !warn || !btn) return;
+
+    const qty = parseInt(document.getElementById('m-input').value, 10) || 0;
+    if (qty <= 0) { hideAllocPanel(); return; }
+
+    const seq = ++_allocRequestSeq;
+    try {
+      const r = await fetch(`/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`);
+      if (seq !== _allocRequestSeq) return;   // stale response — newer typing replaced it
+      if (!r.ok) {
+        // 404 (pullItem) / 403 (warehouse) / 409 (qty <= 0) — just hide preview
+        hideAllocPanel();
+        return;
+      }
+      const p = await r.json();    // { allocations, totalAllocatable, shortage }
+      if (p.shortage > 0) {
+        list.classList.remove('show');
+        warn.textContent = `Insufficient PO capacity: requested ${qty.toLocaleString()}, only ${p.totalAllocatable.toLocaleString()} pcs across all open POs. Open another PO before receiving.`;
+        warn.classList.add('show');
+        btn.disabled = true;
+      } else {
+        warn.classList.remove('show');
+        const summary = (p.allocations || [])
+          .map(a => `${a.qty.toLocaleString()} from ${a.poNumber}`)
+          .join(' + ');
+        list.textContent = `Will allocate: ${summary}`;
+        list.classList.add('show');
+        btn.disabled = false;
+      }
+    } catch (e) {
+      // Network/transport — hide preview rather than block the user.
+      hideAllocPanel();
+    }
+  }
+
   document.getElementById('m-input').addEventListener('input', (e) => {
+    // Non-blocking soft hint when input exceeds the per-hour plan
+    // (informational only; the server's PO cap is the authoritative gate).
     const v = parseInt(e.target.value) || 0;
     const hint = document.getElementById('cap-hint');
-    if (v > activeMax) {
-      e.target.value = activeMax;
-      e.target.classList.add('is-error');
-      hint.classList.add('error');
-      document.getElementById('cap-hint-text').innerHTML = `Capped at <b>${activeMax.toLocaleString()}</b> pcs · cannot receive over expected`;
-      setTimeout(() => {
-        e.target.classList.remove('is-error');
-        hint.classList.remove('error');
-        document.getElementById('cap-hint-text').innerHTML = `Maximum allowed: <b>${activeMax.toLocaleString()}</b> pcs. Cannot receive over expected.`;
-      }, 1800);
-    } else if (v < 0) {
-      e.target.value = 0;
+    const text = document.getElementById('cap-hint-text');
+    if (v < 0) { e.target.value = 0; }
+    if (text) {
+      if (v > activeMax) {
+        hint?.classList.add('warn');
+        text.innerHTML = `Over per-hour plan (${activeMax.toLocaleString()} pcs). Allowed if PO has capacity.`;
+      } else {
+        hint?.classList.remove('warn');
+        text.innerHTML = `Per-hour plan: <b>${activeMax.toLocaleString()}</b> pcs. PO capacity is the hard cap.`;
+      }
     }
+
+    // Debounced FIFO preview (~200ms)
+    clearTimeout(_allocDebounce);
+    _allocDebounce = setTimeout(refreshAllocationPreview, 200);
   });
 
   document.getElementById('m-close').addEventListener('click', closeModal);
@@ -563,10 +637,11 @@
         showToast('Cannot save receipt', title, 'error');
         return;
       }
-      const result = await resp.json();          // { receiptId, newReceivedQty }
+      const result = await resp.json();   // v2: { allocations[], totalQty, newReceivedQty, fullyReceived }
       const slot = item.schedule[hour];
       if (slot) slot.r = result.newReceivedQty;
-      // Drop the cached journal — drawer will refetch lazily on open.
+      // Drop the cached journal — drawer will refetch lazily on open, picks up the
+      // N new receipt rows (one per FIFO allocation slice) with PO context.
       txCache.length = 0;
       txCacheLoaded = false;
 
@@ -575,7 +650,13 @@
         const updated = document.querySelector(`.hour-btn[data-row="${activeRow}"][data-col="${activeCol}"]`);
         if (updated) updated.classList.add('just-updated');
       });
-      showToast('Receipt confirmed', `${item.code} · +${qty.toLocaleString()} pcs`, 'default');
+      // §9.3 v2 — surface FIFO split count in the toast subtitle.
+      const splitCount = (result.allocations || []).length;
+      const totalQty = result.totalQty ?? qty;
+      const subtitle = splitCount > 1
+        ? `${item.code} · +${totalQty.toLocaleString()} pcs · split across ${splitCount} POs`
+        : `${item.code} · +${totalQty.toLocaleString()} pcs`;
+      showToast('Receipt confirmed', subtitle, 'default');
       closeModal();
     } catch (e) {
       console.error('confirmReceipt failed', e);
@@ -1098,6 +1179,10 @@ async function txEnsureLoaded() {
         pullItemId:  s.pullItemId,
         itemCode:    s.itemCode,
         itemDesc:    s.itemDescription,
+        // §4.8 v2 — PO context surfaces on every journal row
+        poNumber:    s.poNumber,
+        poLineNumber: s.poLineNumber,
+        vendorName:  s.vendorName,
         hour:        s.hourOfDay,
         qty:         s.qtyReceived,
         lotBatch:    s.lotBatch,
@@ -1290,6 +1375,7 @@ function renderTxDrawer() {
           <div class="tx-item-info">
             <div class="tx-item-code">${txEsc(r.itemCode)}</div>
             <div class="tx-item-meta">${txEsc(r.lotBatch || '—')} · ${txEsc(r.palletId || '—')} · ${txEsc(r.binLocation || '—')}</div>
+            ${r.poNumber ? `<div class="tx-po"><b>${txEsc(r.poNumber)}</b>${r.poLineNumber ? ' · LINE ' + txEsc(String(r.poLineNumber)) : ''}${r.vendorName ? ' · ' + txEsc(r.vendorName) : ''}</div>` : ''}
             ${reverseLink}
           </div>
           <div class="tx-qty ${isReversal ? 'neg' : ''}">${qtyDisplay}<small>pcs</small></div>

@@ -200,6 +200,7 @@ function render() {
             <div class="item-cell">
               <span class="item-code">${escHtml(r.itemCode)}</span>
               <span class="item-desc">${escHtml(r.itemDescription)}</span>
+              ${r.poNumber ? `<span class="po-badge"><b>${escHtml(r.poNumber)}</b>${r.poLineNumber ? ' · LINE ' + escHtml(String(r.poLineNumber)) : ''}</span>` : ''}
               ${reversalLink}
             </div>
           </td>
