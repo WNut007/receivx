@@ -121,10 +121,18 @@ public class ReceiptService : IReceiptService
 
             tx.Commit();
 
+            // TODO Phase 4: rewrite this whole method for FIFO allocation; the
+            // INSERT below now fails at runtime (515) because Receipts.PurchaseOrder*
+            // are NOT NULL. The return shape is stitched to compile only.
             return new ReceiveResult
             {
-                ReceiptId = receiptId,
+                Allocations = new List<AllocationResult>
+                {
+                    new() { ReceiptId = receiptId, Qty = req.Qty },
+                },
+                TotalQty = req.Qty,
                 NewReceivedQty = window.ReceivedQty + req.Qty,
+                FullyReceived = false,
             };
         }
         catch

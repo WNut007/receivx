@@ -1,6 +1,7 @@
 namespace ReceivingOps.Web.Models.Dtos;
 
-/// <summary>POST /api/receipts body. Cap-at-expected and pull-not-closed are enforced server-side (§7.1, §7.12).</summary>
+/// <summary>POST /api/receipts body. PO line is chosen server-side by FIFO (§7.14).
+/// The pull-not-closed gate (§7.12) and PO cap (§7.1) are enforced server-side.</summary>
 public class ReceiveRequest
 {
     public Guid PullItemId { get; set; }
@@ -13,10 +14,39 @@ public class ReceiveRequest
     public string? Note { get; set; }
 }
 
-public class ReceiveResult
+/// <summary>One slice of a FIFO-allocated receive — exactly one PO line consumed.</summary>
+public class AllocationResult
 {
     public Guid ReceiptId { get; set; }
-    public int NewReceivedQty { get; set; }   // post-transaction PullItemWindows.ReceivedQty
+    public Guid PurchaseOrderId { get; set; }
+    public string PoNumber { get; set; } = "";
+    public Guid PurchaseOrderLineId { get; set; }
+    public int PoLineNumber { get; set; }
+    public int Qty { get; set; }
+}
+
+/// <summary>
+/// Response from POST /api/receipts. One call may produce multiple receipt rows
+/// when the FIFO allocator splits qty across PO lines (§7.2a).
+/// </summary>
+public class ReceiveResult
+{
+    public List<AllocationResult> Allocations { get; set; } = new();
+    public int TotalQty { get; set; }            // SUM of Allocations[].Qty
+    public int NewReceivedQty { get; set; }      // post-tx PullItemWindows.ReceivedQty for the target hour
+    public bool FullyReceived { get; set; }      // whether the pull is now fully received
+}
+
+/// <summary>
+/// GET /api/receipts/preview output (§7.2). Same FIFO algorithm as the
+/// transactional path, but read-only and lock-free. Modal calls this on
+/// debounced qty input so the operator sees the plan before clicking Confirm.
+/// </summary>
+public class ReceivePreviewResult
+{
+    public List<AllocationResult> Allocations { get; set; } = new();
+    public int TotalAllocatable { get; set; }    // SUM of remaining across all open lines for this (warehouse,item)
+    public int Shortage { get; set; }            // > 0 means the request can't be fully satisfied
 }
 
 /// <summary>POST /api/receipts/{id}/cancel body. Reason is required (§7.3).</summary>
@@ -26,29 +56,41 @@ public class CancelRequest
     public string? Note { get; set; }
 }
 
+/// <summary>The PO line that just got its qty restored by a cancel (§7.3).</summary>
+public class PoLineRestored
+{
+    public Guid PurchaseOrderId { get; set; }
+    public string PoNumber { get; set; } = "";
+    public Guid PurchaseOrderLineId { get; set; }
+    public int LineNumber { get; set; }
+    public int NewRemainingQty { get; set; }
+}
+
 public class CancelResult
 {
     public Guid ReversalReceiptId { get; set; }
     public int NewReceivedQty { get; set; }
+    public PoLineRestored? PoLineRestored { get; set; }
 }
 
 /// <summary>Query parameters for /api/transactions (§6 cross-pull journal).</summary>
 public record TransactionsQuery(
     Guid? WarehouseId,
-    string? WarehouseCode,    // accepted alongside WarehouseId — UI sends "WH-01"
+    string? WarehouseCode,
     DateTime? DateFrom,
     DateTime? DateTo,
     string? Kind,             // receive|voided|reversal
     Guid? OperatorId,
-    string? ReceivedByName,   // dropdown uses display names (no users API yet)
+    string? ReceivedByName,
     string? PullNumber,
+    string? PoNumber,         // §6 v2 — structured filter for the new PO context column
     string? ItemCode,
     int? Hour,
-    string? Q,                // multi-token AND match
-    int Take,                 // page size; controller clamps to a sane range
+    string? Q,                // multi-token AND match (now includes PoNumber + VendorName, §6 v2)
+    int Take,
     int Skip)
 {
-    public TransactionsQuery() : this(null, null, null, null, null, null, null, null, null, null, null, 50, 0) {}
+    public TransactionsQuery() : this(null, null, null, null, null, null, null, null, null, null, null, null, 50, 0) {}
 }
 
 public class PagedTransactions
@@ -71,6 +113,15 @@ public class ReceiptJournalRow
     public string WarehouseName { get; set; } = "";
     public string ItemCode { get; set; } = "";
     public string ItemDescription { get; set; } = "";
+
+    // §4.8 v2 — PO context. Mandatory on every row post-Phase-1b.
+    public Guid PurchaseOrderId { get; set; }
+    public string PoNumber { get; set; } = "";
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
+    public Guid PurchaseOrderLineId { get; set; }
+    public int PoLineNumber { get; set; }
+
     public byte HourOfDay { get; set; }
     public int QtyReceived { get; set; }
     public string? LotBatch { get; set; }
