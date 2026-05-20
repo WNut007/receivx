@@ -61,7 +61,7 @@ $resp = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -Co
 if ($resp.newReceivedQty -ne ($firstWindow.receivedQty + 50)) {
     Fail "newReceivedQty=$($resp.newReceivedQty), expected $($firstWindow.receivedQty + 50)"
 }
-$receiptId = $resp.receiptId
+$receiptId = $resp.allocations[0].receiptId   # v2: receive returns allocations[]; single-line in this smoke
 OK "Receipt $receiptId, newReceivedQty=$($resp.newReceivedQty)"
 
 # ---------------------------------------------------------------------------

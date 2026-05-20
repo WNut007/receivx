@@ -56,7 +56,8 @@ Step "Receive 600 pcs to make PL-2843 fully received"
 $body = @{ pullItemId=$PullItem_2843; hourOfDay=12; qty=600 } | ConvertTo-Json
 $r = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $sess
 if ($r.newReceivedQty -ne 600) { Fail "newReceivedQty=$($r.newReceivedQty)" }
-OK "Receipt $($r.receiptId), pull is now fully received"
+$origReceiptId = $r.allocations[0].receiptId   # v2: receive returns allocations[]
+OK "Receipt $origReceiptId, pull is now fully received"
 
 # ---- 4. Close with empty signature → 409 ----
 Step "POST close with empty signature → 409"
@@ -123,7 +124,6 @@ OK "in_progress; close history preserved; reopen fields set"
 
 # ---- 13. After reopen, can receive again ----
 Step "Reverse the 600-pc receipt → drops total to 0"
-$origReceiptId = $r.receiptId
 $c = Invoke-RestMethod -Uri "$base/api/receipts/$origReceiptId/cancel" -Method POST -Body (@{ reason='miscount'; note='smoke teardown' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
 if ($c.newReceivedQty -ne 0) { Fail "Post-reopen cancel: newReceivedQty=$($c.newReceivedQty)" }
 OK "Can receive/cancel on reopened pull; newReceivedQty=0"

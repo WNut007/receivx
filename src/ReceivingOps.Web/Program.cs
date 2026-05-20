@@ -92,6 +92,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IReceiptService, ReceiptService>();
 builder.Services.AddScoped<ICloseService, CloseService>();
 builder.Services.AddScoped<IMastersService, MastersService>();
+builder.Services.AddScoped<IPurchaseOrderAdminService, PurchaseOrderAdminService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 

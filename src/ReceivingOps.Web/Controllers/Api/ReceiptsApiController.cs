@@ -25,13 +25,28 @@ public class ReceiptsApiController : ControllerBase
         _logger = logger;
     }
 
-    // §7.2 POST /api/receipts
+    // §7.2 POST /api/receipts — FIFO allocator may emit multiple receipt rows
     [HttpPost]
     public async Task<ActionResult<ReceiveResult>> Receive([FromBody] ReceiveRequest req, CancellationToken ct)
     {
         try
         {
             var result = await _receipts.ReceiveAsync(req, ct);
+            return Ok(result);
+        }
+        catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
+        catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // §7.2 GET /api/receipts/preview?pullItemId=&qty= — read-only FIFO preview
+    [HttpGet("preview")]
+    public async Task<ActionResult<ReceivePreviewResult>> Preview(
+        [FromQuery] Guid pullItemId, [FromQuery] int qty, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _receipts.PreviewAsync(pullItemId, qty, ct);
             return Ok(result);
         }
         catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }

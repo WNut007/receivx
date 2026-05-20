@@ -43,9 +43,12 @@ OK "Target: item $($item.itemCode), hour $($win.hourOfDay), remaining $($win.exp
 Step "Seed 2 receipts (one will be cancelled)"
 $r1 = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body (@{ pullItemId=$item.id; hourOfDay=$win.hourOfDay; qty=10; note='smoke-tx-keep' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
 $r2 = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body (@{ pullItemId=$item.id; hourOfDay=$win.hourOfDay; qty=20; note='smoke-tx-cancel' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
+# v2: receive returns allocations[]; single-line in this smoke
+$r1Id = $r1.allocations[0].receiptId
+$r2Id = $r2.allocations[0].receiptId
 # Cancel r2 to produce a voided + reversal pair
-$null = Invoke-RestMethod -Uri "$base/api/receipts/$($r2.receiptId)/cancel" -Method POST -Body (@{ reason='miscount'; note='smoke-tx-reversal' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
-OK "Receipts $($r1.receiptId), $($r2.receiptId) [voided], + 1 reversal"
+$null = Invoke-RestMethod -Uri "$base/api/receipts/$r2Id/cancel" -Method POST -Body (@{ reason='miscount'; note='smoke-tx-reversal' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
+OK "Receipts $r1Id, $r2Id [voided], + 1 reversal"
 
 # ---- 3. Basic query — pullNumber filter ----
 Step "GET /api/transactions?pullNumber=PL-2848"
@@ -58,7 +61,7 @@ OK "Got $($q.rows.Count) rows / total $($q.total)"
 Step "Multi-token search: q='PL-2848 smoke-tx-keep' → exactly 1 row"
 $q2 = Invoke-RestMethod -Uri "$base/api/transactions?q=PL-2848+smoke-tx-keep" -WebSession $sess
 if ($q2.rows.Count -ne 1) { Fail "Expected 1, got $($q2.rows.Count)" }
-if ($q2.rows[0].id -ne $r1.receiptId) { Fail "Wrong row id" }
+if ($q2.rows[0].id -ne $r1Id) { Fail "Wrong row id" }
 OK "AND match returns exactly the 'keep' row"
 
 # ---- 5. Multi-token with a token that excludes everything ----
@@ -78,8 +81,8 @@ OK "kind=reversal isolates the negative-qty entry"
 # ---- 7. kind=voided ----
 Step "kind=voided → the original row of the cancelled pair"
 $q5 = Invoke-RestMethod -Uri "$base/api/transactions?pullNumber=PL-2848&kind=voided" -WebSession $sess
-$voided = $q5.rows | Where-Object { $_.id -eq $r2.receiptId }
-if (-not $voided) { Fail "Voided row $($r2.receiptId) not returned" }
+$voided = $q5.rows | Where-Object { $_.id -eq $r2Id }
+if (-not $voided) { Fail "Voided row $r2Id not returned" }
 if ($voided.kind -ne 'voided') { Fail "kind != voided" }
 OK "kind=voided returns the original (positive-qty) row"
 
@@ -126,7 +129,7 @@ OK ("Non-admin scoped to WH-02 regardless of warehouseCode hint (got {0} rows)" 
 
 # ---- 13. Cancel via /api/receipts/{id}/cancel — same endpoint as receiving drawer ----
 Step "POST /api/receipts/{id}/cancel from transactions context"
-$cancelResp = Invoke-RestMethod -Uri "$base/api/receipts/$($r1.receiptId)/cancel" -Method POST -Body (@{ reason='other'; note='from-tx-smoke' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
+$cancelResp = Invoke-RestMethod -Uri "$base/api/receipts/$r1Id/cancel" -Method POST -Body (@{ reason='other'; note='from-tx-smoke' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sess
 if (-not $cancelResp.reversalReceiptId) { Fail "No reversalReceiptId returned" }
 OK "Cancel endpoint shared with receiving works from transactions"
 
