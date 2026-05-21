@@ -41,6 +41,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-5a.ps1'
         'smoke-phase-5b.ps1'
         'smoke-phase-5c.ps1'
+        'smoke-phase-5d.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'

@@ -935,3 +935,65 @@
   }
 
   /* Drawer footer needs to come outside .offcanvas-body for fixed positioning */
+
+  /* §3.5 / §7.15 — lock badge on pull cards + lock-mode pill in drawer + create-modal toggle */
+  .card-pull .card-head .lock-badge {
+    display: inline-flex; align-items: center;
+    margin-left: 6px;
+    font-size: 11px;
+    color: var(--accent);
+    vertical-align: -1px;
+  }
+  .card-pull .card-head .lock-badge[title] { cursor: help; }
+  .lock-mode-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid;
+  }
+  .lock-mode-pill.locked   { color: var(--accent); background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .lock-mode-pill.unlocked { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+
+  /* Pull modal — lock-toggle card */
+  .lock-toggle-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .lock-toggle-label {
+    display: flex; align-items: flex-start; gap: 10px;
+    cursor: pointer;
+    margin: 0;
+  }
+  .lock-toggle-label input[type="checkbox"] {
+    width: 18px; height: 18px;
+    accent-color: var(--accent);
+    margin-top: 2px;
+    flex: 0 0 auto;
+  }
+  .lock-toggle-label input[type="checkbox"]:disabled { cursor: not-allowed; }
+  .lock-toggle-card.locked-immutable {
+    background: var(--accent-bg);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .lock-toggle-text { display: flex; flex-direction: column; gap: 3px; line-height: 1.35; }
+  .lock-toggle-title {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .lock-toggle-title i { color: var(--accent); margin-right: 4px; }
+  .lock-toggle-help {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
