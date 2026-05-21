@@ -123,10 +123,19 @@ if ($preview2.allocations.Count -ne 2) { Fail "Expected 2 allocations, got $($pr
 $summary = ($preview2.allocations | ForEach-Object { "$($_.qty)@$($_.poNumber)" }) -join ' + '
 OK "Split preview: $summary"
 
-Step "Preview endpoint: 999999 → shortage > 0, allocations include what fits"
-$preview3 = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$pcbaItem&qty=999999" -WebSession $adm
-if ($preview3.shortage -le 0) { Fail "Expected positive shortage, got $($preview3.shortage)" }
-OK "Shortage preview: requested 999999, allocatable $($preview3.totalAllocatable), shortage $($preview3.shortage)"
+Step "Preview endpoint: 999999 → 409 'Insufficient PO capacity' (Phase 4a contract)"
+# Pre-4a this path returned 200 with Shortage > 0; Phase 4a changed the contract
+# so Preview throws BusinessException → 409 with the available qty in the title.
+try {
+    Invoke-WebRequest -Uri "$base/api/receipts/preview?pullItemId=$pcbaItem&qty=999999" -WebSession $adm | Out-Null
+    Fail "Expected 409, got success"
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -ne 409) { Fail "Expected 409, got $code" }
+    $body = $_.ErrorDetails.Message
+    if ($body -notmatch 'Insufficient PO capacity') { Fail "Expected 'Insufficient PO capacity' in body, got: $body" }
+    OK "409 surfaced with title containing 'Insufficient PO capacity'"
+}
 
 # ============================================================================
 # 6. End-to-end receive → embedded journal carries PO context for the new row
