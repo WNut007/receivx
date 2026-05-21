@@ -25,7 +25,7 @@ public class ReceiptsApiController : ControllerBase
         _logger = logger;
     }
 
-    // §7.2 POST /api/receipts — FIFO allocator may emit multiple receipt rows
+    // §7.2 / §3.5 POST /api/receipts — lock-aware FIFO allocator; may emit multiple receipt rows
     [HttpPost]
     public async Task<ActionResult<ReceiveResult>> Receive([FromBody] ReceiveRequest req, CancellationToken ct)
     {
@@ -34,6 +34,7 @@ public class ReceiptsApiController : ControllerBase
             var result = await _receipts.ReceiveAsync(req, ct);
             return Ok(result);
         }
+        catch (ValidationException ex)  { return Problem(title: ex.Message, statusCode: 400); }
         catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
         catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }

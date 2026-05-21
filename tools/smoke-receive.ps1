@@ -42,14 +42,14 @@ try {
 }
 
 # ---------- 4. Receive zero qty ----------
-Step "Receive 0 (should 409 - non-positive)"
+Step "Receive 0 (should 400 - validation, per §3.5 contract)"
 $body = @{ pullItemId = $PullItemOpen; hourOfDay = 12; qty = 0 } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
-    Fail "Expected 409, got success"
+    Fail "Expected 400, got success"
 } catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 409) { Fail "Expected 409, got $($_.Exception.Response.StatusCode.value__)" }
-    OK "409 on Qty=0"
+    if ($_.Exception.Response.StatusCode.value__ -ne 400) { Fail "Expected 400, got $($_.Exception.Response.StatusCode.value__)" }
+    OK "400 on Qty=0"
 }
 
 # ---------- 5. Receive against closed pull ----------

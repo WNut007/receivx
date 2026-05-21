@@ -61,13 +61,21 @@ if ($prev.shortage -ne 0) { Fail "Expected shortage=0, got $($prev.shortage)" }
 OK "Single-line preview: 100 → PO-2401-018 line 1"
 
 # ============================================================================
-# 2. Preview shortage when qty exceeds total open capacity
+# 2. Preview insufficient capacity → 409 (§3.5: replaces the old 200+shortage shape)
 # ============================================================================
-Step "Preview: 999999 pcs PCBA-AX450-R2 → shortage exposed"
-$prevShort = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$pcbaItem&qty=999999" -WebSession $adm
-if ($prevShort.shortage -le 0) { Fail "Expected positive shortage, got $($prevShort.shortage)" }
-if ($prevShort.totalAllocatable -ge 999999) { Fail "totalAllocatable should be < 999999" }
-OK "Shortage reported: $($prevShort.shortage) pcs, available: $($prevShort.totalAllocatable)"
+Step "Preview: 999999 pcs PCBA-AX450-R2 → 409 Insufficient PO capacity"
+try {
+    Invoke-WebRequest -Uri "$base/api/receipts/preview?pullItemId=$pcbaItem&qty=999999" -WebSession $adm | Out-Null
+    Fail "Expected 409, got success"
+} catch {
+    if ($_.Exception.Response.StatusCode.value__ -ne 409) {
+        Fail "Expected 409, got $($_.Exception.Response.StatusCode.value__)"
+    }
+    $msg = $_.ErrorDetails.Message
+    if ($msg -notmatch 'Insufficient PO capacity') { Fail "Title missing 'Insufficient PO capacity'. Got: $msg" }
+    if ($msg -notmatch 'Need 999999')              { Fail "Title missing 'Need 999999'. Got: $msg" }
+    OK "409 'Insufficient PO capacity' with Need/have details"
+}
 
 # ============================================================================
 # 3. Receive 100 pcs PCBA-AX450-R2 (single allocation) + verify cache

@@ -144,17 +144,23 @@ public class ReceiptService : IReceiptService
     }
 
     // ============================================================================
-    // §7.2a atomic FIFO receive
+    // §7.2a / §3.5 atomic FIFO receive (lock-aware)
+    //
+    //   Same FIFO walk as Preview, but inside one transaction with
+    //   UPDLOCK + HOLDLOCK + ROWLOCK on the PO-line read for serializable
+    //   range protection (two concurrent receivers can't double-spend a line).
+    //   Audit row captures the scope so the journal explains WHY a given
+    //   allocation went where it did.
     // ============================================================================
     public async Task<ReceiveResult> ReceiveAsync(ReceiveRequest req, CancellationToken ct = default)
     {
         // ----- 0. Validation -----
-        if (req.Qty <= 0) throw new BusinessException("Qty must be positive");
-        if (req.HourOfDay > 23) throw new BusinessException("HourOfDay must be 0–23");
+        if (req.Qty <= 0)        throw new ValidationException("Quantity must be positive");
+        if (req.HourOfDay > 23)  throw new ValidationException("HourOfDay must be 0–23");
 
         var qcStatus = req.QcStatus ?? "pending";
         if (!AllowedQcStatus.Contains(qcStatus))
-            throw new BusinessException($"Invalid QcStatus '{qcStatus}'");
+            throw new ValidationException($"Invalid QcStatus '{qcStatus}'");
 
         var actorId   = CurrentUserId();
         var sessionWh = SessionWarehouseId();
@@ -165,9 +171,11 @@ public class ReceiptService : IReceiptService
         using var tx = conn.BeginTransaction();
         try
         {
-            // ----- 1. Lock the parent pull row + read its current status -----
+            // ----- 1. Lock the parent pull row + read its current status (incl. LockPoByPull) -----
             var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
-                SELECT pi.Id AS PullItemId, pi.ItemCode, p.Id AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId
+                SELECT pi.Id AS PullItemId, pi.ItemCode,
+                       p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
+                       p.LockPoByPull
                 FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
                 INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
                 WHERE  pi.Id = @PullItemId;",
@@ -182,25 +190,20 @@ public class ReceiptService : IReceiptService
             if (!isAdmin && sessionWh != pullCtx.WarehouseId)
                 throw new ForbiddenException("You do not have access to this pull");
 
-            // ----- 2. Lock all open PO lines for this (warehouse, item) — FIFO order -----
+            // ----- 2. Lock all candidate PO lines — FIFO order (lock-aware via pullCtx.LockPoByPull) -----
             // UPDLOCK + HOLDLOCK gives serializable range protection for the FIFO query.
-            var openLines = (await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(@"
-                SELECT pol.Id AS PurchaseOrderLineId, pol.PurchaseOrderId, po.PoNumber, po.OrderDate,
-                       pol.LineNumber, pol.OrderedQty, pol.ReceivedQty
-                FROM   dbo.PurchaseOrderLines pol WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-                INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
-                WHERE  po.WarehouseId = @WarehouseId
-                  AND  po.Status      = 'open'
-                  AND  pol.ItemCode   = @ItemCode
-                  AND  pol.OrderedQty > pol.ReceivedQty
-                ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;",
-                new { pullCtx.WarehouseId, pullCtx.ItemCode },
-                transaction: tx, cancellationToken: ct))).AsList();
+            var openLines = (await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true,
+                                                       pullCtx, ct)).AsList();
+
+            // §3.5 strict mode: pull is locked but no PO is linked → procurement must act
+            if (pullCtx.LockPoByPull && openLines.Count == 0)
+                throw new BusinessException(
+                    "No PO linked to this pull. Procurement must link a PO before receiving.");
 
             var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
             if (totalAvailable < req.Qty)
                 throw new BusinessException(
-                    $"Insufficient PO capacity. Requested {req.Qty} but only {totalAvailable} pcs remain across all open POs for {pullCtx.ItemCode}. Open another PO before receiving.");
+                    $"Insufficient PO capacity. Need {req.Qty}, have {totalAvailable} pcs.");
 
             // ----- 3. Build the allocation plan (FIFO walk) -----
             var plan = new List<(PoLineAvailability Line, int Take)>();
@@ -294,10 +297,11 @@ public class ReceiptService : IReceiptService
                  WHERE Id = @PullId;",
                 new { pullCtx.PullId }, transaction: tx, cancellationToken: ct));
 
-            // ----- 8. Audit (one summary row) -----
-            var summary = string.Join(" + ", plan.Select(p => $"{p.Take}@{p.Line.PoNumber}"));
+            // ----- 8. Audit (one summary row, with §3.5 scope label) -----
+            var summary  = string.Join(" + ", plan.Select(p => $"{p.Take}@{p.Line.PoNumber}"));
+            var scopeLbl = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide FIFO";
             await _audit.WriteAsync(conn, tx, "receive", "Receipt", $"pi={req.PullItemId}",
-                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Allocated: {summary}", ct);
+                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}", ct);
 
             // ----- 9. Compute response fields before commit -----
             var newWindowQty = await conn.QuerySingleAsync<int>(new CommandDefinition(@"
