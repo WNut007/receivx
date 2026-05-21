@@ -2,6 +2,9 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
+**Status:** v2-migration branch complete (Phase 5e end-to-end PASS, 15/15 smoke
+battery green). Ready for merge to `main` pending final visual verification —
+see `docs/migration/v1-to-v2.md` for the runbook + rollback steps.
 
 ## Stack
 - .NET 8 LTS, C# 12
@@ -16,9 +19,11 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 - `BUILD_PROMPT.v1.md` — archived v1 spec (per-hour cap; single-row receive).
   Kept for archaeology only; live build follows v2.
 - `mockups/` — HTML files that define the UI exactly (do not redesign).
-- `db/` — schema migrations 001–014. Re-runnable: 001/002 idempotent +
+- `db/` — schema migrations 001–016. Re-runnable: 001/002 idempotent +
   010–014 are the v1→v2 migration chain (additive 1a → backfill 2 → strict
-  1b → view modernize 3 → smoke sandbox 4).
+  1b → view modernize 3 → smoke sandbox 4); 015/016 add the §3.5 lock-aware
+  extension (PO↔Pull link + per-pull LockPoByPull). Apply order +
+  rollback steps documented in `docs/migration/v1-to-v2.md`.
 
 ## Conventions
 - PascalCase SQL columns matching POCO properties (no Dapper mapping)
@@ -44,6 +49,12 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
   `WITH (UPDLOCK, HOLDLOCK, ROWLOCK)` on the FIFO read of
   `dbo.PurchaseOrderLines` — gives serializable range protection so two
   concurrent receivers can't double-spend a line.
+- **§3.5 per-pull lock (§7.15 immutability)**: `Pulls.LockPoByPull` set at
+  create-time and immutable thereafter. When true, FIFO scope is restricted
+  to POs whose `PullId` matches; otherwise FIFO is warehouse-wide. Audit
+  message carries the `Scope:` tag (wire contract per BUILD_PROMPT.md §8.1).
+  `PurchaseOrders.PullId` is also immutable post-create — stricter than the
+  §7.13 receipt-reference rule (applies even when no receipts reference).
 
 ## Workflow
 1. Schema first (`db/001_schema.sql` then `db/010_…`–`014_…` for v2) before
