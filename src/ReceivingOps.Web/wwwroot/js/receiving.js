@@ -495,12 +495,17 @@
   }
 
   /* ============================================================================
-     v2 §7.2 FIFO allocation preview.
-     - Replaces the v1 cap-at-expected input enforcement: per-hour overage is
-       now allowed (the PO is the hard cap, §7.1 v2).
-     - Calls GET /api/receipts/preview on debounced qty input and renders
-       either "Will allocate: 1500 from PO-… + 500 from PO-…" (good case)
-       or an "Insufficient PO capacity" warning (which also disables Confirm).
+     v2 §7.2 + §3.5 FIFO allocation preview.
+     - PO is the hard cap (§7.1 v2); the per-hour input is no longer force-clamped.
+     - GET /api/receipts/preview returns either:
+         200 { allocations[], totalAllocatable, shortage:0, scope }
+              → render scope badge + per-line "QTY from PO-NUMBER L##" rows
+         409 ProblemDetails { title, status:409 }
+              → render the server's title in the warn slot, disable Confirm
+              title is one of: "No PO linked to this pull. …"
+                             | "Insufficient PO capacity. Need X, have Y pcs."
+                             | "Pull is closed"
+         400/403/404 → silently hide the panel (qty<=0 / scope / not found)
      ============================================================================ */
   let _allocDebounce = null;
   let _allocRequestSeq = 0;
@@ -508,10 +513,23 @@
   function hideAllocPanel() {
     const list = document.getElementById('m-alloc-list');
     const warn = document.getElementById('m-alloc-warning');
-    if (list) list.classList.remove('show');
-    if (warn) warn.classList.remove('show');
+    if (list) { list.classList.remove('show'); list.innerHTML = ''; }
+    if (warn) { warn.classList.remove('show'); warn.innerHTML = ''; }
     const btn = document.getElementById('m-confirm');
     if (btn) btn.disabled = false;
+  }
+
+  function scopeBadgeHtml(scope) {
+    if (scope === 'pull-locked') {
+      return '<span class="alloc-scope pull-locked" title="FIFO is restricted to POs linked to this pull (§3.5)">🔒 Pull-locked</span>';
+    }
+    return '<span class="alloc-scope warehouse-wide" title="FIFO walks every open PO in this warehouse">🌐 Warehouse-wide</span>';
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
   }
 
   async function refreshAllocationPreview() {
@@ -529,26 +547,40 @@
     try {
       const r = await fetch(`/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`);
       if (seq !== _allocRequestSeq) return;   // stale response — newer typing replaced it
+
+      if (r.status === 409) {
+        // Insufficient PO capacity | No PO linked | Pull is closed — server's title is wire contract.
+        let title = 'Cannot allocate this quantity';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        list.classList.remove('show');
+        list.innerHTML = '';
+        warn.innerHTML = `${scopeBadgeHtml(item?.scopeHint || 'warehouse-wide')}<span>${escapeHtml(title)}</span>`;
+        warn.classList.add('show');
+        btn.disabled = true;
+        return;
+      }
       if (!r.ok) {
-        // 404 (pullItem) / 403 (warehouse) / 409 (qty <= 0) — just hide preview
+        // 400 (qty<=0 race) / 403 (warehouse scope) / 404 (pullItem) — hide silently.
         hideAllocPanel();
         return;
       }
-      const p = await r.json();    // { allocations, totalAllocatable, shortage }
-      if (p.shortage > 0) {
-        list.classList.remove('show');
-        warn.textContent = `Insufficient PO capacity: requested ${qty.toLocaleString()}, only ${p.totalAllocatable.toLocaleString()} pcs across all open POs. Open another PO before receiving.`;
-        warn.classList.add('show');
-        btn.disabled = true;
-      } else {
-        warn.classList.remove('show');
-        const summary = (p.allocations || [])
-          .map(a => `${a.qty.toLocaleString()} from ${a.poNumber}`)
-          .join(' + ');
-        list.textContent = `Will allocate: ${summary}`;
-        list.classList.add('show');
-        btn.disabled = false;
-      }
+
+      const p = await r.json();   // { allocations, totalAllocatable, shortage:0, scope }
+      warn.classList.remove('show');
+      warn.innerHTML = '';
+
+      // Cache the scope so a subsequent 409 (e.g. drained PO) can still show the right badge.
+      if (item) item.scopeHint = p.scope || 'warehouse-wide';
+
+      const lines = (p.allocations || []).map(a =>
+        `<span class="alloc-line">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}</span>`
+      ).join('');
+      const header = (p.allocations || []).length > 1
+        ? `<span class="alloc-line"><b>Will allocate ${qty.toLocaleString()} pcs across ${p.allocations.length} POs:</b></span>`
+        : `<span class="alloc-line"><b>Will allocate:</b></span>`;
+      list.innerHTML = `${scopeBadgeHtml(p.scope)}${header}${lines}`;
+      list.classList.add('show');
+      btn.disabled = false;
     } catch (e) {
       // Network/transport — hide preview rather than block the user.
       hideAllocPanel();
