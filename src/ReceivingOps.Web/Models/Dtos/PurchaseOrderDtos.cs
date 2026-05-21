@@ -18,6 +18,10 @@ public class PoListRow
     public int LineCount { get; set; }
     public int TotalOrdered { get; set; }
     public int TotalReceived { get; set; }
+
+    // §3.5 — optional pull link. Both NULL when PO is in the cross-pull pool.
+    public Guid? PullId { get; set; }
+    public string? PullNumber { get; set; }
 }
 
 /// <summary>One PO line, used inside PoDetail and as a stand-alone summary row.</summary>
@@ -51,6 +55,10 @@ public class PoDetail
     public string? CreatedByName { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
+
+    // §3.5 — optional pull link. Both NULL when PO is in the cross-pull pool.
+    public Guid? PullId { get; set; }
+    public string? PullNumber { get; set; }
 
     public List<PoLineRow> Lines { get; set; } = new();
 }
@@ -86,6 +94,11 @@ public class PoCreateRequest
     public DateTime? ExpectedDate { get; set; }
     public string? Notes { get; set; }
     public List<PoLineCreateRequest> Lines { get; set; } = new();
+
+    // §3.5 — optional link. When set, validated at create:
+    //   pull must exist, status != 'closed', and pull.WarehouseId must match req.WarehouseId.
+    // Immutable after create — PUT will refuse any change including NULL ↔ value transitions.
+    public Guid? PullId { get; set; }
 }
 
 public class PoLineCreateRequest
@@ -104,6 +117,11 @@ public class PoUpdateRequest
     public DateTime OrderDate { get; set; }
     public DateTime? ExpectedDate { get; set; }
     public string? Notes { get; set; }
+
+    // §3.5 — immutable. Clients MUST echo the current value (or NULL if the PO is unlinked).
+    // Any mismatch — including NULL→value or value→NULL — triggers a 409, even on POs that
+    // have no receipts (the PullId rule is stricter than the §7.13 receipt-reference rule).
+    public Guid? PullId { get; set; }
 }
 
 public class PoCloseRequest

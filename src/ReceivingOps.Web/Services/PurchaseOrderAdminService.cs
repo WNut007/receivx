@@ -40,16 +40,38 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
             if (exists.HasValue)
                 throw new BusinessException($"PO number '{req.PoNumber}' is already taken");
 
+            // §3.5 — when PullId is set, validate the link is sound BEFORE we insert.
+            //   - Pull must exist (FK_PO_Pull would also catch this, but we want a friendlier message).
+            //   - Pull.Status must not be 'closed' (procurement shouldn't add capacity to a finished pull).
+            //   - Pull.WarehouseId must match req.WarehouseId (consistency — strict-mode FIFO joins on warehouse anyway).
+            if (req.PullId is { } pullId)
+            {
+                var pull = await conn.QuerySingleOrDefaultAsync<PullLinkProbe>(new CommandDefinition(@"
+                    SELECT Id, PullNumber, Status, WarehouseId
+                    FROM   dbo.Pulls WITH (UPDLOCK, ROWLOCK)
+                    WHERE  Id = @PullId;",
+                    new { PullId = pullId }, transaction: tx, cancellationToken: ct))
+                    ?? throw new BusinessException($"Linked pull {pullId} does not exist");
+
+                if (string.Equals(pull.Status, "closed", StringComparison.Ordinal))
+                    throw new BusinessException($"Cannot link PO to closed pull {pull.PullNumber}");
+
+                if (pull.WarehouseId != req.WarehouseId)
+                    throw new BusinessException(
+                        $"Warehouse mismatch: PO is for warehouse {req.WarehouseId} but pull {pull.PullNumber} is for warehouse {pull.WarehouseId}");
+            }
+
             // WarehouseId must point to an existing warehouse (FK enforces).
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
-                INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, VendorCode, VendorName,
+                INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, PullId, VendorCode, VendorName,
                                                 OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
                 OUTPUT INSERTED.Id
-                VALUES (NEWID(), @PoNumber, @WarehouseId, @VendorCode, @VendorName,
+                VALUES (NEWID(), @PoNumber, @WarehouseId, @PullId, @VendorCode, @VendorName,
                         @OrderDate, @ExpectedDate, 'open', @Notes, @CreatedBy, SYSUTCDATETIME());",
                 new
                 {
-                    req.PoNumber, req.WarehouseId, req.VendorCode, req.VendorName,
+                    req.PoNumber, req.WarehouseId, req.PullId,
+                    req.VendorCode, req.VendorName,
                     req.OrderDate, req.ExpectedDate, req.Notes,
                     CreatedBy = actorId,
                 }, transaction: tx, cancellationToken: ct));
@@ -67,8 +89,9 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                     }, transaction: tx, cancellationToken: ct));
             }
 
+            var linkSuffix = req.PullId is null ? "" : $" linked to pull {req.PullId}";
             await _audit.WriteAsync(conn, tx, "create", "PurchaseOrder", newId.ToString(),
-                $"Created PO {req.PoNumber} with {req.Lines.Count} line(s)", ct);
+                $"Created PO {req.PoNumber} with {req.Lines.Count} line(s){linkSuffix}", ct);
 
             tx.Commit();
             return newId;
@@ -96,11 +119,18 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
         try
         {
             var po = await conn.QuerySingleOrDefaultAsync<PoLockRow>(new CommandDefinition(@"
-                SELECT Id, PoNumber, Status
+                SELECT Id, PoNumber, Status, PullId
                 FROM   dbo.PurchaseOrders WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = id }, transaction: tx, cancellationToken: ct))
                 ?? throw new NotFoundException("PO not found");
+
+            // §3.5 — PullId is immutable. Check this BEFORE the receipt-reference rule because
+            // the immutability bar is strict in both directions (NULL→value AND value→NULL), and
+            // applies even when no receipts reference the PO.
+            if (req.PullId != po.PullId)
+                throw new BusinessException(
+                    "PO-pull link is immutable. Cancel and reissue if you need to change.");
 
             // §7.13 — refuse if any receipt references this PO.
             var refCount = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
@@ -325,6 +355,15 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
         public Guid Id { get; set; }
         public string PoNumber { get; set; } = "";
         public string Status { get; set; } = "";
+        public Guid? PullId { get; set; }   // §3.5 — used by UpdateAsync to enforce immutability
+    }
+
+    private sealed class PullLinkProbe
+    {
+        public Guid Id { get; set; }
+        public string PullNumber { get; set; } = "";
+        public string Status { get; set; } = "";
+        public Guid WarehouseId { get; set; }
     }
 
     private sealed class PoLineDeleteContext

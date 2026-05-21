@@ -48,11 +48,13 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode,
                     po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate,
                     po.Status, po.CreatedAt, po.ClosedAt,
+                    po.PullId, p.PullNumber,
                     (SELECT COUNT(*)          FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS LineCount,
                     (SELECT ISNULL(SUM(OrderedQty),0)  FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS TotalOrdered,
                     (SELECT ISNULL(SUM(ReceivedQty),0) FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS TotalReceived
             FROM    dbo.PurchaseOrders po
             INNER JOIN dbo.Warehouses w ON w.Id = po.WarehouseId
+            LEFT  JOIN dbo.Pulls      p ON p.Id = po.PullId
             {whereSql}
             ORDER BY po.OrderDate DESC, po.PoNumber DESC;";
 
@@ -66,10 +68,12 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
         const string headerSql = @"
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
                     po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate, po.Status, po.Notes,
-                    po.CreatedBy, cb.Name AS CreatedByName, po.CreatedAt, po.ClosedAt
+                    po.CreatedBy, cb.Name AS CreatedByName, po.CreatedAt, po.ClosedAt,
+                    po.PullId, p.PullNumber
             FROM    dbo.PurchaseOrders po
-            INNER JOIN dbo.Warehouses w ON w.Id = po.WarehouseId
+            INNER JOIN dbo.Warehouses w  ON w.Id  = po.WarehouseId
             LEFT  JOIN dbo.Users      cb ON cb.Id = po.CreatedBy
+            LEFT  JOIN dbo.Pulls      p  ON p.Id  = po.PullId
             WHERE   po.Id = @Id;";
 
         const string linesSql = @"
