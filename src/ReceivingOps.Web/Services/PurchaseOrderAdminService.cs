@@ -125,6 +125,15 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 new { Id = id }, transaction: tx, cancellationToken: ct))
                 ?? throw new NotFoundException("PO not found");
 
+            // Defense-in-depth: a closed/canceled PO has been retired from the FIFO pool;
+            // header edits would mutate a "frozen" record. The UI already disables the
+            // inputs when status != 'open' (see pos.js openDetail), but the server is the
+            // source of truth. Checked BEFORE the §3.5 / §7.13 rules so the error message
+            // tells the operator the real reason.
+            if (!string.Equals(po.Status, "open", StringComparison.Ordinal))
+                throw new BusinessException(
+                    $"Cannot edit a closed PO. Status is {po.Status}.");
+
             // §3.5 — PullId is immutable. Check this BEFORE the receipt-reference rule because
             // the immutability bar is strict in both directions (NULL→value AND value→NULL), and
             // applies even when no receipts reference the PO.

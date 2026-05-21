@@ -222,14 +222,24 @@ if ($closeResp.StatusCode -ne 204) { Fail "Expected 204, got $($closeResp.Status
 OK "PO closed (204)"
 
 Step "GET /api/pos/{id} on closed PO returns status='closed' + ClosedAt populated"
-# Backend contract: UpdateAsync refuses on PullId mismatch or §7.13 receipt-reference,
-# but does NOT refuse PUT on a closed PO that has no receipts referencing it. The
-# UI prevents the case by disabling header inputs when status != open (see pos.js).
-# What we DO assert here is that the close was durable.
 $closed = Invoke-RestMethod -Uri "$base/api/pos/$poId" -WebSession $adm
 if ($closed.status -ne 'closed') { Fail "Expected status='closed', got '$($closed.status)'" }
 if (-not $closed.closedAt)       { Fail "Expected closedAt populated, got null" }
 OK "PO is closed and ClosedAt is set"
+
+Step "PUT on closed PO → expect 409 'Cannot edit a closed PO' (defense-in-depth)"
+# Defense-in-depth check added on top of §3.5 + §7.13. Fires BEFORE the PullId
+# / receipt-reference rules so the operator sees the real reason.
+try {
+    Invoke-WebRequest -Uri "$base/api/pos/$poId" -Method PUT -Body $updBody -ContentType 'application/json' -WebSession $adm | Out-Null
+    Fail "Expected 409 on closed-PO PUT, got success"
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -ne 409) { Fail "Expected 409, got $code" }
+    $bodyText = $_.ErrorDetails.Message
+    if ($bodyText -notmatch 'Cannot edit a closed PO') { Fail "Expected 'Cannot edit a closed PO' in body, got: $bodyText" }
+    OK "409 with 'Cannot edit a closed PO' title"
+}
 
 Step "Closing an already-closed PO → expect 409 (idempotency guard)"
 try {
