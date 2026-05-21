@@ -14,4 +14,7 @@ public class PurchaseOrder
     public Guid? CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
+    // §3.5 — optional link to a Pull. When set, the linked Pull may restrict FIFO scope
+    // to its own POs (see Pulls.LockPoByPull). Immutable after PO creation.
+    public Guid? PullId { get; set; }
 }

@@ -42,11 +42,17 @@ public class ReceiveResult
 /// transactional path, but read-only and lock-free. Modal calls this on
 /// debounced qty input so the operator sees the plan before clicking Confirm.
 /// </summary>
+/// <remarks>
+/// §3.5 — Preview throws 409 on insufficient capacity (no more Shortage on the wire);
+/// Shortage stays 0 on success and is kept only for transitional UI compatibility.
+/// Scope tells callers which FIFO scope was used.
+/// </remarks>
 public class ReceivePreviewResult
 {
     public List<AllocationResult> Allocations { get; set; } = new();
-    public int TotalAllocatable { get; set; }    // SUM of remaining across all open lines for this (warehouse,item)
-    public int Shortage { get; set; }            // > 0 means the request can't be fully satisfied
+    public int TotalAllocatable { get; set; }    // SUM of remaining across all visible lines for this (warehouse,item) under the active scope
+    public int Shortage { get; set; }            // always 0 on success in v2 — kept for transitional UI compatibility
+    public string Scope { get; set; } = "warehouse-wide";  // "warehouse-wide" | "pull-locked"
 }
 
 /// <summary>POST /api/receipts/{id}/cancel body. Reason is required (§7.3).</summary>

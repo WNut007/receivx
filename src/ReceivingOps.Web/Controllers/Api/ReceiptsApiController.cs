@@ -39,7 +39,7 @@ public class ReceiptsApiController : ControllerBase
         catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }
     }
 
-    // §7.2 GET /api/receipts/preview?pullItemId=&qty= — read-only FIFO preview
+    // §7.2 / §3.5 GET /api/receipts/preview?pullItemId=&qty= — read-only FIFO preview (lock-aware)
     [HttpGet("preview")]
     public async Task<ActionResult<ReceivePreviewResult>> Preview(
         [FromQuery] Guid pullItemId, [FromQuery] int qty, CancellationToken ct)
@@ -49,6 +49,7 @@ public class ReceiptsApiController : ControllerBase
             var result = await _receipts.PreviewAsync(pullItemId, qty, ct);
             return Ok(result);
         }
+        catch (ValidationException ex)  { return Problem(title: ex.Message, statusCode: 400); }
         catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
         catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }

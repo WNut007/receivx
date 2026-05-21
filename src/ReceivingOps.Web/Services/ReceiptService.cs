@@ -25,19 +25,29 @@ public class ReceiptService : IReceiptService
     }
 
     // ============================================================================
-    // §7.2 read-only FIFO preview
+    // §7.2 / §3.5 read-only FIFO preview (lock-aware)
+    //
+    //   - Reads Pulls.LockPoByPull from the parent pull. When true, restricts the
+    //     FIFO scope to POs with PullId = this pull (per-pull strict mode).
+    //     When false (default), scope is warehouse-wide (legacy behavior).
+    //   - 400 on qty <= 0
+    //   - 404 on missing pullItem
+    //   - 403 on warehouse mismatch (non-admin)
+    //   - 409 on closed pull, lock=true & no PO linked, or insufficient capacity
     // ============================================================================
     public async Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, CancellationToken ct = default)
     {
-        if (qty <= 0) throw new BusinessException("Qty must be positive");
+        if (qty <= 0) throw new ValidationException("Quantity must be positive");
 
-        var (_, isAdmin) = SessionWarehouseContext();
-        var sessionWh    = SessionWarehouseId();
+        var sessionWh = SessionWarehouseId();
+        var isAdmin   = SessionIsAdmin();
 
         using var conn = _factory.Create();
 
         var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
-            SELECT pi.Id AS PullItemId, pi.ItemCode, p.WarehouseId, p.Status AS PullStatus, p.PullNumber
+            SELECT pi.Id AS PullItemId, pi.ItemCode,
+                   p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
+                   p.LockPoByPull
             FROM   dbo.PullItems pi
             INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
             WHERE  pi.Id = @PullItemId;",
@@ -47,23 +57,39 @@ public class ReceiptService : IReceiptService
         if (!isAdmin && sessionWh != pullCtx.WarehouseId)
             throw new ForbiddenException("You do not have access to this pull");
 
-        var openLines = (await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(@"
-            SELECT pol.Id AS PurchaseOrderLineId, pol.PurchaseOrderId, po.PoNumber, po.OrderDate,
-                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty
-            FROM   dbo.PurchaseOrderLines pol
-            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
-            WHERE  po.WarehouseId = @WarehouseId
-              AND  po.Status      = 'open'
-              AND  pol.ItemCode   = @ItemCode
-              AND  pol.OrderedQty > pol.ReceivedQty
-            ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;",
-            new { pullCtx.WarehouseId, pullCtx.ItemCode }, cancellationToken: ct))).AsList();
+        if (string.Equals(pullCtx.PullStatus, "closed", StringComparison.Ordinal))
+            throw new BusinessException("Pull is closed");
 
-        var allocations = new List<AllocationResult>();
+        var openLines = (await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false,
+                                                    pullCtx, ct)).AsList();
+
+        if (pullCtx.LockPoByPull && openLines.Count == 0)
+            throw new BusinessException(
+                "No PO linked to this pull. Procurement must link a PO before receiving.");
+
         var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
-        var remaining = qty;
+        if (totalAvailable < qty)
+            throw new BusinessException(
+                $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.");
 
-        foreach (var line in openLines)
+        var plan = BuildAllocationPlan(openLines, qty);
+
+        return new ReceivePreviewResult
+        {
+            Allocations      = plan,
+            TotalAllocatable = totalAvailable,
+            Shortage         = 0,
+            Scope            = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide",
+        };
+    }
+
+    // ----- helpers shared by Preview (no locks) and Receive (UPDLOCK + HOLDLOCK in 4b) -----
+
+    private static List<AllocationResult> BuildAllocationPlan(IReadOnlyList<PoLineAvailability> lines, int qty)
+    {
+        var allocations = new List<AllocationResult>();
+        var remaining = qty;
+        foreach (var line in lines)
         {
             var lineRemaining = line.OrderedQty - line.ReceivedQty;
             var take = Math.Min(lineRemaining, remaining);
@@ -82,13 +108,39 @@ public class ReceiptService : IReceiptService
             }
             if (remaining == 0) break;
         }
+        return allocations;
+    }
 
-        return new ReceivePreviewResult
-        {
-            Allocations      = allocations,
-            TotalAllocatable = totalAvailable,
-            Shortage         = Math.Max(0, qty - totalAvailable),
-        };
+    // Builds the FIFO read query. SQL is fixed strings; the only branch is appended
+    // when the pull is in lock=true mode (no user input flows into the string).
+    private static async Task<IEnumerable<PoLineAvailability>> ReadOpenPoLinesAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        bool withLocks,
+        PullItemContext pullCtx,
+        CancellationToken ct)
+    {
+        var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
+        var sql = $@"
+            SELECT pol.Id AS PurchaseOrderLineId, pol.PurchaseOrderId, po.PoNumber, po.OrderDate,
+                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty
+            FROM   dbo.PurchaseOrderLines pol {hints}
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+            WHERE  po.WarehouseId = @WarehouseId
+              AND  po.Status      = 'open'
+              AND  pol.ItemCode   = @ItemCode
+              AND  pol.OrderedQty > pol.ReceivedQty";
+
+        if (pullCtx.LockPoByPull)
+            sql += " AND po.PullId = @PullId";
+
+        sql += " ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
+
+        return await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(
+            sql,
+            new { pullCtx.WarehouseId, pullCtx.ItemCode, pullCtx.PullId },
+            transaction: transaction,
+            cancellationToken: ct));
     }
 
     // ============================================================================
@@ -473,6 +525,10 @@ public class ReceiptService : IReceiptService
         public string PullNumber { get; set; } = "";
         public string PullStatus { get; set; } = "";
         public Guid WarehouseId { get; set; }
+        // §3.5 — Preview/Receive SELECTs hydrate this from Pulls.LockPoByPull.
+        // Receive's existing SELECT doesn't include this column yet (4a touches Preview only);
+        // Dapper leaves the property at default(false), preserving warehouse-wide FIFO until 4b.
+        public bool LockPoByPull { get; set; }
     }
 
     private sealed class PoLineAvailability
