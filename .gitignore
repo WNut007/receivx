@@ -36,3 +36,6 @@ secrets.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Local DB backups (manual snapshots; large + machine-specific)
+db_backup/

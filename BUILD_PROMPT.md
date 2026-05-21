@@ -212,6 +212,10 @@ CREATE TABLE dbo.Pulls (
     ReopenedAt     DATETIME2(0)     NULL,
     ReopenedBy     UNIQUEIDENTIFIER NULL,
     ReopenReason   NVARCHAR(500)    NULL,
+    -- PO scoping policy — IMMUTABLE after pull creation (see §7.15)
+    --   false: FIFO scope = all open POs in the warehouse (cross-pull pool)
+    --   true:  FIFO scope = only POs explicitly linked to this pull (po.PullId = this.Id)
+    LockPoByPull   BIT              NOT NULL CONSTRAINT DF_Pulls_LockPoByPull DEFAULT 0,
     CONSTRAINT FK_Pulls_Warehouse  FOREIGN KEY (WarehouseId) REFERENCES dbo.Warehouses(Id),
     CONSTRAINT FK_Pulls_CreatedBy  FOREIGN KEY (CreatedBy)   REFERENCES dbo.Users(Id),
     CONSTRAINT FK_Pulls_ClosedBy   FOREIGN KEY (ClosedBy)    REFERENCES dbo.Users(Id),
@@ -221,6 +225,8 @@ CREATE TABLE dbo.Pulls (
 CREATE INDEX IX_Pulls_WhDate ON dbo.Pulls(WarehouseId, PullDate);
 CREATE INDEX IX_Pulls_Status ON dbo.Pulls(Status);
 ```
+
+> **Why `LockPoByPull` is `NOT NULL` with a default of `0`**: backward compatibility for existing pulls — every pre-feature pull defaults to "warehouse-wide FIFO" (the v1 semantic). New pulls can opt into strict per-pull locking via the create form. Once set, the value is immutable for the life of the pull (see §7.15).
 
 ### 4.5 PullItems
 
@@ -263,11 +269,16 @@ CREATE TABLE dbo.PurchaseOrders (
     CreatedBy      UNIQUEIDENTIFIER NULL,
     CreatedAt      DATETIME2(0)     NOT NULL DEFAULT SYSUTCDATETIME(),
     ClosedAt       DATETIME2(0)     NULL,                        -- set automatically when all lines fully received
+    -- Optional direct link to a single pull. When set, this PO is reserved for that pull
+    -- if (and only if) the pull has LockPoByPull = 1. Set at PO creation; IMMUTABLE (see §7.15).
+    PullId         UNIQUEIDENTIFIER NULL,
     CONSTRAINT FK_PO_Warehouse FOREIGN KEY (WarehouseId) REFERENCES dbo.Warehouses(Id),
-    CONSTRAINT FK_PO_CreatedBy FOREIGN KEY (CreatedBy)   REFERENCES dbo.Users(Id)
+    CONSTRAINT FK_PO_CreatedBy FOREIGN KEY (CreatedBy)   REFERENCES dbo.Users(Id),
+    CONSTRAINT FK_PO_Pull      FOREIGN KEY (PullId)      REFERENCES dbo.Pulls(Id)
 );
 
 CREATE INDEX IX_PO_FIFO ON dbo.PurchaseOrders(WarehouseId, Status, OrderDate); -- the FIFO query path
+CREATE INDEX IX_PO_Pull ON dbo.PurchaseOrders(PullId) WHERE PullId IS NOT NULL; -- filtered: lock=true lookup
 
 CREATE TABLE dbo.PurchaseOrderLines (
     Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
@@ -287,11 +298,29 @@ CREATE INDEX IX_POL_FIFO ON dbo.PurchaseOrderLines(ItemCode, PurchaseOrderId)
     INCLUDE (OrderedQty, ReceivedQty);
 ```
 
+> **Why `PullId` is nullable**: most POs live in the cross-pull pool (the v1 default behavior). Only POs created for pulls that have `LockPoByPull = 1` need an explicit link. Mixing both styles in the same warehouse is a deliberate design choice — see §4.5b for how they interact.
+
 > **Why the FIFO index includes `OrderedQty` and `ReceivedQty`**: the allocation query reads all open lines for `(WarehouseId, ItemCode)` ordered by `OrderDate ASC` and needs the remaining-qty calculation — the covering index makes this index-only.
 
-### 4.5b Pulls reference POs only indirectly
+### 4.5b Pull ↔ PO linking: two coexisting modes
 
-Pulls and PO lines are linked **only through Receipts**. A pull can plan receipt of items from any open POs in its warehouse; the actual binding between a pull's item and a specific PO happens at receive time, not at pull-creation time. This keeps the planning UI simple — planners don't pre-allocate.
+POs and pulls can be linked in two different ways depending on how the planner sets up each pull. **Both modes coexist in the same warehouse** — the choice is per-pull, made at pull creation, and immutable thereafter.
+
+**Mode A — Warehouse-wide pool (default, `Pulls.LockPoByPull = 0`)**:
+- Pull and PO are linked **only through Receipts** at receive time
+- FIFO allocator scopes by `WarehouseId` — all open POs in the warehouse are candidates
+- `PurchaseOrders.PullId` is typically `NULL` for these POs (though it doesn't have to be — see Mode B caveat below)
+- This is the v1 behavior; backward compatible
+
+**Mode B — Pull-locked (`Pulls.LockPoByPull = 1`)**:
+- Procurement must explicitly link one or more POs to the pull by setting `PurchaseOrders.PullId = @PullId` at PO creation
+- FIFO allocator scopes by `PullId` — only POs with `po.PullId = pull.Id` are candidates
+- Receiving on this pull when **no** PO is linked returns `409 "No PO linked to this pull"` (see §7.14)
+- Use case: regulated workflows (pharma, aerospace) where each shipment must trace to a specific PO
+
+**Important interaction caveat**: a PO with `PullId` set still appears in the cross-pull pool for **other** Mode-A pulls in the same warehouse. If `PO-2405-001` is linked to `PL-2900` (lock=1), an unrelated `PL-2899` (lock=0) can still consume from it via warehouse-wide FIFO. Procurement teams should be aware that "linking" reserves a PO for one pull's view of FIFO, but does **not** prevent other Mode-A pulls from draining it. Strict reservation is a possible future enhancement and is explicitly out of scope for v2.
+
+The FIFO `OrderDate ASC, PoNumber ASC` ordering applies in both modes; what changes is the filter clause in the query (see §7.2).
 
 ### 4.6 PullItemWindows — expected qty per hour (planning hint)
 
@@ -631,34 +660,34 @@ Every endpoint returns `application/json`. Errors are RFC 7807 `ProblemDetails`.
 ### Pulls
 | Method | Route | Body | Auth | Returns |
 |---|---|---|---|---|
-| GET  | `/api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=` | — | authenticated | list with progress |
-| GET  | `/api/pulls/{id}`                  | — | authenticated | full pull + items + windows |
-| POST | `/api/pulls`                       | new pull | CanManagePulls | created |
-| PUT  | `/api/pulls/{id}`                  | edits | CanManagePulls | updated (refused if closed) |
+| GET  | `/api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=` | — | authenticated | list with progress + `lockPoByPull` per row |
+| GET  | `/api/pulls/{id}`                  | — | authenticated | full pull + items + windows + `lockPoByPull` |
+| POST | `/api/pulls`                       | `{ pullNumber, warehouseId, pullDate, lockPoByPull?, ... }` | CanManagePulls | created. `lockPoByPull` defaults to `false` if omitted; **immutable** thereafter (see §7.15) |
+| PUT  | `/api/pulls/{id}`                  | edits | CanManagePulls | updated (refused if closed). **Rejects** any change to `lockPoByPull` with `409` (§7.15) |
 | POST | `/api/pulls/{id}/close`            | `{ signatureSvg }` | CanManagePulls | 204 (refused unless every active window is full) |
 | POST | `/api/pulls/{id}/reopen`           | `{ reason }` | **CanReopenPull** | 204 (only when status='closed') |
 | PUT  | `/api/pulls/{id}/items/{itemId}/status` | `{ status }` | CanManagePulls | updated item (refused if pull closed) |
 
 ### Receipts
 
-A single `POST /api/receipts` call may produce **multiple receipt rows** when the server's FIFO allocator splits the requested qty across two or more PO lines (see §7.2 for the algorithm).
+A single `POST /api/receipts` call may produce **multiple receipt rows** when the server's FIFO allocator splits the requested qty across two or more PO lines (see §7.2 for the algorithm). The allocation scope depends on the pull's `LockPoByPull` flag.
 
 | Method | Route | Body | Auth | Returns |
 |---|---|---|---|---|
-| POST | `/api/receipts` | `{ pullItemId, hour, qty, lotBatch?, palletId?, binLocation?, qcStatus?, note? }` | CanReceive | `{ allocations: [{ receiptId, purchaseOrderId, poNumber, purchaseOrderLineId, qty }], totalQty, newReceivedQty, fullyReceived }` |
-| GET  | `/api/receipts/preview?pullItemId=&qty=` | — | CanReceive | `{ allocations: [{ poNumber, purchaseOrderId, qty }], totalAllocatable, shortage }` — preview FIFO allocation without committing; used by Receive Goods modal to show "Will allocate from..." before user clicks Confirm |
+| POST | `/api/receipts` | `{ pullItemId, hour, qty, lotBatch?, palletId?, binLocation?, qcStatus?, note? }` | CanReceive | `{ allocations: [{ receiptId, purchaseOrderId, poNumber, purchaseOrderLineId, qty }], totalQty, newReceivedQty, fullyReceived, scope: "warehouse-wide" \| "pull-locked" }` |
+| GET  | `/api/receipts/preview?pullItemId=&qty=` | — | CanReceive | `{ allocations: [...], totalAllocatable, shortage, scope }` — preview FIFO allocation without committing; the `scope` field drives the badge in the Receive Goods modal |
 | POST | `/api/receipts/{id}/cancel` | `{ reason, note? }` | CanReceive | `{ reversalReceiptId, newReceivedQty, poLineRestored }` — cancel one receipt row; qty goes back to that row's PO line |
 | GET  | `/api/receipts?pullId={id}&itemCode=&hour=` | — | authenticated | journal scoped to one pull, each row includes its PO context |
 
 ### PurchaseOrders
 | Method | Route | Body | Auth | Returns |
 |---|---|---|---|---|
-| GET  | `/api/pos?warehouseId=&status=&itemCode=&q=` | — | authenticated | list of POs with line summary |
-| GET  | `/api/pos/{id}` | — | authenticated | header + all lines + receipts referencing each line |
-| GET  | `/api/pos/availability?warehouseId=&itemCode=` | — | authenticated | FIFO-ordered open lines for that item (consumed by the modal preview) |
-| POST | `/api/pos` | new PO | CanManagePulls | created |
-| PUT  | `/api/pos/{id}` | edits | CanManagePulls | updated (refused if any receipts exist against this PO) |
-| POST | `/api/pos/{id}/close` | — | CanManagePulls | manually close a PO before fully received (rare; logs reason) |
+| GET  | `/api/pos?warehouseId=&status=&itemCode=&pullId=&q=` | — | authenticated | list of POs with line summary + `pullId` per row |
+| GET  | `/api/pos/{id}` | — | authenticated | header + all lines + receipts referencing each line + `pullId` |
+| GET  | `/api/pos/availability?warehouseId=&itemCode=&pullId=` | — | authenticated | FIFO-ordered open lines for that item. If `pullId` is supplied, filters to linked POs only (the lock-aware path) |
+| POST | `/api/pos` | `{ poNumber, warehouseId, orderDate, pullId?, ... }` | CanManagePulls | created. `pullId` is optional and **immutable** thereafter (§7.15). When supplied, pull must exist + match warehouse + not be closed |
+| PUT  | `/api/pos/{id}` | edits | CanManagePulls | updated (refused if any receipts exist against this PO). **Rejects** any change to `pullId` with `409` including `NULL ↔ NOT NULL` (§7.15) |
+| POST | `/api/pos/{id}/close` | `{ reason }` | CanManagePulls | manually close a PO before fully received (rare; logs reason) |
 | POST | `/api/pos/{id}/lines` | new line | CanManagePulls | added |
 | DELETE | `/api/pos/{id}/lines/{lineId}` | — | CanManagePulls | removed (refused if any receipts exist against this line) |
 
@@ -691,44 +720,62 @@ Every rule below **must be re-checked on the server** — never trust the client
 
 The total quantity received against a PO line (sum of all positive receipt rows minus all reversals) must never exceed `OrderedQty`. The per-hour `ExpectedQty` in `PullItemWindows` is **planning only** — overage on a single hour is allowed as long as PO capacity exists.
 
-`POST /api/receipts` must reject when the **total open PO line capacity for that item in that warehouse** is less than the requested qty:
+`POST /api/receipts` must reject when the **total open PO line capacity for that item in the FIFO scope** is less than the requested qty. The scope depends on the pull's `LockPoByPull` flag (see §4.5b):
 
 ```sql
+-- Mode A (LockPoByPull = 0): warehouse-wide
 SELECT SUM(OrderedQty - ReceivedQty)
 FROM   dbo.vw_PurchaseOrderAvailability
 WHERE  WarehouseId = @WarehouseId
   AND  ItemCode    = @ItemCode;
+
+-- Mode B (LockPoByPull = 1): pull-locked
+SELECT SUM(OrderedQty - ReceivedQty)
+FROM   dbo.vw_PurchaseOrderAvailability
+WHERE  PullId   = @PullId
+  AND  ItemCode = @ItemCode;
 ```
 
 If the SUM is < `req.Qty` → return `409 Conflict` with title `"Insufficient PO capacity"` and detail `"Requested {qty} but only {available} pcs remain across all open POs for {itemCode}. Open another PO before receiving."`. **The receive call is rejected as a whole — no partial allocation.**
 
+If Mode B is active and the result set is **empty** (no linked POs at all) → return `409` with title `"No PO linked"` and detail `"No PO linked to this pull. Procurement must link a PO before receiving."` This is a distinct error from insufficient capacity; the modal should surface different guidance for each.
+
 The DB-level `CK_POL_Caps` (PO line) is the last line of defense.
 
-### 7.2 FIFO allocation algorithm
+### 7.2 FIFO allocation algorithm (lock-aware)
 
 The server allocates the requested qty across open PO lines **automatically, in FIFO order by `OrderDate`**, and creates one `Receipts` row per allocation slice. The user **does not see PO numbers in the Receive Goods modal until allocation completes** — there is no PO dropdown, no override, no manual selection. This guarantees consistent FIFO discipline across the operation.
 
 **Algorithm** (run inside the receive transaction, see §7.2a):
 
 ```text
-Input: warehouseId, itemCode, qtyRequested
+Input: pullId, warehouseId, itemCode, qtyRequested, lockPoByPull
 Output: List<(poLineId, qtyToAllocate)>
 
-1. Lock and read all open PO lines for (warehouseId, itemCode), ordered by
-   PurchaseOrders.OrderDate ASC, then PurchaseOrders.PoNumber ASC (tiebreak).
-2. Compute total available = SUM(OrderedQty - ReceivedQty) across all locked rows.
-3. If total available < qtyRequested → throw BusinessException (reject whole call).
-4. Walk the lines in FIFO order; for each line:
+1. Build the FIFO query. Base WHERE clause filters open lines for itemCode.
+   - If lockPoByPull == false: add "AND po.WarehouseId = @WarehouseId"
+   - If lockPoByPull == true:  add "AND po.PullId      = @PullId"
+   ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC.
+2. Lock and read the matching rows.
+3. If lockPoByPull == true AND result set is empty
+     → throw BusinessException("No PO linked to this pull...").
+4. Compute total available = SUM(OrderedQty - ReceivedQty) across all locked rows.
+5. If total available < qtyRequested
+     → throw BusinessException("Insufficient PO capacity...").
+6. Walk the lines in FIFO order; for each line:
      remaining = line.OrderedQty - line.ReceivedQty
      take = MIN(remaining, qtyRequested - allocatedSoFar)
      if take > 0 → emit (line.Id, take); allocatedSoFar += take
      if allocatedSoFar == qtyRequested → break
-5. Return the list.
+7. Return the list. The caller will tag the audit with
+   "Scope: pull-locked" or "Scope: warehouse-wide FIFO" based on lockPoByPull.
 ```
 
 The allocator's read **must use `WITH (UPDLOCK, HOLDLOCK)`** on `PurchaseOrderLines` so two concurrent receive calls for the same item see consistent remaining quantities. `HOLDLOCK` upgrades the range lock to serializable for the FIFO query — without this, two concurrent receives could each see 1500 remaining on the same PO line and both try to take 1000, double-spending the line.
 
-> **GET /api/receipts/preview** runs the same algorithm **without taking locks or inserting** — it's a read-only preview the modal calls when the user types a quantity, so the modal can show "Will allocate 1500 from PO-2401-018 + 500 from PO-2401-019" before the user clicks Confirm. The preview output may be stale by the time Confirm fires, so the transactional path re-runs allocation under lock and is the source of truth.
+> **Lock scope and concurrency**: under Mode B the lock granularity is narrower (only lines with `po.PullId = @PullId`), so concurrent receives on different pulls don't contend even when they touch the same item. Under Mode A all open PO lines for the item in the warehouse are locked together — higher contention but consistent with the "single warehouse-wide pool" semantic.
+
+> **GET /api/receipts/preview** runs the same algorithm **without taking locks or inserting** — it's a read-only preview the modal calls when the user types a quantity, so the modal can show "Will allocate 1500 from PO-2401-018 + 500 from PO-2401-019" (plus a scope badge) before the user clicks Confirm. The preview output may be stale by the time Confirm fires, so the transactional path re-runs allocation under lock and is the source of truth.
 
 ### 7.2a Atomic receive transaction (now multi-row)
 
@@ -838,10 +885,12 @@ public async Task<ReceiveResult> ReceiveAsync(ReceiveRequest req, Guid currentUs
                    Status         = CASE WHEN Status = 'pending' THEN 'in_progress' ELSE Status END
              WHERE Id = @PullId", new { PullId = ctx.PullId }, tx);
 
-        // 6. Audit — one row summarizing the allocation
-        var summary = string.Join(" + ", plan.Select(p => $"{p.take}@{p.line.PoNumber}"));
+        // 6. Audit — one row summarizing the allocation. The Scope tag is a
+        //    wire contract the frontend parses; see §8 for the exact format.
+        var summary  = string.Join(" + ", plan.Select(p => $"{p.take}@{p.line.PoNumber}"));
+        var scopeLbl = ctx.LockPoByPull ? "pull-locked" : "warehouse-wide FIFO";
         await _audit.WriteAsync(conn, tx, "receive", "Receipt", $"pi={req.PullItemId}",
-            $"Received {req.Qty} pcs of {ctx.ItemCode} at hour {req.Hour}. Allocated: {summary}");
+            $"Received {req.Qty} pcs of {ctx.ItemCode} at hour {req.Hour}. Scope: {scopeLbl}. Allocated: {summary}");
 
         tx.Commit();
 
@@ -1075,6 +1124,27 @@ Only `POST /api/pulls/{id}/reopen` (CanReopenPull) is allowed against a closed p
 
 The Receive Goods modal must **not** show or accept a PO selection input. The server's FIFO allocation by `PurchaseOrders.OrderDate ASC` is the only valid binding. The modal can show a **preview** of where the qty would be allocated (via `GET /api/receipts/preview`) so the operator sees the audit trail before committing, but it cannot change the choice. This enforces FIFO discipline at the organization level — old POs always close out first.
 
+The same rule applies regardless of `LockPoByPull` setting. Under Mode B the choice is even narrower (POs linked to the pull only), but the operator still does not pick — the server walks the linked-PO chain in FIFO order. If no PO is linked, the receive call returns `409` ("No PO linked to this pull"); the operator's only remedy is to coordinate with procurement to link a PO, not to select a different one.
+
+### 7.15 Immutability of pull–PO linkage decisions
+
+Two fields capture the planner/procurement intent at object-creation time and are **immutable for the life of the object**. The server rejects any attempt to change them with `409 Conflict`, regardless of role (including admin) and regardless of whether the object has been consumed yet:
+
+| Field | Set when | Mutability after create |
+|---|---|---|
+| `Pulls.LockPoByPull` | Pull is created via `POST /api/pulls`. Defaults to `false` if omitted. | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockPoByPull is immutable after pull creation."` |
+| `PurchaseOrders.PullId` | PO is created via `POST /api/pos`. Optional in the request body; defaults to `NULL`. | **Immutable.** `PUT /api/pos/{id}` rejects any change including `NULL → NOT NULL` and `NOT NULL → NULL` with `"PO–pull link is immutable. Cancel and reissue if you need to change."` |
+
+**Why strict immutability**:
+- Receipts already created under one policy can't be retroactively reframed under another without producing inconsistent audit history
+- A pull that started life as Mode A may have receipts spread across multiple POs in the warehouse pool; flipping it to Mode B mid-stream would orphan those receipts from the new "linked POs only" rule
+- Re-linking a PO from `PL-A` to `PL-B` would mean previously valid receipts under `PL-A` now reference a PO that's no longer linked to `PL-A` — the FIFO/audit story falls apart
+
+The escape hatch is **cancel + reissue** — cancel the misconfigured pull or PO and create a new one with the correct setting. This is intentional friction: it forces deliberation at create time and preserves audit fidelity afterwards.
+
+Validation at `POST` time:
+- `POST /api/pos` with `pullId` set: pull must exist, must belong to the same warehouse as the PO, and must not be `closed`. If any check fails → `409`.
+
 ---
 
 ## 8. Auditing — Wire It Into Every Write
@@ -1091,6 +1161,33 @@ public interface IAuditService
 ```
 
 The service reads `HttpContext.User` for actor name/ID and `HttpContext.Connection.RemoteIpAddress` for `IpAddress`. **Never let an audit write throw and roll back the user's business action** — wrap in try/catch and `_logger.LogError` if it fails.
+
+### 8.1 Audit message formats — wire contracts
+
+These message strings are **wire contracts**: the frontend parses them (e.g. to colorize the journal by scope, to extract the PO summary), and downstream consumers may grep them for analytics. Treat any change to the format as a breaking change; if you genuinely need to change a format, bump a version marker in the string and update consumers in the same commit.
+
+**`actionType = "receive"` — written by `ReceiptService.ReceiveAsync` (§7.2a):**
+
+```
+Received {qty} pcs of {itemCode} at hour {hr}. Scope: {scope}. Allocated: {alloc1}[ + {alloc2}…]
+```
+
+Where:
+- `{scope}` ∈ `"warehouse-wide FIFO"` *or* `"pull-locked"` — derived from `Pulls.LockPoByPull` (§4.5b). Drives the scope badge on the receive modal and the journal row pill.
+- `{alloc}` is `"{qty}@{poNumber}"`, joined with `" + "`. One slice per consumed PO line.
+
+Examples:
+- `Received 100 pcs of PCBA-AX450-R2 at hour 7. Scope: warehouse-wide FIFO. Allocated: 100@PO-2401-018`
+- `Received 3301 pcs of PCBA-AX450-R2 at hour 8. Scope: warehouse-wide FIFO. Allocated: 3300@PO-2401-018 + 1@PO-2401-019`
+- `Received 50 pcs of PCBA-AX450-R2 at hour 12. Scope: pull-locked. Allocated: 50@PO-2405-001`
+
+**`actionType = "cancel"` — written by `ReceiptService.CancelAsync` (§7.3):**
+
+```
+Cancelled receipt {receiptGuid} (-{qty} pcs of {itemCode} from {poNumber}). Reason: {reason}.{ {note}}
+```
+
+No scope tag — cancel binds to the original receipt's PO line by Id, not via FIFO, so the scope semantics are not relevant. The PO number names the line being restored.
 
 ---
 
