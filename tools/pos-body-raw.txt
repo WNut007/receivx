@@ -1,0 +1,337 @@
+<!-- ===== BODY:main (from pos.html) ===== -->
+
+<div class="app">
+  <!-- nav injected by app-nav.js -->
+
+  <div class="page-wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-eyebrow">Procurement · Purchase Orders</div>
+        <h1 class="page-title">Purchase Orders</h1>
+        <p class="page-subtitle">Each receive is allocated FIFO against an open PO line (§7.14). PO is the hard quantity cap (§7.1).</p>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn" id="btn-refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button class="btn btn-primary" id="btn-new-po"><i class="bi bi-plus-lg"></i> New PO</button>
+      </div>
+    </div>
+
+    <!-- LIST VIEW -->
+    <div class="section" id="view-list">
+      <div class="section-head">
+        <div class="section-title"><i class="bi bi-clipboard-data"></i> All Purchase Orders</div>
+        <div class="meta-line" id="list-count">0 records</div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="field-group search-box">
+          <span class="field-label">Search</span>
+          <div style="position: relative;">
+            <i class="bi bi-search"></i>
+            <input type="text" class="form-control" id="f-search" placeholder="PO number, vendor, item code…">
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Warehouse</span>
+          <select class="form-select" id="f-warehouse">
+            <option value="all">All warehouses</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Status</span>
+          <select class="form-select" id="f-status">
+            <option value="all">All</option>
+            <option value="open" selected>Open</option>
+            <option value="closed">Closed</option>
+            <option value="canceled">Canceled</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Linkage</span>
+          <select class="form-select" id="f-linkage">
+            <option value="all">All POs</option>
+            <option value="linked">Linked to pull</option>
+            <option value="unlinked">Cross-pull pool</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-clear-filters" title="Clear filters">
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 130px;">PO #</th>
+              <th>Vendor</th>
+              <th style="width: 110px;">Warehouse</th>
+              <th style="width: 130px;">Pull link</th>
+              <th class="num" style="width: 70px;">Lines</th>
+              <th class="num" style="width: 100px;">Ordered</th>
+              <th class="num" style="width: 100px;">Received</th>
+              <th style="width: 90px;">Status</th>
+              <th style="width: 110px;">Order date</th>
+            </tr>
+          </thead>
+          <tbody id="po-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span id="footer-list">—</span>
+        <span>Click a row to open detail</span>
+      </div>
+    </div>
+
+    <!-- DETAIL VIEW (hidden by default) -->
+    <div class="section" id="view-detail" style="display: none;">
+      <div class="section-head">
+        <div class="section-title">
+          <i class="bi bi-clipboard-check"></i>
+          <span id="d-title">PO detail</span>
+          <span class="po-status" id="d-status">open</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn" id="btn-back-to-list"><i class="bi bi-arrow-left"></i> Back to list</button>
+          <button class="btn btn-danger" id="btn-close-po" title="Manually close this PO (admin)">
+            <i class="bi bi-lock"></i> Close PO
+          </button>
+        </div>
+      </div>
+
+      <div class="detail-grid">
+        <div class="field-group">
+          <label>PO Number</label>
+          <div class="val" id="d-po-number">—</div>
+        </div>
+        <div class="field-group">
+          <label>Warehouse</label>
+          <div class="val" id="d-warehouse">—</div>
+        </div>
+        <div class="field-group">
+          <label>Vendor code</label>
+          <input type="text" class="form-control" id="d-vendor-code" placeholder="e.g. VND-001">
+        </div>
+        <div class="field-group">
+          <label>Vendor name</label>
+          <input type="text" class="form-control" id="d-vendor-name" placeholder="Acme Components Ltd">
+        </div>
+        <div class="field-group">
+          <label>Order date</label>
+          <input type="date" class="form-control" id="d-order-date">
+        </div>
+        <div class="field-group">
+          <label>Expected date</label>
+          <input type="date" class="form-control" id="d-expected-date">
+        </div>
+        <div class="field-group">
+          <label>Linked pull (§3.5)</label>
+          <select class="form-select" id="d-pull-id" disabled>
+            <option value="">(none — cross-pull pool)</option>
+          </select>
+          <div class="immutable-hint">
+            <i class="bi bi-lock-fill lock-icon"></i> Immutable after create — relink a PO by closing it and opening a new one.
+          </div>
+        </div>
+        <div class="field-group">
+          <label>Created by</label>
+          <div class="val" id="d-created-by">—</div>
+        </div>
+        <div class="field-group" style="grid-column: 1 / -1;">
+          <label>Notes</label>
+          <textarea class="form-control" id="d-notes" placeholder="Optional context for the audit trail"></textarea>
+        </div>
+      </div>
+
+      <div class="lines-tools">
+        <div class="section-title" style="font-size: 14px;">
+          <i class="bi bi-card-list"></i> Lines
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn" id="btn-save-header"><i class="bi bi-floppy"></i> Save header</button>
+          <button class="btn" id="btn-add-line"><i class="bi bi-plus-lg"></i> Add line</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="num" style="width: 70px;">Line #</th>
+              <th>Item</th>
+              <th>Description</th>
+              <th class="num" style="width: 110px;">Ordered</th>
+              <th class="num" style="width: 110px;">Received</th>
+              <th class="num" style="width: 110px;">Remaining</th>
+              <th style="width: 80px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="po-lines-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span id="footer-detail">—</span>
+        <span>Lines with receipts cannot be deleted (§7.13)</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ NEW PO MODAL ============ -->
+<div class="modal fade" id="newPoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-square" style="color: var(--accent); margin-right: 6px;"></i> New Purchase Order</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top: 0; color: var(--text-dim);">
+          Header data only — add lines after the PO is created. Setting <b>Linked pull</b>
+          makes this PO eligible only for that pull's FIFO walk (§3.5).
+        </p>
+        <div class="detail-grid" style="padding: 0;">
+          <div class="field-group">
+            <label>PO Number *</label>
+            <input type="text" class="form-control" id="n-po-number" placeholder="PO-2406-001">
+          </div>
+          <div class="field-group">
+            <label>Warehouse *</label>
+            <select class="form-select" id="n-warehouse"></select>
+          </div>
+          <div class="field-group">
+            <label>Vendor code</label>
+            <input type="text" class="form-control" id="n-vendor-code" placeholder="VND-001">
+          </div>
+          <div class="field-group">
+            <label>Vendor name</label>
+            <input type="text" class="form-control" id="n-vendor-name" placeholder="Acme Components Ltd">
+          </div>
+          <div class="field-group">
+            <label>Order date *</label>
+            <input type="date" class="form-control" id="n-order-date">
+          </div>
+          <div class="field-group">
+            <label>Expected date</label>
+            <input type="date" class="form-control" id="n-expected-date">
+          </div>
+          <div class="field-group" style="grid-column: 1 / -1;">
+            <label>Link to pull (§3.5 optional)</label>
+            <select class="form-select" id="n-pull-id">
+              <option value="">(none — cross-pull pool)</option>
+            </select>
+            <div class="immutable-hint">
+              <i class="bi bi-info-circle"></i> Only open pulls in the selected warehouse are listed. Cannot be changed after save.
+            </div>
+          </div>
+          <div class="field-group" style="grid-column: 1 / -1;">
+            <label>Notes</label>
+            <textarea class="form-control" id="n-notes" rows="2" placeholder="Optional"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="n-save">Create PO</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ADD LINE MODAL ============ -->
+<div class="modal fade" id="addLineModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-square" style="color: var(--accent); margin-right: 6px;"></i> Add line</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="detail-grid" style="padding: 0;">
+          <div class="field-group">
+            <label>Line # *</label>
+            <input type="number" class="form-control" id="l-line-number" min="1">
+          </div>
+          <div class="field-group">
+            <label>Item code *</label>
+            <input type="text" class="form-control" id="l-item-code" placeholder="PCBA-AX450-R2">
+          </div>
+          <div class="field-group" style="grid-column: 1 / -1;">
+            <label>Description *</label>
+            <input type="text" class="form-control" id="l-description">
+          </div>
+          <div class="field-group">
+            <label>Ordered Qty *</label>
+            <input type="number" class="form-control" id="l-ordered-qty" min="1">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="l-save">Add line</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CLOSE PO MODAL ============ -->
+<div class="modal fade" id="closePoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-lock" style="color: var(--error); margin-right: 6px;"></i> Close PO manually</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top: 0; color: var(--text-dim);">
+          Closing a PO removes it from the FIFO pool. Remaining unfulfilled qty is forfeited
+          (§7.13). The reason is captured in the audit trail.
+        </p>
+        <div class="info-card">
+          <div class="summary-grid">
+            <div>
+              <div class="lbl">PO Number</div>
+              <div class="val" id="cp-po-number">—</div>
+            </div>
+            <div>
+              <div class="lbl">Vendor</div>
+              <div class="val" id="cp-vendor">—</div>
+            </div>
+            <div>
+              <div class="lbl">Outstanding qty</div>
+              <div class="val" id="cp-outstanding" style="color: var(--warn);">—</div>
+            </div>
+            <div>
+              <div class="lbl">Linked pull</div>
+              <div class="val" id="cp-pull">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" style="margin-bottom: 6px;">Reason *</label>
+          <textarea class="form-control" id="cp-reason" rows="3" placeholder="e.g. Vendor cancelled remaining shipment"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="cp-confirm">Close PO</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-host">
+  <div class="custom-toast" id="toast">
+    <div class="icon-wrap"><span id="toast-icon">✓</span></div>
+    <div class="msg">
+      <span id="toast-msg">Saved</span>
+      <small id="toast-sub"></small>
+    </div>
+  </div>
+</div>
+
+
