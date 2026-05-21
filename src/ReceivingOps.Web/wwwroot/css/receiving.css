@@ -1101,6 +1101,7 @@
     text-transform: uppercase;
   }
   .m-tx-row .m-tx-po b { color: var(--accent, var(--ok)); }
+  .m-tx-row .m-tx-po .po-lock { margin-right: 3px; }
   .tx-item-info .tx-po {
     margin-top: 4px;
     font-family: var(--font-mono);
@@ -1110,6 +1111,11 @@
     color: var(--accent, var(--ok));
   }
   .tx-item-info .tx-po b { color: var(--accent, var(--ok)); font-weight: 700; }
+  .tx-item-info .tx-po .po-lock { margin-right: 3px; }
+  /* §5b — mobile collapses the PO token in the drawer; modal-embedded list keeps it (modal is tablet+ only) */
+  @media (max-width: 640px) {
+    .tx-item-info .tx-po { display: none; }
+  }
   .m-tx-row .m-tx-qty {
     font-family: var(--font-mono);
     font-size: 14px;

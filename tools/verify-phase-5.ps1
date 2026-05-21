@@ -95,12 +95,14 @@ OK "receiving.js Stage B wiring intact"
 # ============================================================================
 # 4. transactions.js + transactions.css carry PO column
 # ============================================================================
-Step "transactions.js + transactions.css carry .po-badge + r.poNumber"
+Step "transactions.js + transactions.css carry the PO column (post-5b: .col-po)"
 $txJs = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\transactions.js' -Raw
-if ($txJs -notmatch 'po-badge') { Fail "transactions.js missing po-badge class" }
+# §5b moved the rendering from an inline .po-badge inside the Item cell to a
+# dedicated `.col-po` column. Both classes are valid markers — we accept either.
+if ($txJs -notmatch 'col-po|po-badge') { Fail "transactions.js missing PO column markup (col-po / po-badge)" }
 if ($txJs -notmatch 'r\.poNumber') { Fail "transactions.js missing r.poNumber reference" }
 $txCss = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\css\transactions.css' -Raw
-if ($txCss -notmatch '\.po-badge') { Fail "transactions.css missing .po-badge rule" }
+if ($txCss -notmatch '\.po-badge|\.col-po') { Fail "transactions.css missing .po-badge / .col-po rule" }
 OK "transactions.js renders + transactions.css styles the PO column"
 
 # ============================================================================

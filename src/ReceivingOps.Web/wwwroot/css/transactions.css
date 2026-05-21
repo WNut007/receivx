@@ -382,7 +382,8 @@
     white-space: nowrap;
     max-width: 240px;
   }
-  /* v2 §4.8 — PO context inside the Item cell */
+  /* v2 §4.8 — PO context inside the Item cell (legacy: still rendered as a
+     fallback hint; the authoritative column is .po-cell). */
   .item-cell .po-badge {
     margin-top: 2px;
     font-family: 'Roboto Mono', monospace;
@@ -392,6 +393,25 @@
     color: var(--accent);
   }
   .item-cell .po-badge b { font-weight: 700; }
+  /* v2 §5b — dedicated PO·Line column */
+  .data-table th.col-po,
+  .data-table td.col-po {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .data-table td.col-po b { color: var(--text); font-weight: 600; }
+  .data-table td.col-po .po-vendor { display: block; font-size: 10px; color: var(--text-muted); letter-spacing: 0; text-transform: none; }
+  .data-table td.col-po .po-lock { color: var(--accent); margin-right: 3px; }
+  .data-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  .data-table th.sortable:hover { color: var(--accent); }
+  .data-table th.sortable .sort-indicator::after { content: ''; opacity: 0.4; margin-left: 4px; font-size: 10px; }
+  .data-table th.sortable.sort-asc  .sort-indicator::after { content: '▲'; opacity: 1; }
+  .data-table th.sortable.sort-desc .sort-indicator::after { content: '▼'; opacity: 1; }
   .pull-link {
     font-family: 'Roboto Mono', monospace;
     font-size: 13px;
@@ -567,5 +587,10 @@
   @media (max-width: 1100px) {
     .filter-bar { grid-template-columns: 1fr 1fr; }
     .stats-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+  /* §5b — PO column collapses on narrow viewports */
+  @media (max-width: 640px) {
+    .data-table th.col-po,
+    .data-table td.col-po { display: none; }
   }
 

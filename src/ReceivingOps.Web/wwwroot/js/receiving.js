@@ -34,6 +34,7 @@
   let currentWarehouse = null;   // warehouse code from the loaded pull
   let currentWhName = null;
   let serverPullStatus = null;   // pending|in_progress|fully_received|closed
+  let currentPullLocked = false; // §3.5 — Pulls.LockPoByPull mirrored from PullDetail
   let items = [];
 
   function loadPullWarehouse(pullId, whCode) {
@@ -453,8 +454,12 @@
              Cancel
            </button>`
         : '';
+      // §5b — compact single-token {PoNumber}·L## with vendor tooltip; 🔒 prefix when pull-locked
+      const poToken = r.poNumber
+        ? `<b>${escAttr(r.poNumber)}</b>${r.poLineNumber ? '·L' + escAttr(String(r.poLineNumber).padStart(2,'0')) : ''}`
+        : '';
       const poBadge = r.poNumber
-        ? `<div class="m-tx-po"><b>${escAttr(r.poNumber)}</b>${r.poLineNumber ? ' · LINE ' + escAttr(String(r.poLineNumber)) : ''}</div>`
+        ? `<div class="m-tx-po" title="${escAttr(r.vendorName || '')}">${currentPullLocked ? '<span class="po-lock">🔒</span>' : ''}${poToken}</div>`
         : '';
       return `
         <div class="m-tx-row ${cls}">
@@ -1093,11 +1098,14 @@
 
   // Map server PullDetail → mockup-compatible pullData[pull][wh] = items[].
   function ingestPullDetail(pd) {
-    currentPull       = pd.pullNumber;
-    currentPullId     = pd.id;
-    currentWarehouse  = pd.warehouseCode;
-    currentWhName     = pd.warehouseName;
-    serverPullStatus  = pd.status;
+    currentPull        = pd.pullNumber;
+    currentPullId      = pd.id;
+    currentWarehouse   = pd.warehouseCode;
+    currentWhName      = pd.warehouseName;
+    serverPullStatus   = pd.status;
+    // §3.5 — drives the lock-icon prefix on PO tokens in drawer + modal-embedded
+    // tx rows. Defaults false so older PullDetail responses stay backwards-compat.
+    currentPullLocked  = !!pd.lockPoByPull;
 
     const mapped = (pd.items || [])
       .sort((a,b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -1407,7 +1415,7 @@ function renderTxDrawer() {
           <div class="tx-item-info">
             <div class="tx-item-code">${txEsc(r.itemCode)}</div>
             <div class="tx-item-meta">${txEsc(r.lotBatch || '—')} · ${txEsc(r.palletId || '—')} · ${txEsc(r.binLocation || '—')}</div>
-            ${r.poNumber ? `<div class="tx-po"><b>${txEsc(r.poNumber)}</b>${r.poLineNumber ? ' · LINE ' + txEsc(String(r.poLineNumber)) : ''}${r.vendorName ? ' · ' + txEsc(r.vendorName) : ''}</div>` : ''}
+            ${r.poNumber ? `<div class="tx-po" title="${txEsc(r.vendorName || '')}">${(typeof currentPullLocked !== 'undefined' && currentPullLocked) ? '<span class="po-lock">🔒</span>' : ''}<b>${txEsc(r.poNumber)}</b>${r.poLineNumber ? '·L' + txEsc(String(r.poLineNumber).padStart(2,'0')) : ''}</div>` : ''}
             ${reverseLink}
           </div>
           <div class="tx-qty ${isReversal ? 'neg' : ''}">${qtyDisplay}<small>pcs</small></div>
