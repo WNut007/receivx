@@ -84,6 +84,38 @@ foreach ($needle in @(
 OK "Razor view carries list/detail + 3 modals + load-bearing IDs"
 
 # ----------------------------------------------------------------------------
+# 1b. app-nav.js carries the /Pos entry + role-based visibility filter
+# ----------------------------------------------------------------------------
+Step "app-nav.js declares a /Pos menu entry between Master Data and Settings"
+$nav = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\app-nav.js' -Raw
+foreach ($needle in @(
+    "id: 'pos'",
+    "label: 'Purchase Orders'",
+    "href: '/Pos'",
+    "roles: ['admin', 'supervisor']"
+)) {
+    if ($nav -notmatch [regex]::Escape($needle)) { Fail "app-nav.js missing '$needle'" }
+}
+# Ensure pos sits AFTER masters and BEFORE config in the array order (renders that way too)
+$posIdx     = $nav.IndexOf("id: 'pos'")
+$mastersIdx = $nav.IndexOf("id: 'masters'")
+$configIdx  = $nav.IndexOf("id: 'config'")
+if ($posIdx -lt 0 -or $mastersIdx -lt 0 -or $configIdx -lt 0) { Fail "Could not locate masters/pos/config positions" }
+if (-not ($mastersIdx -lt $posIdx -and $posIdx -lt $configIdx)) {
+    Fail "Menu order expected masters → pos → config; got positions $mastersIdx / $posIdx / $configIdx"
+}
+OK "Menu order: masters → pos → config"
+
+Step "app-nav.js filters MENU by user role + matches /Pos in activePage detection"
+foreach ($needle in @(
+    'MENU.filter(m => !m.roles || m.roles.includes',
+    "p.startsWith('/pos')"
+)) {
+    if ($nav -notmatch [regex]::Escape($needle)) { Fail "app-nav.js missing '$needle'" }
+}
+OK "Role filter present + activePage matches /Pos and /Pos/{id}"
+
+# ----------------------------------------------------------------------------
 # 2. Live HTTP
 # ----------------------------------------------------------------------------
 Step "GET /Pos = 200 to admin (sadmin)"

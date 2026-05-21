@@ -44,20 +44,27 @@
   }
 
   // ---- Menu definition ----
+  // `roles` field gates visibility client-side (admin / supervisor / operator
+  // = whRole at the active warehouse). Omit `roles` for entries that should
+  // appear for everyone. Server is still source of truth via [Authorize].
   const MENU = [
-    { id: 'pull',         label: 'Dashboard',    icon: 'bi-grid-1x2',          href: 'pull-controller-v2.html' },
-    { id: 'receiving',    label: 'Receiving',    icon: 'bi-box-arrow-in-down', href: 'receiving-mockup-v2-fullreceived.html' },
-    { id: 'transactions', label: 'Transactions', icon: 'bi-list-columns-reverse', href: 'transactions.html' },
-    { id: 'reports',      label: 'Reports',      icon: 'bi-bar-chart',         href: '#',  disabled: true },
-    { id: 'masters',      label: 'Master Data',  icon: 'bi-database-gear',     href: 'masters.html' },
-    { id: 'config',       label: 'Settings',     icon: 'bi-sliders',           href: 'config.html' },
+    { id: 'pull',         label: 'Dashboard',       icon: 'bi-grid-1x2',          href: 'pull-controller-v2.html' },
+    { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down', href: 'receiving-mockup-v2-fullreceived.html' },
+    { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: 'transactions.html' },
+    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',         href: '#',  disabled: true },
+    { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',     href: 'masters.html' },
+    // §5c — Purchase Orders admin (admin + supervisor; hidden from operators)
+    { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',           href: 'pos.html', roles: ['admin', 'supervisor'] },
+    { id: 'config',       label: 'Settings',        icon: 'bi-sliders',           href: 'config.html' },
   ];
 
   // ---- Detect active page ----
+  // Active highlight stays on for nested routes like /Pos/{id}.
   const activePage = document.body.getAttribute('data-app-page') || (() => {
     const p = location.pathname.toLowerCase();
     if (p.includes('pull-controller')) return 'pull';
     if (p.includes('receiving')) return 'receiving';
+    if (p.startsWith('/pos') || p.includes('pos.html')) return 'pos';
     if (p.includes('config')) return 'config';
     return '';
   })();
@@ -802,9 +809,13 @@
       </a>
     `;
 
+    // Role-based visibility — see MENU declaration above.
+    const userRole = (u.roleKey || '').toLowerCase();
+    const visibleMenu = MENU.filter(m => !m.roles || m.roles.includes(userRole));
+
     const menuHTML = `
       <div class="app-nav-menu">
-        ${MENU.map(m => `
+        ${visibleMenu.map(m => `
           <a class="app-nav-item ${m.id === activePage ? 'active' : ''} ${m.disabled ? 'disabled' : ''}"
              href="${m.href}" data-id="${m.id}" title="${m.label}">
             <i class="bi ${m.icon}"></i>

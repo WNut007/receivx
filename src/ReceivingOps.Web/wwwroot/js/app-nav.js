@@ -85,23 +85,32 @@
   }
 
   // ---- Menu definition (MVC routes — no more mockup .html files) ----
+  // `roles` field gates visibility client-side. Omit `roles` for entries that
+  // should appear for every authenticated user. The server is still the source
+  // of truth (controllers carry their own [Authorize] policies); this is just
+  // UX — operators shouldn't see entries they cannot use.
   const MENU = [
-    { id: 'pull',         label: 'Dashboard',    icon: 'bi-grid-1x2',             href: '/Dashboard' },
-    { id: 'receiving',    label: 'Receiving',    icon: 'bi-box-arrow-in-down',    href: '/Receiving' },
-    { id: 'transactions', label: 'Transactions', icon: 'bi-list-columns-reverse', href: '/Transactions' },
-    { id: 'reports',      label: 'Reports',      icon: 'bi-bar-chart',            href: '#',  disabled: true },
-    { id: 'masters',      label: 'Master Data',  icon: 'bi-database-gear',        href: '/Masters' },
-    { id: 'config',       label: 'Settings',     icon: 'bi-sliders',              href: '/Config' },
+    { id: 'pull',         label: 'Dashboard',       icon: 'bi-grid-1x2',             href: '/Dashboard' },
+    { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down',    href: '/Receiving' },
+    { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: '/Transactions' },
+    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '#',  disabled: true },
+    { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',        href: '/Masters' },
+    // §5c — Purchase Orders admin. CanManagePulls policy on the server → admin + supervisor only.
+    { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',              href: '/Pos',     roles: ['admin', 'supervisor'] },
+    { id: 'config',       label: 'Settings',        icon: 'bi-sliders',              href: '/Config' },
   ];
 
   // ---- Detect active page ----
+  // Active highlight stays on for nested routes like /Pos/{id} because we use
+  // String.startsWith / .includes — pathname matching, not exact-equals.
   const activePage = document.body.getAttribute('data-app-page') || (() => {
     const p = location.pathname.toLowerCase();
     if (p.includes('/dashboard') || p.includes('pull-controller')) return 'pull';
     if (p.includes('/receiving')) return 'receiving';
     if (p.includes('/transactions')) return 'transactions';
     if (p.includes('/masters')) return 'masters';
-    if (p.includes('/config')) return 'config';
+    if (p.startsWith('/pos'))    return 'pos';
+    if (p.includes('/config'))   return 'config';
     return '';
   })();
 
@@ -845,9 +854,16 @@
       </a>
     `;
 
+    // Role-based visibility — `roles` field on a MENU entry restricts it to
+    // sessions whose whRole is in the list. Entries without `roles` are
+    // visible to everyone. The server still enforces with [Authorize] policies;
+    // this just hides what the user can't reach.
+    const userRole = (u.roleKey || '').toLowerCase();
+    const visibleMenu = MENU.filter(m => !m.roles || m.roles.includes(userRole));
+
     const menuHTML = `
       <div class="app-nav-menu">
-        ${MENU.map(m => `
+        ${visibleMenu.map(m => `
           <a class="app-nav-item ${m.id === activePage ? 'active' : ''} ${m.disabled ? 'disabled' : ''}"
              href="${m.href}" data-id="${m.id}" title="${m.label}">
             <i class="bi ${m.icon}"></i>
