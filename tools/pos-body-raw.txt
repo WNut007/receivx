@@ -221,11 +221,23 @@
           </div>
           <div class="field-group" style="grid-column: 1 / -1;">
             <label>Link to pull (§3.5 optional)</label>
-            <select class="form-select" id="n-pull-id">
-              <option value="">(none — cross-pull pool)</option>
-            </select>
+            <div class="autocomplete-wrapper" id="n-pull-ac">
+              <input type="text" class="form-control autocomplete-input" id="n-pull-search"
+                     placeholder="Type 2+ chars to search pulls — or leave empty for cross-pull pool" autocomplete="off">
+              <div class="autocomplete-results" id="n-pull-results" hidden></div>
+              <div class="autocomplete-selected" id="n-pull-selected" hidden>
+                <span class="selected-label"></span>
+                <button type="button" class="clear-btn" aria-label="Clear selection" title="Clear selection">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
+              <input type="hidden" id="n-pull-id">
+              <div class="lock-mode-hint" id="n-pull-lock-hint" hidden>
+                <i class="bi bi-lock-fill"></i> This pull is Mode B (locked) — only POs linked to it can fulfill its windows.
+              </div>
+            </div>
             <div class="immutable-hint">
-              <i class="bi bi-info-circle"></i> Only open pulls in the selected warehouse are listed. Cannot be changed after save.
+              <i class="bi bi-info-circle"></i> Only open pulls in the selected warehouse appear. Cannot be changed after save.
             </div>
           </div>
           <div class="field-group" style="grid-column: 1 / -1;">

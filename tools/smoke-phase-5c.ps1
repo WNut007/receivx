@@ -61,7 +61,7 @@ foreach ($needle in @(
     'deleteLine',
     'openCloseModal',
     'confirmClose',
-    'refreshPullPicker',
+    'attachPullAutocomplete',   # was refreshPullPicker — pull picker became a typeahead; see smoke-pull-search
     '§3.5',                # comment marker (Thai-aware)
     'pullSel.disabled = true',
     "currentRole !== 'admin'"
@@ -96,15 +96,21 @@ foreach ($needle in @(
 )) {
     if ($nav -notmatch [regex]::Escape($needle)) { Fail "app-nav.js missing '$needle'" }
 }
-# Ensure pos sits AFTER masters and BEFORE config in the array order (renders that way too)
-$posIdx     = $nav.IndexOf("id: 'pos'")
-$mastersIdx = $nav.IndexOf("id: 'masters'")
-$configIdx  = $nav.IndexOf("id: 'config'")
-if ($posIdx -lt 0 -or $mastersIdx -lt 0 -or $configIdx -lt 0) { Fail "Could not locate masters/pos/config positions" }
-if (-not ($mastersIdx -lt $posIdx -and $posIdx -lt $configIdx)) {
-    Fail "Menu order expected masters → pos → config; got positions $mastersIdx / $posIdx / $configIdx"
+# Ensure pos sits BETWEEN Dashboard (pull) and Receiving — PO is the upstream
+# artifact, so the menu reflects the workflow order (per the 5f-1 reorder in
+# commit 89ac72c). pos must also still precede masters + config.
+$pullIdx      = $nav.IndexOf("id: 'pull'")
+$posIdx       = $nav.IndexOf("id: 'pos'")
+$receivingIdx = $nav.IndexOf("id: 'receiving'")
+$mastersIdx   = $nav.IndexOf("id: 'masters'")
+$configIdx    = $nav.IndexOf("id: 'config'")
+if ($pullIdx -lt 0 -or $posIdx -lt 0 -or $receivingIdx -lt 0 -or $mastersIdx -lt 0 -or $configIdx -lt 0) {
+    Fail "Could not locate pull/pos/receiving/masters/config positions"
 }
-OK "Menu order: masters → pos → config"
+if (-not ($pullIdx -lt $posIdx -and $posIdx -lt $receivingIdx -and $receivingIdx -lt $mastersIdx -and $mastersIdx -lt $configIdx)) {
+    Fail "Menu order expected pull → pos → receiving → … → masters → config; got positions $pullIdx / $posIdx / $receivingIdx / $mastersIdx / $configIdx"
+}
+OK "Menu order: pull → pos → receiving → masters → config"
 
 Step "app-nav.js filters MENU by user role + matches /Pos in activePage detection"
 foreach ($needle in @(

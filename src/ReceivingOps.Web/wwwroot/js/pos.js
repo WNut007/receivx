@@ -24,7 +24,7 @@ let warehouses = [];        // /api/warehouses?status=active
 let currentRows = [];       // current /api/pos page
 let currentDetail = null;   // PoDetail being edited
 let currentRole = null;     // 'admin' | 'supervisor' | etc — from /api/auth/me
-let pullsForWarehouse = []; // /api/pulls cache, keyed implicitly by the warehouse selected last
+let newPoPullAc = null;     // autocomplete controller for the New-PO linked-pull picker
 
 /* ---------- Helpers ---------- */
 function escHtml(s) {
@@ -347,26 +347,156 @@ async function deleteLine(lineId) {
 }
 
 /* ---------- New-PO modal ---------- */
-async function refreshPullPicker(targetSelectId, warehouseId) {
-  const sel = document.getElementById(targetSelectId);
-  if (!sel) return;
-  sel.innerHTML = `<option value="">(none — cross-pull pool)</option>`;
-  if (!warehouseId) return;
-  try {
-    // Open pulls = pending OR in_progress; the server's filter is single-string,
-    // so call twice and merge. Tiny dataset; cheap.
-    const [pending, inProg] = await Promise.all([
-      jsonFetch(`/api/pulls?warehouseId=${encodeURIComponent(warehouseId)}&status=pending`),
-      jsonFetch(`/api/pulls?warehouseId=${encodeURIComponent(warehouseId)}&status=in_progress`),
-    ]);
-    const merged = [].concat(pending || [], inProg || []);
-    pullsForWarehouse = merged;
-    sel.innerHTML += merged.map(p =>
-      `<option value="${escHtml(p.id)}">${escHtml(p.pullNumber)}${p.lockPoByPull ? ' · 🔒 locked' : ''}</option>`
-    ).join('');
-  } catch (e) {
-    console.error('refreshPullPicker', e);
+/**
+ * Searchable autocomplete factory for the §3.5 linked-pull picker.
+ * Replaces a preloaded combobox so the picker stays snappy when a
+ * warehouse accumulates hundreds of open pulls. Returns a controller
+ * with .reset() / .getValue() that the modal lifecycle calls into.
+ *
+ * Wrapper contract — the HTML must contain:
+ *   .autocomplete-input       — text box the user types into
+ *   .autocomplete-results     — dropdown container (hidden by default)
+ *   .autocomplete-selected    — chip shown when a pull is picked
+ *   input[type=hidden]        — carries the selected pull GUID for submit
+ *   .lock-mode-hint           — optional Mode-B hint, toggled when locked
+ *
+ * @param {string} wrapperId
+ * @param {() => string} getWarehouseId  Read at search-time (warehouse may change).
+ */
+function attachPullAutocomplete(wrapperId, getWarehouseId) {
+  const wrap = document.getElementById(wrapperId);
+  const input = wrap.querySelector('.autocomplete-input');
+  const results = wrap.querySelector('.autocomplete-results');
+  const selected = wrap.querySelector('.autocomplete-selected');
+  const selectedLabel = selected.querySelector('.selected-label');
+  const clearBtn = selected.querySelector('.clear-btn');
+  const hidden = wrap.querySelector('input[type="hidden"]');
+  const lockHint = wrap.querySelector('.lock-mode-hint');
+
+  let items = [];
+  let highlighted = -1;
+  let debounce = null;
+  let lastQuery = '';
+
+  function reset() {
+    hidden.value = '';
+    selectedLabel.textContent = '';
+    selected.hidden = true;
+    input.hidden = false;
+    input.value = '';
+    results.hidden = true;
+    if (lockHint) lockHint.hidden = true;
+    items = [];
+    highlighted = -1;
+    lastQuery = '';
   }
+
+  function selectItem(it) {
+    hidden.value = it.id;
+    const lockIcon = it.lockPoByPull ? '<i class="bi bi-lock-fill" aria-hidden="true"></i> ' : '';
+    selectedLabel.innerHTML = lockIcon + escHtml(it.pullNumber);
+    selected.hidden = false;
+    input.hidden = true;
+    results.hidden = true;
+    if (lockHint) lockHint.hidden = !it.lockPoByPull;
+  }
+
+  async function search(q) {
+    const whId = getWarehouseId();
+    if (!whId || q.length < 2) {
+      results.hidden = true;
+      items = [];
+      return;
+    }
+    // Drop stale results if a faster keystroke superseded this query
+    lastQuery = q;
+    try {
+      const queryFor = q;
+      const rows = await jsonFetch(
+        `/api/pulls/search?warehouseId=${encodeURIComponent(whId)}` +
+        `&q=${encodeURIComponent(q)}&take=10`);
+      if (queryFor !== lastQuery) return;
+      items = rows || [];
+      highlighted = items.length > 0 ? 0 : -1;
+      render();
+    } catch (e) {
+      items = [];
+      render();
+    }
+  }
+
+  function render() {
+    if (items.length === 0) {
+      results.innerHTML = '<div class="autocomplete-empty">No matching open pulls</div>';
+    } else {
+      results.innerHTML = items.map((it, i) => {
+        const lockIcon = it.lockPoByPull ? '<i class="bi bi-lock-fill" aria-hidden="true"></i>' : '';
+        const itemPlural = it.itemCount === 1 ? 'item' : 'items';
+        return `
+          <div class="autocomplete-item${i === highlighted ? ' highlighted' : ''}" data-idx="${i}">
+            <div class="pull-number">${lockIcon}${escHtml(it.pullNumber)}</div>
+            <div class="meta">
+              <span>${fmtDate(it.pullDate)}</span>
+              <span class="pull-status-pill ${escHtml(it.status)}">${escHtml(it.status)}</span>
+              <span>${it.itemCount | 0} ${itemPlural}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    results.hidden = false;
+  }
+
+  input.addEventListener('input', (e) => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => search(e.target.value.trim()), 250);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      results.hidden = true;
+      return;
+    }
+    if (results.hidden || items.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlighted = Math.min(highlighted + 1, items.length - 1);
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      highlighted = Math.max(highlighted - 1, 0);
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (highlighted >= 0) selectItem(items[highlighted]);
+    }
+  });
+
+  results.addEventListener('mousedown', (e) => {
+    // mousedown so the click fires before the input's blur hides the dropdown
+    const itemEl = e.target.closest('.autocomplete-item');
+    if (!itemEl) return;
+    e.preventDefault();
+    const idx = parseInt(itemEl.dataset.idx, 10);
+    if (!isNaN(idx) && items[idx]) selectItem(items[idx]);
+  });
+
+  results.addEventListener('mousemove', (e) => {
+    const itemEl = e.target.closest('.autocomplete-item');
+    if (!itemEl) return;
+    const idx = parseInt(itemEl.dataset.idx, 10);
+    if (!isNaN(idx) && idx !== highlighted) {
+      highlighted = idx;
+      render();
+    }
+  });
+
+  clearBtn.addEventListener('click', reset);
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) results.hidden = true;
+  });
+
+  return { reset, getValue: () => hidden.value };
 }
 
 function openNewPoModal() {
@@ -378,7 +508,7 @@ function openNewPoModal() {
   document.getElementById('n-notes').value = '';
   const whSel = document.getElementById('n-warehouse');
   if (whSel.options.length > 0) whSel.selectedIndex = 0;
-  refreshPullPicker('n-pull-id', whSel.value);
+  if (newPoPullAc) newPoPullAc.reset();
   new bootstrap.Modal(document.getElementById('newPoModal')).show();
 }
 
@@ -472,7 +602,11 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
 });
 
 document.getElementById('btn-new-po').addEventListener('click', openNewPoModal);
-document.getElementById('n-warehouse').addEventListener('change', (e) => refreshPullPicker('n-pull-id', e.target.value));
+// The autocomplete reads warehouseId lazily from the select on each search, so
+// we only need to clear the current selection when the warehouse changes —
+// the picker can't show pulls scoped to a different warehouse than the PO.
+newPoPullAc = attachPullAutocomplete('n-pull-ac', () => document.getElementById('n-warehouse').value);
+document.getElementById('n-warehouse').addEventListener('change', () => newPoPullAc.reset());
 document.getElementById('n-save').addEventListener('click', saveNewPo);
 
 document.getElementById('btn-back-to-list').addEventListener('click', backToList);

@@ -97,6 +97,49 @@ public class PullRepository : IPullRepository
         return rows.AsList();
     }
 
+    // §3.5 typeahead for the linked-pull picker on /Pos. Returns at most @Take
+    // open pulls (pending OR in_progress) in @WarehouseId whose PullNumber or
+    // Notes contains @Q. Ranking: prefix matches on PullNumber first, then
+    // newest by PullDate, then alphabetical. Closed/fully_received pulls are
+    // excluded so the picker can't surface a pull POs are forbidden to link to.
+    public async Task<IReadOnlyList<PullSearchResult>> SearchAsync(
+        Guid warehouseId, string q, int take, CancellationToken ct = default)
+    {
+        // Strip wildcards the user might have pasted — LIKE-escape would be more
+        // surgical but this is a typeahead, the simpler answer is fine. Brackets
+        // become class operators in T-SQL LIKE so they go too.
+        var clean = (q ?? string.Empty)
+            .Replace("%", string.Empty)
+            .Replace("_", string.Empty)
+            .Replace("[", string.Empty)
+            .Trim();
+        if (clean.Length == 0) return Array.Empty<PullSearchResult>();
+
+        const string sql = @"
+            SELECT TOP (@Take)
+                   p.Id,
+                   p.PullNumber,
+                   p.PullDate,
+                   p.Status,
+                   p.LockPoByPull,
+                   (SELECT COUNT(*) FROM dbo.PullItems pi WHERE pi.PullId = p.Id) AS ItemCount
+            FROM   dbo.Pulls p
+            WHERE  p.WarehouseId = @WarehouseId
+              AND  p.Status IN ('pending', 'in_progress')
+              AND  (p.PullNumber LIKE '%' + @Q + '%' OR p.Notes LIKE '%' + @Q + '%')
+            ORDER BY
+              CASE WHEN p.PullNumber LIKE @Q + '%' THEN 0 ELSE 1 END,
+              p.PullDate DESC,
+              p.PullNumber;";
+
+        using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<PullSearchResult>(new CommandDefinition(
+            sql,
+            new { WarehouseId = warehouseId, Q = clean, Take = take },
+            cancellationToken: ct));
+        return rows.AsList();
+    }
+
     public async Task<PullDetail?> GetByPullNumberAsync(string pullNumber, CancellationToken ct = default)
     {
         // Pulls.PullNumber is UNIQUE so this resolves at most one row.

@@ -245,6 +245,91 @@
   }
   .immutable-hint .lock-icon { color: var(--accent); margin-right: 4px; }
 
+  /* ============ Searchable autocomplete (§3.5 linked-pull picker) ============
+     Used in the New PO modal in place of a preloaded combobox so the picker
+     scales past the ~500 open-pulls/warehouse mark without paying for a
+     payload on modal open. The hidden input carries the GUID submit value. */
+  .autocomplete-wrapper { position: relative; }
+  .autocomplete-results {
+    position: absolute; top: 100%; left: 0; right: 0;
+    margin-top: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 20;
+    box-shadow: var(--shadow-md);
+  }
+  .autocomplete-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex; flex-direction: column; gap: 3px;
+    border-bottom: 1px solid var(--border);
+  }
+  .autocomplete-item:last-child { border-bottom: none; }
+  .autocomplete-item:hover,
+  .autocomplete-item.highlighted { background: var(--surface-2); }
+  .autocomplete-item .pull-number {
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500; font-size: 13px; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .autocomplete-item .pull-number .bi-lock-fill { color: var(--accent); font-size: 11px; }
+  .autocomplete-item .meta {
+    font-size: 11px; color: var(--text-muted);
+    display: flex; gap: 10px; align-items: center;
+  }
+  .autocomplete-item .meta .pull-status-pill {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border: 1px solid transparent;
+  }
+  .autocomplete-item .meta .pull-status-pill.pending     { color: var(--info); background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 30%, transparent); }
+  .autocomplete-item .meta .pull-status-pill.in_progress { color: var(--accent); background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .autocomplete-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .autocomplete-selected {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    background: var(--accent-bg);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 8px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .autocomplete-selected .selected-label { flex: 1; }
+  .autocomplete-selected .clear-btn {
+    cursor: pointer;
+    background: none; border: none;
+    color: var(--text-muted);
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .autocomplete-selected .clear-btn:hover { color: var(--text); background: var(--surface); }
+  .autocomplete-selected .clear-btn .bi { font-size: 11px; }
+  .lock-mode-hint {
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: var(--warn-bg);
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--warn);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .lock-mode-hint .bi { font-size: 12px; }
+
   /* Lines table inside detail */
   .lines-tools { padding: 12px 20px; display: flex; gap: 10px; align-items: center; justify-content: space-between; background: var(--surface-2); border-top: 1px solid var(--border); }
 
@@ -515,11 +600,23 @@
           </div>
           <div class="field-group" style="grid-column: 1 / -1;">
             <label>Link to pull (§3.5 optional)</label>
-            <select class="form-select" id="n-pull-id">
-              <option value="">(none — cross-pull pool)</option>
-            </select>
+            <div class="autocomplete-wrapper" id="n-pull-ac">
+              <input type="text" class="form-control autocomplete-input" id="n-pull-search"
+                     placeholder="Type 2+ chars to search pulls — or leave empty for cross-pull pool" autocomplete="off">
+              <div class="autocomplete-results" id="n-pull-results" hidden></div>
+              <div class="autocomplete-selected" id="n-pull-selected" hidden>
+                <span class="selected-label"></span>
+                <button type="button" class="clear-btn" aria-label="Clear selection" title="Clear selection">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
+              <input type="hidden" id="n-pull-id">
+              <div class="lock-mode-hint" id="n-pull-lock-hint" hidden>
+                <i class="bi bi-lock-fill"></i> This pull is Mode B (locked) — only POs linked to it can fulfill its windows.
+              </div>
+            </div>
             <div class="immutable-hint">
-              <i class="bi bi-info-circle"></i> Only open pulls in the selected warehouse are listed. Cannot be changed after save.
+              <i class="bi bi-info-circle"></i> Only open pulls in the selected warehouse appear. Cannot be changed after save.
             </div>
           </div>
           <div class="field-group" style="grid-column: 1 / -1;">

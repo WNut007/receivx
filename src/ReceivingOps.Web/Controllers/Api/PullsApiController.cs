@@ -45,6 +45,37 @@ public class PullsApiController : ControllerBase
         return await _pulls.QueryAsync(filter, ct);
     }
 
+    // §3.5 GET /api/pulls/search?warehouseId=&q=&take=
+    // Typeahead for the New-PO linked-pull picker on /Pos. CanManagePulls only
+    // (matches POST /api/pos which is the only write that consumes this).
+    // Validates warehouseId required + q.Length >= 2 (no single-char full-table
+    // scans). Take is clamped 1..25, default 10. Non-admins are forced to their
+    // session warehouse — passing a different one yields rows from their own.
+    [HttpGet("search")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<IReadOnlyList<PullSearchResult>>> Search(
+        [FromQuery] Guid? warehouseId,
+        [FromQuery] string? q,
+        [FromQuery] int? take,
+        CancellationToken ct)
+    {
+        var isAdmin = User.IsInRole("admin");
+        var effectiveWh = isAdmin
+            ? warehouseId
+            : ParseGuid(User.FindFirstValue("warehouseId"));
+
+        if (effectiveWh is null || effectiveWh == Guid.Empty)
+            return Problem(title: "warehouseId is required.", statusCode: 400);
+
+        var trimmed = (q ?? string.Empty).Trim();
+        if (trimmed.Length < 2)
+            return Problem(title: "q must be at least 2 characters.", statusCode: 400);
+
+        var effectiveTake = Math.Clamp(take ?? 10, 1, 25);
+        var rows = await _pulls.SearchAsync(effectiveWh.Value, trimmed, effectiveTake, ct);
+        return Ok(rows);
+    }
+
     // §6 GET /api/pulls/{id}
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<PullDetail>> GetById(Guid id, CancellationToken ct)

@@ -66,6 +66,23 @@ public record PullQuery(
     string? Status,
     string? Q);
 
+/// <summary>
+/// Lightweight pull row returned by GET /api/pulls/search — the typeahead
+/// that powers the §3.5 linked-pull picker on /Pos's New PO modal. Scoped
+/// to the requested warehouse and restricted to open pulls (pending +
+/// in_progress) so the picker can never surface a pull that POs are
+/// forbidden to link to. Capped at 10 rows by default (max 25).
+/// </summary>
+public class PullSearchResult
+{
+    public Guid Id { get; set; }
+    public string PullNumber { get; set; } = "";
+    public DateTime PullDate { get; set; }
+    public string Status { get; set; } = "";
+    public bool LockPoByPull { get; set; }
+    public int ItemCount { get; set; }
+}
+
 /// <summary>POST /api/pulls/{id}/close body (§7.4). SignatureSvg is the base64-encoded canvas image; max 200 KB.</summary>
 public class CloseRequest
 {
