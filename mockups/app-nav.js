@@ -612,33 +612,19 @@
     .app-nav-theme-option.active { background: var(--accent-bg); color: var(--accent); }
     .app-nav-theme-option.active .check { display: inline; }
 
-    /* Floating hamburger — appears top-left when nav is hidden,
-       lets user bring the nav back. Standard pattern across modern apps. */
+    /* Floating hamburger — same split-button look as the in-nav hamburger
+       (inherits via .app-nav-hamburger). This block only adds the fixed
+       positioning + visibility toggle, so all four nav state combinations
+       (horizontal/vertical × visible/hidden-or-collapsed) share one design. */
     .app-nav-floating-hamburger {
       position: fixed;
       top: 14px;
       left: 14px;
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      box-shadow: var(--shadow-md);
       z-index: 49;
-      transition: all 0.15s ease;
+      display: none;
+      box-shadow: var(--shadow-md);
     }
-    .app-nav-floating-hamburger i { font-size: 14px; color: var(--text-muted); }
-    .app-nav-floating-hamburger:hover i { color: var(--text); }
-    .app-nav-floating-hamburger:hover {
-      background: var(--surface-2);
-      border-color: var(--border-bright);
-      transform: scale(1.05);
-    }
+    .app-nav-floating-hamburger:hover { transform: scale(1.05); }
     .nav-hidden .app-nav-floating-hamburger { display: flex; }
 
     /* Reveal-on-hover bar when nav is hidden */
@@ -831,10 +817,13 @@
     let floatBtn = document.querySelector('.app-nav-floating-hamburger');
     if (!floatBtn) {
       floatBtn = document.createElement('button');
-      floatBtn.className = 'app-nav-floating-hamburger';
+      // Stack both classes: .app-nav-hamburger carries the split-button visual
+      // (border, ::before divider, chevron-wrap); .app-nav-floating-hamburger
+      // overlays only the fixed position + display toggle.
+      floatBtn.className = 'app-nav-hamburger app-nav-floating-hamburger';
       floatBtn.title = 'Show navigation';
       floatBtn.setAttribute('aria-label', 'Show navigation');
-      floatBtn.innerHTML = '<i class="bi bi-chevron-right"></i>';
+      floatBtn.innerHTML = '<span class="app-nav-chevron-wrap"><i class="bi bi-chevron-right app-nav-chevron-icon"></i></span>';
       document.body.appendChild(floatBtn);
     }
 
