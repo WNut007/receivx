@@ -15,12 +15,15 @@ public class PullsApiController : ControllerBase
     private readonly IPullRepository _pulls;
     private readonly ICloseService _close;
     private readonly IPullAdminService _admin;
+    private readonly IPullItemAdminService _itemsAdmin;
 
-    public PullsApiController(IPullRepository pulls, ICloseService close, IPullAdminService admin)
+    public PullsApiController(IPullRepository pulls, ICloseService close,
+        IPullAdminService admin, IPullItemAdminService itemsAdmin)
     {
         _pulls = pulls;
         _close = close;
         _admin = admin;
+        _itemsAdmin = itemsAdmin;
     }
 
     // §6 GET /api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=
@@ -163,6 +166,80 @@ public class PullsApiController : ControllerBase
         catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex)  { return Problem(title: ex.Message, statusCode: 403); }
         catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // ========================================================================
+    // v2.1 — PullItem admin (retires tools/add-pull-item.ps1)
+    // ========================================================================
+
+    // GET /api/pulls/{id}/items — list items + windows. Same warehouse-scope
+    // rule as GetById: non-admin callers only see items on pulls in their
+    // session warehouse.
+    [HttpGet("{id:guid}/items")]
+    public async Task<ActionResult<IReadOnlyList<PullItemDto>>> ListItems(Guid id, CancellationToken ct)
+    {
+        var pull = await _pulls.GetByIdAsync(id, ct);
+        if (pull is null) return NotFound();
+        if (!UserCanReadPull(pull))
+            return Problem(title: "You do not have access to this pull", statusCode: 403);
+
+        var items = await _pulls.GetItemsAsync(id, ct);
+        return Ok(items);
+    }
+
+    // POST /api/pulls/{id}/items — create a new item with windows.
+    [HttpPost("{id:guid}/items")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullItemDto>> CreateItem(Guid id, [FromBody] PullItemCreateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            var newId = await _itemsAdmin.CreateAsync(id, req, ct);
+            var item = await _pulls.GetItemByIdAsync(id, newId, ct);
+            return CreatedAtAction(nameof(ListItems), new { id }, item);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // PUT /api/pulls/{id}/items/{itemId} — edit Description/Vendor/Tag/Status/Remark.
+    // ItemCode is immutable (natural key) and intentionally absent from the request body.
+    [HttpPut("{id:guid}/items/{itemId:guid}")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullItemDto>> UpdateItem(Guid id, Guid itemId, [FromBody] PullItemUpdateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            await _itemsAdmin.UpdateAsync(id, itemId, req, ct);
+            var item = await _pulls.GetItemByIdAsync(id, itemId, ct);
+            return Ok(item);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // DELETE /api/pulls/{id}/items/{itemId} — cascade-delete windows.
+    // Refused (409) if any window has ReceivedQty > 0.
+    [HttpDelete("{id:guid}/items/{itemId:guid}")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<IActionResult> DeleteItem(Guid id, Guid itemId, CancellationToken ct)
+    {
+        try
+        {
+            await _itemsAdmin.DeleteAsync(id, itemId, ct);
+            return NoContent();
+        }
+        catch (NotFoundException ex) { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    private bool UserCanReadPull(PullDetail pull)
+    {
+        if (User.IsInRole("admin")) return true;
+        var sessionWh = ParseGuid(User.FindFirstValue("warehouseId"));
+        return sessionWh == pull.WarehouseId;
     }
 
     private static Guid? ParseGuid(string? s) => Guid.TryParse(s, out var g) ? g : null;

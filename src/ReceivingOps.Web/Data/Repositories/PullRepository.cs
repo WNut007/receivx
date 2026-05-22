@@ -232,6 +232,75 @@ public class PullRepository : IPullRepository
         };
     }
 
+    // v2.1 — item-grained reads for /api/pulls/{id}/items[/{itemId}].
+    public async Task<IReadOnlyList<PullItemDto>> GetItemsAsync(Guid pullId, CancellationToken ct = default)
+    {
+        const string sql = @"
+            SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
+                    pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+            FROM    dbo.PullItems pi
+            LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
+            WHERE   pi.PullId = @PullId
+            ORDER BY pi.SortOrder, pi.ItemCode, piw.HourOfDay;";
+
+        using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<PullItemRow>(
+            new CommandDefinition(sql, new { PullId = pullId }, cancellationToken: ct));
+        return AssembleItems(rows).ToList();
+    }
+
+    public async Task<PullItemDto?> GetItemByIdAsync(Guid pullId, Guid itemId, CancellationToken ct = default)
+    {
+        const string sql = @"
+            SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
+                    pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+            FROM    dbo.PullItems pi
+            LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
+            WHERE   pi.PullId = @PullId AND pi.Id = @ItemId
+            ORDER BY piw.HourOfDay;";
+
+        using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<PullItemRow>(
+            new CommandDefinition(sql, new { PullId = pullId, ItemId = itemId }, cancellationToken: ct));
+        return AssembleItems(rows).FirstOrDefault();
+    }
+
+    private static IEnumerable<PullItemDto> AssembleItems(IEnumerable<PullItemRow> rows)
+    {
+        var byGuid = new Dictionary<Guid, PullItemDto>();
+        foreach (var r in rows)
+        {
+            if (!byGuid.TryGetValue(r.Id, out var item))
+            {
+                item = new PullItemDto
+                {
+                    Id = r.Id,
+                    ItemCode = r.ItemCode,
+                    Description = r.Description,
+                    VendorCode = r.VendorCode,
+                    VendorName = r.VendorName,
+                    Tag = r.Tag,
+                    Status = r.Status,
+                    Remark = r.Remark,
+                    SortOrder = r.SortOrder,
+                };
+                byGuid.Add(r.Id, item);
+            }
+            if (r.HourOfDay is { } h)
+            {
+                item.Windows.Add(new PullItemWindowDto
+                {
+                    HourOfDay = h,
+                    ExpectedQty = r.ExpectedQty ?? 0,
+                    ReceivedQty = r.ReceivedQty ?? 0,
+                });
+            }
+        }
+        return byGuid.Values.OrderBy(i => i.SortOrder).ThenBy(i => i.ItemCode);
+    }
+
     private sealed class PullItemRow
     {
         public Guid Id { get; set; }
