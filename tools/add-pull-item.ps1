@@ -1,15 +1,25 @@
 <#
 .SYNOPSIS
-    Interactive PullItem creator — ad-hoc tool for v2.0 (UI deferred to v2.1).
+    Interactive PullItem creator — fallback / scripted path (v2.1 UI is primary).
 
 .DESCRIPTION
-    v2 treats pulls as upstream artifacts (analogous to an ERP-sourced ASN);
-    no in-app surface authors PullItem rows. The seed file db/006 is the
-    only normal path. For exception cases (vendor over-ship, ad-hoc adds,
-    demo fixtures) this tool wraps the INSERT pattern in a transaction with
-    validation + idempotency + audit, so ops doesn't have to hand-write SQL.
+    SUPERSEDED AS THE PRIMARY PATH BY v2.1 (Phase 6.3): the Pull detail
+    drawer on /Dashboard now carries an Items grid with Add / Edit / Delete
+    + a Windows sub-modal. For interactive use, prefer the UI — it covers
+    every contract this script enforces (closed-pull refusal, (PullId,
+    ItemCode) dedupe, window receipts-anchored deletion, audit row).
 
-    The pull-item admin UI is queued for v2.1 (see CLAUDE.md backlog).
+    This script remains in the tree for the cases the UI doesn't cover:
+      • headless / CI / scripted seed extensions where opening a browser
+        is impractical;
+      • environments where the C# stack isn't deployed (raw DB access only);
+      • the raw-SQL escape hatch documented below for edge cases the UI
+        refuses (e.g. mutating a closed pull after reopen-by-SUPERUSER).
+
+    v2 treats pulls as upstream artifacts (analogous to an ERP-sourced ASN);
+    no normal-flow surface authors PullItem rows. The seed file db/006 is
+    the bulk path. For exception cases this tool (or the v2.1 UI) wraps the
+    INSERT pattern in a transaction with validation + idempotency + audit.
 
     Behaviour:
       1. Validates the pull exists and isn't closed/fully_received (§7.4
@@ -142,7 +152,9 @@ function ConfirmYN([string]$label, [string]$default = 'N') {
 # -----------------------------------------------------------------------------
 # Main loop
 # -----------------------------------------------------------------------------
-Title 'Add PullItem — v2.0 ad-hoc tool (UI deferred to v2.1)'
+Title 'Add PullItem — fallback / scripted path'
+Warn 'The v2.1 UI on /Dashboard (Pull drawer -> Items grid) is now the primary path.'
+Warn 'Continue here only if running headless / scripted / pre-UI-deploy.'
 Info "Server: $Server / Database: $Database"
 Info 'Press Ctrl+C at any prompt to abort.'
 

@@ -1,9 +1,54 @@
-# Runbook — adding pull items ad-hoc (v2.0)
+# Runbook — adding pull items
 
-> **TL;DR**: `pwsh tools\add-pull-item.ps1` — interactive prompts, transactional,
-> audit-tagged. Use it instead of hand-writing SQL. UI for this lands in v2.1.
+> **TL;DR (v2.1+)**: open `/Dashboard` → click the pull → in the drawer's
+> **Items** section click **Add item** (or **Windows** / **Edit** / trash on
+> an existing row). The v2.1 UI is the primary path; `add-pull-item.ps1`
+> stays as a headless / scripted fallback.
 
-## When to use this tool
+## Primary path — v2.1 UI (Phase 6.3)
+
+The Pull detail drawer (open by clicking any pull card on `/Dashboard`) now
+carries an **Items** section between *Item Summary* and *Timeline*. Required
+role: `CanManagePulls` (admin or warehouse-supervisor on the pull's
+warehouse).
+
+Three modals, each with a focused save semantic:
+
+- **Add item** — `ItemCode`, header fields, and an inline windows
+  mini-table. Single `POST /api/pulls/{id}/items` with the windows
+  embedded; rows are draft until you click *Create item*.
+- **Edit item** — header only (Description / Vendor / Tag / Status /
+  Remark). `ItemCode` is the natural key and is shown as a `<code>`
+  label, not an input. Single `PUT /api/pulls/{id}/items/{itemId}`.
+- **Windows** — live editor for an existing item. Each row has its own
+  Save (PUT) and Delete (DELETE); the footer adds new hours (POST). No
+  batch save — every click hits the matching `/windows[/{hour}]`
+  endpoint. Rows with `ReceivedQty > 0` show a lock icon instead of
+  trash (UI mirror of the server's 409).
+
+Deletion of an item is refused (409) if any of its windows has
+`ReceivedQty > 0`. Same rule applies to individual window deletion.
+The UI surfaces the server's `title` field as the toast message, so the
+operator sees the *reason* without needing to crack open devtools.
+
+## When to use the script instead
+
+The script is the fallback for cases the UI can't reach:
+
+- **Headless / CI / scripted seed extensions** where opening a browser
+  is impractical (e.g. a post-deploy seed step that adds the same item
+  to N test pulls).
+- **Pre-UI environments** — the C# stack isn't deployed yet but the DB
+  is up.
+- **You need the audit row tagged `[script: ...]`** to keep scripted
+  mutations visually distinct from operator-driven ones in `/Masters`
+  audit search. The UI writes ordinary audit rows attributed to the
+  logged-in user.
+
+For one-off operator adds, the UI is faster and there's no reason to
+reach for the script.
+
+## Original tool contract (preserved)
 
 v2 treats pulls as **upstream artifacts** (analogous to an ERP-sourced ASN).
 Normal operation flow:
@@ -11,20 +56,8 @@ Normal operation flow:
 1. Planning system creates a pull + its items in bulk via seed migrations
    (`db/006_seed_pulls_and_items.sql`).
 2. Purchasing creates POs covering those item codes in the /Pos admin UI.
-3. The warehouse team receives against those pulls — no in-app authoring of
-   pull items.
-
-Reach for this tool when normal flow breaks down:
-
-- **Vendor over-ships** an item not on the planned pull manifest, and you need
-  to receive it against this pull rather than a separate one.
-- **Late add** — planning sends a delta after the seed migration is already
-  applied to the environment.
-- **Demo / staging fixtures** — building a one-off pull for a presentation
-  without re-seeding the whole DB.
-
-If you find yourself reaching for this tool more than a few times a month,
-that is a signal that the v2.1 in-app UI should be prioritised — flag it.
+3. The warehouse team receives against those pulls — the v2.1 UI handles
+   exception adds via the Items section in the drawer.
 
 ## What the tool does
 
@@ -173,14 +206,15 @@ COMMIT TRAN;
 Keep the `Message` body specific. The audit retention window is unbounded
 (BUILD_PROMPT.md §14) — six months from now you'll thank yourself.
 
-## What's coming in v2.1
+## v2.1 status — shipped
 
-- `POST /api/pulls/{id}/items` + `PUT` / `DELETE` siblings under a
-  `CanManagePulls` policy.
-- An items grid in the Pull detail drawer with add / edit / remove
-  affordances (similar shape to the Lines table in `/Pos`).
-- Hour-window management as a separate sub-resource so window edits don't
-  rewrite the whole item.
+- `GET / POST / PUT / DELETE /api/pulls/{id}/items` under `CanManagePulls`
+  (Phase 6.1, commit `b577aa5`).
+- `GET / POST / PUT / DELETE /api/pulls/{id}/items/{itemId}/windows[/{hour}]`
+  sub-resource (Phase 6.2, commit `1301df5`).
+- Items grid in the Pull detail drawer + Add Item / Edit Item / Windows
+  modals (Phase 6.3, commit `e598fbb`).
 
-When that ships, this runbook gets promoted to "legacy escape hatch" and the
-tool stays for environments without UI access (CI, scripted seed extensions).
+The runbook above documents the contract — the UI implements it exactly,
+so anything called out in the *Caveats* section also holds when clicking
+through the modals.

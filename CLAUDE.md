@@ -2,9 +2,11 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.0 shipped on `main` (tag `v2.0` at the squash-merge commit;
-post-tag polish landed via fast-forward on 2026-05-23). 16/16 smoke battery
-green. See `docs/migration/v1-to-v2.md` for the runbook + rollback steps.
+**Status:** v2.0 shipped on `main` (2026-05-23, tag `v2.0`). v2.1 in
+progress on `v2.1-migration` — Phases 6.1/6.2/6.3/6.4 done (PullItem
+admin: backend CRUD + windows sub-resource + drawer UI + add-pull-item
+script retired). 19/19 smoke battery green. See `docs/migration/v1-to-v2.md`
+for the v2 runbook + rollback steps.
 
 ## Stack
 - .NET 8 LTS, C# 12
@@ -78,30 +80,27 @@ hardcoded SQL login.
 - `tools/slice-*.ps1` + `tools/build-*-view.ps1` — mockup → wwwroot
   pipeline. Pass `-SyncJs` to also overwrite hand-written Stage B JS;
   otherwise JS is preserved across re-slices.
-- `tools/add-pull-item.ps1` — interactive ad-hoc PullItem creator (v2.0
-  escape hatch — UI deferred to v2.1). Validates pull is open, idempotent
-  on `(PullId, ItemCode)`, transactional, writes an audit row tagged
-  `[script: <SQL_LOGIN>]`. See `docs/runbooks/add-pull-items.md` for the
-  full walkthrough + caveats.
+- `tools/add-pull-item.ps1` — interactive PullItem creator. **Superseded
+  by v2.1 UI as the primary path** (Pull drawer → Items grid on
+  `/Dashboard`); kept as a headless / CI / pre-UI-deploy fallback. Same
+  contract: pull-open check, `(PullId, ItemCode)` dedupe, transactional,
+  audit row tagged `[script: <SQL_LOGIN>]` to keep scripted mutations
+  visually distinct from operator-driven ones. See
+  `docs/runbooks/add-pull-items.md`.
 
 ## Design decisions (load-bearing)
 - **Pulls are upstream artifacts**, analogous to an ASN sourced from an ERP.
-  v2 deliberately does not ship an in-app authoring UI for `PullItems`;
-  the seed migration `db/006` is the normal path, and
-  `tools/add-pull-item.ps1` is the ad-hoc escape hatch. Full CRUD UI
-  (POST/PUT/DELETE on `/api/pulls/{id}/items` + items grid in the pull
-  detail drawer) is queued for v2.1. Anything that loops "the receiver
-  added an item by hand again" is a signal to prioritise the v2.1 work.
+  The seed migration `db/006` is the bulk path; ad-hoc adds go through the
+  v2.1 UI (Pull drawer → Items grid) or, for headless/scripted use,
+  `tools/add-pull-item.ps1`. v2 had no in-app authoring; v2.1 added it
+  without changing the upstream-artifact framing — the new endpoints are
+  `CanManagePulls`-gated and audit-tagged the same way.
 - **Purchase Orders are in-app artifacts** (`/Pos` admin UI, Phase 5c) —
   intentionally different from pulls because procurement *authors* POs
   in-house, while pulls *arrive* from planning.
 
-## v2.1 backlog (post-merge)
-- **PullItem admin** — `POST/PUT/DELETE /api/pulls/{id}/items` under
-  `CanManagePulls`, items grid in the Pull detail drawer (mirror of the
-  `/Pos` lines table), and a per-hour-window sub-resource at
-  `/api/pulls/{id}/items/{itemId}/windows`. Retires
-  `tools/add-pull-item.ps1` as the primary path.
+## v2.1 backlog
+- **PullItem admin** — DONE (Phases 6.1/6.2/6.3/6.4 on `v2.1-migration`).
 - **Profile editor + Help page** — dropdown entries were trimmed in 5f
   pre-merge (commit `e69667a`); restore when there's a real destination.
 - **Item-search typeahead in Add-Line modal** — same pattern as the
