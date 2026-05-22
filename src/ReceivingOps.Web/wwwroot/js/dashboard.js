@@ -378,6 +378,18 @@
     }
 
     drawer.show();
+
+    // v2.1 Phase 6.3 — lazy-load the items grid. Fire-and-forget; render
+    // updates the DOM when it lands so the drawer doesn't block on it.
+    loadItemsForDrawer(pullGuid).catch(() => {
+      const tbody = document.getElementById('d-items-tbody');
+      const empty = document.getElementById('d-items-empty');
+      if (tbody) tbody.innerHTML = '';
+      if (empty) {
+        empty.textContent = 'Failed to load items.';
+        empty.classList.remove('d-none');
+      }
+    });
   }
 
   drawerEl.addEventListener('hidden.bs.offcanvas', () => {
@@ -545,6 +557,384 @@
   document.getElementById('btn-new-pull')?.addEventListener('click', openCreatePullModal);
   document.getElementById('d-edit')?.addEventListener('click', openEditPullModal);
   document.getElementById('pm-save')?.addEventListener('click', savePullModal);
+
+  // ============ v2.1 PHASE 6.3 — PULLITEM ADMIN (items + windows) ============
+  // Lazy-loaded into the drawer when it opens. CRUD is split across 3 modals
+  // (Add Item / Edit Item / Windows) — see Index.cshtml for the rationale.
+  const itemAddModalEl   = document.getElementById('itemAddModal');
+  const itemEditModalEl  = document.getElementById('itemEditModal');
+  const windowsModalEl   = document.getElementById('windowsModal');
+  const itemAddModal   = itemAddModalEl   ? new bootstrap.Modal(itemAddModalEl)   : null;
+  const itemEditModal  = itemEditModalEl  ? new bootstrap.Modal(itemEditModalEl)  : null;
+  const windowsModal   = windowsModalEl   ? new bootstrap.Modal(windowsModalEl)   : null;
+
+  // Cache the items currently rendered into the drawer so the edit/windows
+  // flows don't have to re-fetch for header info (still re-fetch on every
+  // mutation so the cache never goes stale).
+  let drawerItems = [];
+  // Tracked separately so we don't have to re-resolve `selectedPullId` inside
+  // the modals (drawer can close while a modal is up).
+  let drawerPullIdForItems = null;
+  // Item open in editItemModal / windowsModal
+  let editingItemId = null;
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  async function loadItemsForDrawer(pullGuid) {
+    drawerPullIdForItems = pullGuid;
+    try {
+      const r = await fetch('/api/pulls/' + encodeURIComponent(pullGuid) + '/items');
+      drawerItems = r.ok ? await r.json() : [];
+    } catch { drawerItems = []; }
+    renderItemsTable();
+  }
+
+  function renderItemsTable() {
+    const tbody = document.getElementById('d-items-tbody');
+    const empty = document.getElementById('d-items-empty');
+    const countEl = document.getElementById('d-items-count');
+    if (!tbody) return;
+    countEl.textContent = drawerItems.length ? '(' + drawerItems.length + ')' : '';
+    if (!drawerItems.length) {
+      tbody.innerHTML = '';
+      empty.classList.remove('d-none');
+      return;
+    }
+    empty.classList.add('d-none');
+    tbody.innerHTML = drawerItems.map(it => {
+      const windows = it.windows || [];
+      const exp = windows.reduce((a, w) => a + (w.expectedQty || 0), 0);
+      const rcv = windows.reduce((a, w) => a + (w.receivedQty || 0), 0);
+      const vendor = it.vendorCode
+        ? esc(it.vendorCode) + (it.vendorName ? ' · ' + esc(it.vendorName) : '')
+        : (it.vendorName ? esc(it.vendorName) : '—');
+      const tagCell = it.tag
+        ? '<span class="badge tag-' + esc(it.tag) + '">' + esc(it.tag) + '</span>'
+        : '<span class="text-muted">—</span>';
+      return '<tr data-item-id="' + esc(it.id) + '">' +
+        '<td><code>' + esc(it.itemCode) + '</code></td>' +
+        '<td>' + esc(it.description) + '</td>' +
+        '<td>' + vendor + '</td>' +
+        '<td>' + tagCell + '</td>' +
+        '<td><span class="status-' + esc(it.status) + '">' + esc(it.status) + '</span></td>' +
+        '<td class="text-end"><small>' + windows.length + ' · ' +
+          exp.toLocaleString() + ' exp · ' + rcv.toLocaleString() + ' rcv</small></td>' +
+        '<td class="actions-col">' +
+          '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
+          '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
+          '<button class="btn btn-link text-danger" data-act="delete" title="Delete item"><i class="bi bi-trash"></i></button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // ---- delegated row actions
+  document.getElementById('d-items-tbody')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const tr = btn.closest('tr[data-item-id]');
+    if (!tr) return;
+    const itemId = tr.dataset.itemId;
+    const act = btn.dataset.act;
+    if (act === 'edit') openEditItemModal(itemId);
+    else if (act === 'delete') deleteItem(itemId);
+    else if (act === 'windows') openWindowsModal(itemId);
+  });
+
+  // ---- Add Item modal ----------------------------------------------------
+  function openAddItemModal() {
+    if (!itemAddModal || !selectedPullId) return;
+    const p = pulls.find(x => x.pullId === selectedPullId);
+    if (!p) return;
+    drawerPullIdForItems = selectedPullId;
+    document.getElementById('iam-pull-label').textContent = p.id;
+    document.getElementById('iam-item-code').value = '';
+    document.getElementById('iam-description').value = '';
+    document.getElementById('iam-vendor-code').value = '';
+    document.getElementById('iam-vendor-name').value = '';
+    document.getElementById('iam-tag').value = '';
+    document.getElementById('iam-remark').value = '';
+    // Seed with one empty row so the user sees the table shape.
+    document.getElementById('iam-windows-tbody').innerHTML = '';
+    appendAddWindowRow();
+    itemAddModal.show();
+  }
+
+  function appendAddWindowRow() {
+    const tbody = document.getElementById('iam-windows-tbody');
+    const hourOpts = Array.from({ length: 24 }, (_, h) =>
+      '<option value="' + h + '">' + String(h).padStart(2, '0') + ':00</option>').join('');
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><select class="form-select iam-w-hour">' + hourOpts + '</select></td>' +
+      '<td><input type="number" class="form-control iam-w-qty" min="1" placeholder="qty"></td>' +
+      '<td class="actions-col">' +
+        '<button class="btn btn-link text-danger" data-act="rm" title="Remove"><i class="bi bi-x-lg"></i></button>' +
+      '</td>';
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById('iam-add-window')?.addEventListener('click', appendAddWindowRow);
+  document.getElementById('iam-windows-tbody')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act="rm"]');
+    if (!btn) return;
+    const tbody = document.getElementById('iam-windows-tbody');
+    if (tbody.children.length <= 1) {
+      showToast('At least one window required', '');
+      return;
+    }
+    btn.closest('tr').remove();
+  });
+
+  async function saveAddItem() {
+    if (!drawerPullIdForItems) return;
+    const itemCode = document.getElementById('iam-item-code').value.trim();
+    const description = document.getElementById('iam-description').value.trim();
+    if (!itemCode || !description) return showToast('Missing required field', 'Item code + description');
+
+    const rows = Array.from(document.querySelectorAll('#iam-windows-tbody tr'));
+    const hours = new Set();
+    const windows = [];
+    for (const tr of rows) {
+      const h = parseInt(tr.querySelector('.iam-w-hour').value, 10);
+      const q = parseInt(tr.querySelector('.iam-w-qty').value, 10);
+      if (Number.isNaN(q) || q <= 0) return showToast('Bad window qty', 'Each window needs qty > 0');
+      if (hours.has(h)) return showToast('Duplicate hour', 'Hour ' + String(h).padStart(2,'0') + ' used twice');
+      hours.add(h);
+      windows.push({ hourOfDay: h, expectedQty: q });
+    }
+    if (windows.length === 0) return showToast('At least one window required', '');
+
+    const body = {
+      itemCode, description,
+      vendorCode: document.getElementById('iam-vendor-code').value.trim() || null,
+      vendorName: document.getElementById('iam-vendor-name').value.trim() || null,
+      tag: document.getElementById('iam-tag').value || null,
+      remark: document.getElementById('iam-remark').value.trim() || null,
+      windows,
+    };
+
+    const btn = document.getElementById('iam-save');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/pulls/' + encodeURIComponent(drawerPullIdForItems) + '/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+      if (!r.ok) {
+        let title = 'Save failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        showToast('Could not add item', title);
+        return;
+      }
+      itemAddModal.hide();
+      showToast('Item added', itemCode);
+      await loadItemsForDrawer(drawerPullIdForItems);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('d-add-item')?.addEventListener('click', openAddItemModal);
+  document.getElementById('iam-save')?.addEventListener('click', saveAddItem);
+
+  // ---- Edit Item modal ---------------------------------------------------
+  function openEditItemModal(itemId) {
+    if (!itemEditModal) return;
+    const it = drawerItems.find(x => x.id === itemId);
+    if (!it) return;
+    editingItemId = itemId;
+    document.getElementById('iem-code-label').textContent = it.itemCode;
+    document.getElementById('iem-description').value = it.description || '';
+    document.getElementById('iem-vendor-code').value = it.vendorCode || '';
+    document.getElementById('iem-vendor-name').value = it.vendorName || '';
+    document.getElementById('iem-tag').value = it.tag || '';
+    document.getElementById('iem-status').value = it.status || 'normal';
+    document.getElementById('iem-remark').value = it.remark || '';
+    itemEditModal.show();
+  }
+
+  async function saveEditItem() {
+    if (!drawerPullIdForItems || !editingItemId) return;
+    const description = document.getElementById('iem-description').value.trim();
+    if (!description) return showToast('Description required', '');
+
+    const body = {
+      description,
+      vendorCode: document.getElementById('iem-vendor-code').value.trim() || null,
+      vendorName: document.getElementById('iem-vendor-name').value.trim() || null,
+      tag: document.getElementById('iem-tag').value || null,
+      status: document.getElementById('iem-status').value,
+      remark: document.getElementById('iem-remark').value.trim() || null,
+    };
+
+    const btn = document.getElementById('iem-save');
+    btn.disabled = true;
+    try {
+      const r = await fetch(
+        '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+        '/items/' + encodeURIComponent(editingItemId),
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+      if (!r.ok) {
+        let title = 'Save failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        showToast('Could not save item', title);
+        return;
+      }
+      itemEditModal.hide();
+      showToast('Item updated', '');
+      await loadItemsForDrawer(drawerPullIdForItems);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('iem-save')?.addEventListener('click', saveEditItem);
+
+  // ---- Delete item -------------------------------------------------------
+  async function deleteItem(itemId) {
+    if (!drawerPullIdForItems) return;
+    const it = drawerItems.find(x => x.id === itemId);
+    if (!it) return;
+    if (!confirm('Delete item ' + it.itemCode + '? Windows will cascade.')) return;
+    const r = await fetch(
+      '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+      '/items/' + encodeURIComponent(itemId),
+      { method: 'DELETE' });
+    if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!r.ok) {
+      let title = 'Delete failed (' + r.status + ')';
+      try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Could not delete', title);
+      return;
+    }
+    showToast('Item deleted', it.itemCode);
+    await loadItemsForDrawer(drawerPullIdForItems);
+  }
+
+  // ---- Windows modal -----------------------------------------------------
+  function openWindowsModal(itemId) {
+    if (!windowsModal) return;
+    const it = drawerItems.find(x => x.id === itemId);
+    if (!it) return;
+    editingItemId = itemId;
+    document.getElementById('wm-code-label').textContent = it.itemCode;
+    renderWindowsTable(it.windows || []);
+    document.getElementById('wm-new-qty').value = '';
+    windowsModal.show();
+  }
+
+  function renderWindowsTable(windows) {
+    const tbody = document.getElementById('wm-tbody');
+    const taken = new Set((windows || []).map(w => w.hourOfDay));
+    tbody.innerHTML = (windows || [])
+      .slice()
+      .sort((a, b) => a.hourOfDay - b.hourOfDay)
+      .map(w => {
+        const canDelete = w.receivedQty === 0;
+        return '<tr data-hour="' + w.hourOfDay + '">' +
+          '<td><code>' + String(w.hourOfDay).padStart(2, '0') + ':00</code></td>' +
+          '<td><input type="number" class="form-control window-qty" min="1" value="' + w.expectedQty + '"></td>' +
+          '<td><small class="text-muted">' + w.receivedQty + ' pcs</small></td>' +
+          '<td class="actions-col">' +
+            '<button class="btn btn-sm btn-outline-primary me-1" data-act="save"><i class="bi bi-check2"></i> Save</button>' +
+            (canDelete
+              ? '<button class="btn btn-sm btn-outline-danger" data-act="del"><i class="bi bi-trash"></i></button>'
+              : '<button class="btn btn-sm btn-outline-secondary" disabled title="Has receipts"><i class="bi bi-lock"></i></button>') +
+          '</td>' +
+        '</tr>';
+      }).join('');
+
+    // Re-populate the "add new" hour select with only unused hours.
+    const newHourSel = document.getElementById('wm-new-hour');
+    newHourSel.innerHTML = Array.from({ length: 24 }, (_, h) => h)
+      .filter(h => !taken.has(h))
+      .map(h => '<option value="' + h + '">' + String(h).padStart(2, '0') + ':00</option>').join('');
+  }
+
+  document.getElementById('wm-tbody')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const tr = btn.closest('tr[data-hour]');
+    const hour = parseInt(tr.dataset.hour, 10);
+    const act = btn.dataset.act;
+    if (act === 'save') {
+      const qty = parseInt(tr.querySelector('.window-qty').value, 10);
+      if (Number.isNaN(qty) || qty <= 0) return showToast('Bad qty', 'Must be > 0');
+      const r = await fetch(
+        '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+        '/items/' + encodeURIComponent(editingItemId) +
+        '/windows/' + hour,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expectedQty: qty }),
+        });
+      if (!r.ok) {
+        let title = 'PUT failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        return showToast('Could not save window', title);
+      }
+      showToast('Window updated', String(hour).padStart(2,'0') + ':00');
+      await refreshWindowsModal();
+    } else if (act === 'del') {
+      const r = await fetch(
+        '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+        '/items/' + encodeURIComponent(editingItemId) +
+        '/windows/' + hour,
+        { method: 'DELETE' });
+      if (!r.ok) {
+        let title = 'Delete failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        return showToast('Could not delete window', title);
+      }
+      showToast('Window deleted', String(hour).padStart(2,'0') + ':00');
+      await refreshWindowsModal();
+    }
+  });
+
+  document.getElementById('wm-add')?.addEventListener('click', async () => {
+    const sel = document.getElementById('wm-new-hour');
+    const qty = parseInt(document.getElementById('wm-new-qty').value, 10);
+    if (!sel.value) return showToast('No free hour', 'All 24 hours are already filled');
+    if (Number.isNaN(qty) || qty <= 0) return showToast('Bad qty', 'Enter a positive number');
+    const r = await fetch(
+      '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+      '/items/' + encodeURIComponent(editingItemId) + '/windows',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hourOfDay: parseInt(sel.value, 10), expectedQty: qty }),
+      });
+    if (!r.ok) {
+      let title = 'Add failed (' + r.status + ')';
+      try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+      return showToast('Could not add window', title);
+    }
+    showToast('Window added', String(sel.value).padStart(2,'0') + ':00');
+    document.getElementById('wm-new-qty').value = '';
+    await refreshWindowsModal();
+  });
+
+  // Re-fetch items, find the one open in the modal, re-render its windows.
+  // Also refreshes the drawer table so the windows count + totals stay accurate.
+  async function refreshWindowsModal() {
+    if (!drawerPullIdForItems || !editingItemId) return;
+    await loadItemsForDrawer(drawerPullIdForItems);
+    const it = drawerItems.find(x => x.id === editingItemId);
+    if (it) renderWindowsTable(it.windows || []);
+  }
 
   // ============ EXPORT TO EXCEL ============
   // Identical to the mockup — operates on the in-memory filtered list.

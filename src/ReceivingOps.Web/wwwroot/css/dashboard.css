@@ -714,6 +714,94 @@
     font-weight: 600;
   }
 
+  /* v2.1 Phase 6.3 — items grid + add/edit/windows modals */
+  .items-table-wrap { overflow-x: auto; }
+  .items-table { font-size: 13px; }
+  .items-table th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+  .items-table td {
+    vertical-align: middle;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+  .items-table .actions-col { width: 110px; text-align: right; white-space: nowrap; }
+  .items-table code {
+    background: var(--surface-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+  }
+  .items-table .badge { font-weight: 500; font-size: 11px; padding: 3px 8px; }
+  .items-table .badge.tag-pcba { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--accent); }
+  .items-table .badge.tag-swap { background: color-mix(in srgb, #d97706 18%, var(--surface)); color: #b45309; }
+  .items-table .status-canceled { color: var(--text-muted); text-decoration: line-through; }
+  .items-table .status-new { color: var(--accent); font-weight: 600; }
+  .items-table .btn-link {
+    color: var(--text-muted);
+    padding: 2px 4px !important;
+    text-decoration: none;
+  }
+  .items-table .btn-link:hover { color: var(--text); }
+  .items-table .btn-link.text-danger { color: #dc2626; }
+  .items-table .btn-link.text-danger:hover { color: #991b1b; }
+  .items-empty {
+    padding: 18px;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+
+  /* Windows mini-table inside Add Item modal (draft rows) */
+  .wm-add-windows-table { font-size: 13px; }
+  .wm-add-windows-table th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+  }
+  .wm-add-windows-table td {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    vertical-align: middle;
+  }
+  .wm-add-windows-table .form-control,
+  .wm-add-windows-table .form-select { font-size: 13px; padding: 4px 8px; height: auto; }
+  .wm-add-windows-table .actions-col { width: 40px; text-align: right; }
+
+  /* Windows modal — live rows for an existing item */
+  .windows-list-table input.window-qty {
+    width: 100px; padding: 4px 8px; font-size: 13px; height: auto;
+  }
+  .windows-list-table td {
+    vertical-align: middle;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+  .windows-list-table th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+
   .progress-block {
     background: linear-gradient(180deg, var(--accent-bg), color-mix(in srgb, var(--accent-bg) 60%, var(--surface-3)));
     border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
