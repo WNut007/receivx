@@ -49,12 +49,14 @@
   // appear for everyone. Server is still source of truth via [Authorize].
   const MENU = [
     { id: 'pull',         label: 'Dashboard',       icon: 'bi-grid-1x2',          href: 'pull-controller-v2.html' },
+    // §5c — Purchase Orders admin (admin + supervisor; hidden from operators).
+    // Sits above Receiving because PO is the upstream artifact — the warehouse
+    // can't receive against a PO that doesn't exist.
+    { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',           href: 'pos.html', roles: ['admin', 'supervisor'] },
     { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down', href: 'receiving-mockup-v2-fullreceived.html' },
     { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: 'transactions.html' },
     { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',         href: '#',  disabled: true },
     { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',     href: 'masters.html' },
-    // §5c — Purchase Orders admin (admin + supervisor; hidden from operators)
-    { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',           href: 'pos.html', roles: ['admin', 'supervisor'] },
     { id: 'config',       label: 'Settings',        icon: 'bi-sliders',           href: 'config.html' },
   ];
 
@@ -336,87 +338,47 @@
     }
     .app-nav-toggle:hover { background: var(--surface-3); color: var(--text); }
 
-    /* Default hamburger style (horizontal mode) — simple ghost icon button */
+    /* Hamburger / nav toggle — rounded white card with chevron icon.
+       Single visual treatment in both nav modes:
+         - horizontal: click hides the bar (floating card takes over)
+         - vertical:   click collapses the sidebar to an icon rail
+       Chevron points LEFT (<) when nav is visible/expanded; rotates 180°
+       when the vertical sidebar is collapsed. In horizontal-hidden state
+       the floating-hamburger (chevron-right) sits in the corner instead. */
     .app-nav-hamburger {
-      background: transparent;
-      border: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
       color: var(--text-dim);
-      width: 38px;
-      height: 38px;
+      width: 40px;
+      height: 30px;
       border-radius: 8px;
-      display: grid;
-      place-items: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
       cursor: pointer;
-      transition: all 0.18s ease;
+      box-shadow: var(--shadow-sm);
+      transition: background 0.15s ease, border-color 0.15s ease,
+                  box-shadow 0.15s ease, transform 0.18s ease;
       flex-shrink: 0;
-    }
-    .app-nav-hamburger i {
-      font-size: 20px;
-      line-height: 1;
-      transition: transform 0.25s ease;
     }
     .app-nav-hamburger:hover {
       background: var(--surface-2);
-      color: var(--text);
+      border-color: var(--border-bright);
+      box-shadow: var(--shadow-md);
     }
     .app-nav-hamburger:active { transform: scale(0.96); }
 
-    /* SmartAdmin-style collapse toggle — exact match.
-       Rounded-rect button (~36×30) with TWO TONES:
-         - Left ~10px strip: slightly darker (gives the "grip" feel)
-         - Right area:        lighter, contains the chevron centered
-       Divider line between the two tones. */
-    body.has-vertical-nav .app-nav-hamburger {
-      position: relative;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      width: 38px;
-      height: 30px;
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 0 0 11px;  /* left strip width baked in as padding */
-      box-shadow: var(--shadow-sm);
-      overflow: hidden;
+    .app-nav-chevron-icon {
+      font-size: 15px;
+      line-height: 1;
+      color: var(--text-dim);
+      transition: transform 0.25s ease, color 0.15s ease;
     }
-    /* Left strip — slightly darker, gives the "two-tone" SmartAdmin look */
-    body.has-vertical-nav .app-nav-hamburger::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 11px;
-      background: var(--surface-2);
-      border-right: 1px solid var(--border);
-    }
-    body.has-vertical-nav .app-nav-hamburger i {
-      font-size: 14px;
-    }
-    /* SmartAdmin chevron SVG — naturally points LEFT (<). Sized to ~10×10 in the pill.
-       Fill matches the icon color so theme changes propagate automatically. */
-    .app-nav-chevron {
-      width: 9px;
-      height: 14px;
-      flex-shrink: 0;
-      transition: transform 0.25s ease;
-      pointer-events: none;
-    }
-    .app-nav-chevron polygon {
-      fill: var(--text-dim);
-      transition: fill 0.15s ease;
-    }
-    body.has-vertical-nav .app-nav-hamburger:hover .app-nav-chevron polygon {
-      fill: var(--text);
-    }
-    body.has-vertical-nav .app-nav-hamburger:hover {
-      background: var(--surface-3);
-      border-color: var(--border-bright);
-    }
-    /* Default polygon points LEFT (<).
-       When sidebar is COLLAPSED, rotate 180° so it points RIGHT (>) meaning "click to expand". */
-    body.has-vertical-nav.nav-collapsed .app-nav-chevron {
+    .app-nav-hamburger:hover .app-nav-chevron-icon { color: var(--text); }
+
+    /* Sidebar collapsed → flip chevron to point right (= "click to expand") */
+    body.has-vertical-nav.nav-collapsed .app-nav-chevron-icon {
       transform: rotate(180deg);
     }
 
@@ -657,7 +619,8 @@
       z-index: 49;
       transition: all 0.15s ease;
     }
-    .app-nav-floating-hamburger i { font-size: 20px; }
+    .app-nav-floating-hamburger i { font-size: 14px; color: var(--text-muted); }
+    .app-nav-floating-hamburger:hover i { color: var(--text); }
     .app-nav-floating-hamburger:hover {
       background: var(--surface-2);
       border-color: var(--border-bright);
@@ -686,6 +649,8 @@
       .app-nav.position-horizontal { padding: 10px 14px; gap: 8px; }
       .app-nav-item .label { display: none; }
       .app-nav-profile-trigger .who { display: none; }
+      /* Larger hit target on touch */
+      .app-nav-hamburger { width: 46px; height: 36px; }
     }
 
     /* Hide redundant in-page theme switchers and user-chips — the app-nav owns these now.
@@ -783,16 +748,10 @@
       </div>
     `;
 
-    // Hamburger button markup — icon differs by mode:
-    //   vertical:   pill with SmartAdmin chevron SVG (collapse sidebar)
-    //   horizontal: simple hamburger lines (hide nav)
-    // SmartAdmin's exact SVG: viewBox 0 0 5 8, polygon points 4.5,1 3.8,0.2 0,4 3.8,7.8 4.5,7 1.5,4
-    // The polygon naturally points LEFT (<) — perfect default for "expanded sidebar, click to collapse"
-    const hamburgerIconHTML = PREF.navPosition === 'vertical'
-      ? `<svg class="app-nav-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 8" aria-hidden="true">
-           <polygon points="4.5,1 3.8,0.2 0,4 3.8,7.8 4.5,7 1.5,4"></polygon>
-         </svg>`
-      : `<i class="bi bi-list"></i>`;
+    // Hamburger button markup — single chevron-left card across both modes.
+    // CSS rotates 180° when the vertical sidebar collapses; for horizontal
+    // "hidden" state the floating-hamburger (chevron-right) takes over.
+    const hamburgerIconHTML = `<i class="bi bi-chevron-left app-nav-chevron-icon"></i>`;
     const hamburgerTitle = PREF.navPosition === 'vertical' ? 'Toggle Navigation Size' : 'Hide navigation';
     const hamburgerHTML = `
       <button class="app-nav-hamburger" id="app-nav-hide-toggle" title="${hamburgerTitle}" aria-label="${hamburgerTitle}">
@@ -862,7 +821,7 @@
       floatBtn.className = 'app-nav-floating-hamburger';
       floatBtn.title = 'Show navigation';
       floatBtn.setAttribute('aria-label', 'Show navigation');
-      floatBtn.innerHTML = '<i class="bi bi-list"></i>';
+      floatBtn.innerHTML = '<i class="bi bi-chevron-right"></i>';
       document.body.appendChild(floatBtn);
     }
 
