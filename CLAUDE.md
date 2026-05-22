@@ -2,9 +2,9 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2-migration branch complete (Phase 5e end-to-end PASS, 15/15 smoke
-battery green). Ready for merge to `main` pending final visual verification —
-see `docs/migration/v1-to-v2.md` for the runbook + rollback steps.
+**Status:** v2.0 shipped on `main` (tag `v2.0` at the squash-merge commit;
+post-tag polish landed via fast-forward on 2026-05-23). 16/16 smoke battery
+green. See `docs/migration/v1-to-v2.md` for the runbook + rollback steps.
 
 ## Stack
 - .NET 8 LTS, C# 12
