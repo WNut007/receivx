@@ -28,4 +28,18 @@ public interface IPullItemAdminService
 
     /// <summary>Deletes the item and cascades its windows. Refuses 409 if any window has ReceivedQty &gt; 0.</summary>
     Task DeleteAsync(Guid pullId, Guid itemId, CancellationToken ct = default);
+
+    // v2.1 Phase 6.2 — per-hour window sub-resource. Same closed-pull and
+    // pull-item-exists checks as the item CRUD above; hour-specific rules are
+    // documented on the request DTOs (PullItemWindowCreateRequest /
+    // PullItemWindowUpdateRequest).
+
+    /// <summary>Adds a new hour window. Returns the window's HourOfDay (the natural key on the item).</summary>
+    Task<byte> AddWindowAsync(Guid pullId, Guid itemId, PullItemWindowCreateRequest req, CancellationToken ct = default);
+
+    /// <summary>Updates ExpectedQty for an existing hour. Refuses 409 if new qty &lt; current ReceivedQty.</summary>
+    Task UpdateWindowAsync(Guid pullId, Guid itemId, byte hourOfDay, PullItemWindowUpdateRequest req, CancellationToken ct = default);
+
+    /// <summary>Deletes the hour window. Refuses 409 if it has any ReceivedQty.</summary>
+    Task DeleteWindowAsync(Guid pullId, Guid itemId, byte hourOfDay, CancellationToken ct = default);
 }

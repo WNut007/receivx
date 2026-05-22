@@ -50,3 +50,30 @@ public class PullItemWindowInput
     public byte HourOfDay { get; set; }
     public int ExpectedQty { get; set; }
 }
+
+/// <summary>
+/// POST /api/pulls/{id}/items/{itemId}/windows — add one hour window.
+/// HourOfDay must be 0..23 and unique on the item (UQ_PIW_Hour at DB; the
+/// service surfaces the violation as 409 with a friendlier message).
+/// ExpectedQty must be positive.
+/// </summary>
+public class PullItemWindowCreateRequest
+{
+    public byte HourOfDay { get; set; }
+    public int ExpectedQty { get; set; }
+}
+
+/// <summary>
+/// PUT /api/pulls/{id}/items/{itemId}/windows/{hour} — edit ExpectedQty
+/// for an existing hour. HourOfDay is implicit (from the route) and
+/// immutable through this endpoint — to "move" a window across hours,
+/// delete the old hour and POST a new one.
+///
+/// Refused (409) when:
+///   • new ExpectedQty &lt; existing ReceivedQty (would violate CK_PIW_Caps,
+///     and would silently invalidate receipts already booked against it).
+/// </summary>
+public class PullItemWindowUpdateRequest
+{
+    public int ExpectedQty { get; set; }
+}

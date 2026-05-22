@@ -235,6 +235,79 @@ public class PullsApiController : ControllerBase
         catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
     }
 
+    // ========================================================================
+    // v2.1 Phase 6.2 — PullItem windows sub-resource
+    // ========================================================================
+
+    // GET /api/pulls/{id}/items/{itemId}/windows — list windows for one item.
+    // Same warehouse scope as ListItems; falls through GetItemByIdAsync.
+    [HttpGet("{id:guid}/items/{itemId:guid}/windows")]
+    public async Task<ActionResult<IReadOnlyList<PullItemWindowDto>>> ListWindows(Guid id, Guid itemId, CancellationToken ct)
+    {
+        var pull = await _pulls.GetByIdAsync(id, ct);
+        if (pull is null) return NotFound();
+        if (!UserCanReadPull(pull))
+            return Problem(title: "You do not have access to this pull", statusCode: 403);
+
+        var item = await _pulls.GetItemByIdAsync(id, itemId, ct);
+        if (item is null) return NotFound();
+        return Ok(item.Windows);
+    }
+
+    // POST /api/pulls/{id}/items/{itemId}/windows — add one hour window.
+    [HttpPost("{id:guid}/items/{itemId:guid}/windows")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullItemWindowDto>> AddWindow(Guid id, Guid itemId, [FromBody] PullItemWindowCreateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            var hour = await _itemsAdmin.AddWindowAsync(id, itemId, req, ct);
+            var item = await _pulls.GetItemByIdAsync(id, itemId, ct);
+            var added = item?.Windows.FirstOrDefault(w => w.HourOfDay == hour);
+            return CreatedAtAction(nameof(ListWindows), new { id, itemId }, added);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // PUT /api/pulls/{id}/items/{itemId}/windows/{hour} — edit ExpectedQty.
+    // HourOfDay is the natural key on the item and is implicit in the URL —
+    // to "move" a window across hours, DELETE the old + POST the new.
+    [HttpPut("{id:guid}/items/{itemId:guid}/windows/{hour:int}")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullItemWindowDto>> UpdateWindow(Guid id, Guid itemId, int hour, [FromBody] PullItemWindowUpdateRequest req, CancellationToken ct)
+    {
+        if (hour < 0 || hour > 23)
+            return Problem(title: $"HourOfDay {hour} out of range (0..23)", statusCode: 400);
+        try
+        {
+            await _itemsAdmin.UpdateWindowAsync(id, itemId, (byte)hour, req, ct);
+            var item = await _pulls.GetItemByIdAsync(id, itemId, ct);
+            var updated = item?.Windows.FirstOrDefault(w => w.HourOfDay == hour);
+            return Ok(updated);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // DELETE /api/pulls/{id}/items/{itemId}/windows/{hour} — refuses 409 if ReceivedQty>0.
+    [HttpDelete("{id:guid}/items/{itemId:guid}/windows/{hour:int}")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<IActionResult> DeleteWindow(Guid id, Guid itemId, int hour, CancellationToken ct)
+    {
+        if (hour < 0 || hour > 23)
+            return Problem(title: $"HourOfDay {hour} out of range (0..23)", statusCode: 400);
+        try
+        {
+            await _itemsAdmin.DeleteWindowAsync(id, itemId, (byte)hour, ct);
+            return NoContent();
+        }
+        catch (NotFoundException ex) { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
     private bool UserCanReadPull(PullDetail pull)
     {
         if (User.IsInRole("admin")) return true;
