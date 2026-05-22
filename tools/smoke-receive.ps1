@@ -25,7 +25,7 @@ Step "Receive 100 pcs (PL-2844, hour 12)"
 $body = @{ pullItemId = $PullItemOpen; hourOfDay = 12; qty = 100; qcStatus = 'pending'; note = 'smoke-test-1' } | ConvertTo-Json
 $resp = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session
 if ($resp.newReceivedQty -ne 100) { Fail "Expected newReceivedQty=100, got $($resp.newReceivedQty)" }
-$firstReceiptId = $resp.receiptId
+$firstReceiptId = $resp.allocations[0].receiptId
 OK "Receipt $firstReceiptId, newReceivedQty=$($resp.newReceivedQty)"
 
 # ---------- 3. Receive cap violation ----------
@@ -42,14 +42,14 @@ try {
 }
 
 # ---------- 4. Receive zero qty ----------
-Step "Receive 0 (should 409 - non-positive)"
+Step "Receive 0 (should 400 - validation, per §3.5 contract)"
 $body = @{ pullItemId = $PullItemOpen; hourOfDay = 12; qty = 0 } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
-    Fail "Expected 409, got success"
+    Fail "Expected 400, got success"
 } catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 409) { Fail "Expected 409, got $($_.Exception.Response.StatusCode.value__)" }
-    OK "409 on Qty=0"
+    if ($_.Exception.Response.StatusCode.value__ -ne 400) { Fail "Expected 400, got $($_.Exception.Response.StatusCode.value__)" }
+    OK "400 on Qty=0"
 }
 
 # ---------- 5. Receive against closed pull ----------
@@ -86,7 +86,7 @@ $body = @{ pullItemId = $PullItemOpen; hourOfDay = 12; qty = 50 } | ConvertTo-Js
 $fresh = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session
 $body = @{ reason = 'pizza' } | ConvertTo-Json
 try {
-    Invoke-WebRequest -Uri "$base/api/receipts/$($fresh.receiptId)/cancel" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
+    Invoke-WebRequest -Uri "$base/api/receipts/$($fresh.allocations[0].receiptId)/cancel" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
     Fail "Expected 409 invalid reason, got success"
 } catch {
     if ($_.Exception.Response.StatusCode.value__ -ne 409) { Fail "Expected 409, got $($_.Exception.Response.StatusCode.value__)" }
@@ -94,7 +94,7 @@ try {
 }
 # clean up the fresh receipt
 $body = @{ reason = 'other'; note = 'cleanup' } | ConvertTo-Json
-Invoke-RestMethod -Uri "$base/api/receipts/$($fresh.receiptId)/cancel" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
+Invoke-RestMethod -Uri "$base/api/receipts/$($fresh.allocations[0].receiptId)/cancel" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
 
 # ---------- 9. View truth check ----------
 Step "Net received via vw_PullItemReceived = 0 (after both cancels)"

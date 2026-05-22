@@ -7,9 +7,13 @@ namespace ReceivingOps.Web.Data.Repositories;
 public class ReceiptRepository : IReceiptRepository
 {
     // Column list matches ReceiptJournalRow exactly so Dapper maps without explicit aliases.
+    // PO context columns (§4.8 v2) are populated by 013_views_v2.sql.
     private const string JournalSelect = @"
         SELECT  Id, PullItemId, PullId, PullNumber, WarehouseId, WarehouseCode, WarehouseName,
-                ItemCode, ItemDescription, HourOfDay, QtyReceived,
+                ItemCode, ItemDescription,
+                PurchaseOrderId, PoNumber, VendorCode, VendorName,
+                PurchaseOrderLineId, PoLineNumber,
+                HourOfDay, QtyReceived,
                 LotBatch, PalletId, BinLocation, QcStatus, Note,
                 ReceivedBy, ReceivedByName, ReceivedAt,
                 ReversesReceiptId, ReversedById, CancelReason, Kind
@@ -84,6 +88,11 @@ public class ReceiptRepository : IReceiptRepository
             where.Append("AND PullNumber = @PullNumber ");
             p.Add("PullNumber", filter.PullNumber);
         }
+        if (!string.IsNullOrWhiteSpace(filter.PoNumber))
+        {
+            where.Append("AND PoNumber = @PoNumber ");
+            p.Add("PoNumber", filter.PoNumber);
+        }
         if (!string.IsNullOrWhiteSpace(filter.ItemCode))
         {
             where.Append("AND ItemCode = @ItemCode ");
@@ -96,23 +105,26 @@ public class ReceiptRepository : IReceiptRepository
         }
         if (!string.IsNullOrWhiteSpace(filter.Q))
         {
-            // §6 multi-token AND match: every token must appear somewhere in
-            // (PullNumber + WarehouseCode + ItemCode + ItemDescription + LotBatch
-            // + PalletId + BinLocation + ReceivedByName + Note).
+            // §6 v2 multi-token AND match: every token must appear somewhere in
+            // (PullNumber + WarehouseCode + PoNumber + VendorName + ItemCode +
+            //  ItemDescription + LotBatch + PalletId + BinLocation +
+            //  ReceivedByName + Note).
             var tokens = filter.Q.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             for (int i = 0; i < tokens.Length; i++)
             {
                 var name = $"Q{i}";
                 where.Append($@"AND (
-                    PullNumber       LIKE @{name} OR
-                    WarehouseCode    LIKE @{name} OR
-                    ItemCode         LIKE @{name} OR
-                    ItemDescription  LIKE @{name} OR
-                    LotBatch         LIKE @{name} OR
-                    PalletId         LIKE @{name} OR
-                    BinLocation      LIKE @{name} OR
-                    ReceivedByName   LIKE @{name} OR
-                    ISNULL(Note,'')  LIKE @{name}
+                    PullNumber           LIKE @{name} OR
+                    WarehouseCode        LIKE @{name} OR
+                    PoNumber             LIKE @{name} OR
+                    ISNULL(VendorName,'') LIKE @{name} OR
+                    ItemCode             LIKE @{name} OR
+                    ItemDescription      LIKE @{name} OR
+                    LotBatch             LIKE @{name} OR
+                    PalletId             LIKE @{name} OR
+                    BinLocation          LIKE @{name} OR
+                    ReceivedByName       LIKE @{name} OR
+                    ISNULL(Note,'')      LIKE @{name}
                 ) ");
                 p.Add(name, "%" + tokens[i] + "%");
             }

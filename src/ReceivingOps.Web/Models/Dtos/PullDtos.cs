@@ -26,6 +26,10 @@ public class PullSummary
     public int NewCount { get; set; }
     public int WindowsTotal { get; set; }
     public int WindowsPending { get; set; }
+
+    // §3.5 — per-pull strict-mode flag. Default false = warehouse-wide FIFO.
+    // Set at create-time; immutable thereafter (PUT refuses any change).
+    public bool LockPoByPull { get; set; }
 }
 
 public class PullDetail : PullSummary
@@ -85,4 +89,32 @@ public class ReopenResult
 {
     public Guid PullId { get; set; }
     public DateTime ReopenedAt { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// §3.5 / §7.x admin write surface — POST /api/pulls + PUT /api/pulls/{id}
+// ---------------------------------------------------------------------------
+
+/// <summary>POST /api/pulls body. LockPoByPull defaults to false; if set, it's locked in at create and cannot change later.</summary>
+public class PullCreateRequest
+{
+    public string PullNumber { get; set; } = "";       // human-readable business key, UNIQUE
+    public Guid WarehouseId { get; set; }
+    public DateTime PullDate { get; set; }
+    public string? Eta { get; set; }
+    public string? Notes { get; set; }
+    public bool LockPoByPull { get; set; } = false;    // §3.5 immutable after create
+}
+
+/// <summary>
+/// PUT /api/pulls/{id} body. Edit-only — status transitions go through close/reopen.
+/// PullNumber + WarehouseId are intentionally absent (the business key + warehouse scope are immutable).
+/// LockPoByPull MUST echo the current value; any mismatch yields 409 (§3.5).
+/// </summary>
+public class PullUpdateRequest
+{
+    public DateTime PullDate { get; set; }
+    public string? Eta { get; set; }
+    public string? Notes { get; set; }
+    public bool LockPoByPull { get; set; }             // §3.5 — must echo; mismatch → 409
 }

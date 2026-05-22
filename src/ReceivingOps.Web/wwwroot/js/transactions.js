@@ -11,6 +11,8 @@ const PAGE_SIZE = 500;            // generous enough for the dashboard view; wil
 let currentRows = [];             // last server response (camelCase journal rows)
 let currentTotal = 0;
 let hourFilter = null;            // set by ?hour= URL param; cleared via banner X
+let sortBy = null;                // §5b — null = server order; 'po' = client sort by PoNumber·LineNumber·ReceivedAt
+let sortDir = 'asc';              // 'asc' | 'desc'
 
 /* ---------- DOM helpers ---------- */
 function escHtml(s) {
@@ -87,6 +89,9 @@ function buildQueryString() {
   const op = document.getElementById('f-operator').value;
   if (op && op !== 'all') params.set('receivedByName', op);
 
+  const po = document.getElementById('f-po')?.value;
+  if (po && po !== 'all') params.set('poNumber', po);
+
   if (hourFilter !== null) params.set('hour', String(hourFilter));
 
   params.set('take', String(PAGE_SIZE));
@@ -117,7 +122,7 @@ function computeDateRange(label) {
 /* ---------- Fetch + render ---------- */
 async function loadData() {
   const tbody = document.getElementById('tx-tbody');
-  tbody.innerHTML = `<tr><td colspan="10" class="empty-row"><i class="bi bi-hourglass-split"></i> Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="11" class="empty-row"><i class="bi bi-hourglass-split"></i> Loading…</td></tr>`;
 
   try {
     const resp = await fetch('/api/transactions?' + buildQueryString());
@@ -134,6 +139,7 @@ async function loadData() {
     currentRows = page.rows || [];
     currentTotal = page.total | 0;
     refreshOperators();
+    refreshPoFilter();
     render();
   } catch (e) {
     console.error('loadData failed', e);
@@ -151,9 +157,9 @@ function actionPillHtml(r) {
 
 function render() {
   const tbody = document.getElementById('tx-tbody');
-  const list = currentRows;
+  const list = sortBy === 'po' ? sortRowsByPo(currentRows, sortDir) : currentRows;
   if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-row">
       <i class="bi bi-inbox"></i>
       No transactions match your filter
     </td></tr>`;
@@ -203,6 +209,10 @@ function render() {
               ${reversalLink}
             </div>
           </td>
+          <td class="col-po" title="${escHtml(r.vendorName || '')}">
+            <b>${escHtml(r.poNumber || '—')}</b>${r.poLineNumber ? ` · L${escHtml(String(r.poLineNumber).padStart(2,'0'))}` : ''}
+            ${r.vendorName ? `<span class="po-vendor">${escHtml(r.vendorName)}</span>` : ''}
+          </td>
           <td class="num">${String(r.hourOfDay).padStart(2,'0')}:00</td>
           <td class="num" style="${isReversal ? 'color: var(--error);' : ''}">${qtyDisplay}</td>
           <td>${lotPallet}</td>
@@ -249,6 +259,40 @@ function refreshOperators() {
   const cur = sel.value;
   sel.innerHTML = `<option value="all">All operators</option>` + ops.map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
   sel.value = ops.includes(cur) || cur === 'all' ? cur : 'all';
+}
+
+// §5b — populate the PO dropdown from distinct PoNumbers in the current page
+// of results. No extra API call: the server-side filter is `poNumber=` and a
+// single change-event triggers loadData() which rebuilds this list.
+function refreshPoFilter() {
+  const sel = document.getElementById('f-po');
+  if (!sel) return;
+  const pos = [...new Set(currentRows.map(r => r.poNumber).filter(Boolean))].sort();
+  const cur = sel.value;
+  sel.innerHTML = `<option value="all">All POs</option>` +
+    pos.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+  // Preserve selection if still valid; else fall back to "all".
+  sel.value = (pos.includes(cur) || cur === 'all') ? cur : 'all';
+}
+
+// §5b — client-side sort. Tiebreak: LineNumber asc, then ReceivedAt DESC
+// (so the newest receipt within a PO·Line group ends up first).
+function sortRowsByPo(rows, dir) {
+  const mult = dir === 'desc' ? -1 : 1;
+  const arr = rows.slice();
+  arr.sort((a, b) => {
+    const pa = a.poNumber || '';
+    const pb = b.poNumber || '';
+    if (pa !== pb) return pa.localeCompare(pb) * mult;
+    const la = a.poLineNumber | 0;
+    const lb = b.poLineNumber | 0;
+    if (la !== lb) return (la - lb) * mult;
+    // ReceivedAt tiebreak always DESC (most recent within group first), per spec.
+    const ta = new Date(a.receivedAt).getTime() || 0;
+    const tb = new Date(b.receivedAt).getTime() || 0;
+    return tb - ta;
+  });
+  return arr;
 }
 
 /* ---------- Cancel flow ---------- */
@@ -339,6 +383,9 @@ function exportToExcel() {
       'Warehouse':     r.warehouseCode,
       'Item Code':     r.itemCode,
       'Description':   r.itemDescription,
+      'PO':            r.poNumber || '',
+      'PO Line':       r.poLineNumber || '',
+      'Vendor':        r.vendorName || '',
       'Hour':          String(r.hourOfDay).padStart(2,'0') + ':00',
       'Quantity':      r.qtyReceived,
       'Lot/Batch':     r.lotBatch,
@@ -354,6 +401,7 @@ function exportToExcel() {
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = [
       {wch:36},{wch:10},{wch:18},{wch:10},{wch:8},{wch:18},{wch:32},
+      {wch:14},{wch:7},{wch:22},
       {wch:6},{wch:9},{wch:16},{wch:12},{wch:10},{wch:10},{wch:32},{wch:14},{wch:36},{wch:36},{wch:14}
     ];
     XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
@@ -387,8 +435,9 @@ function onFilterChange() {
 }
 
 document.getElementById('f-search').addEventListener('input', onFilterChange);
-['f-warehouse','f-action','f-date','f-operator'].forEach(id => {
-  document.getElementById(id).addEventListener('change', loadData);
+['f-warehouse','f-action','f-date','f-operator','f-po'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', loadData);
 });
 
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
@@ -397,10 +446,30 @@ document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.getElementById('f-action').value = 'all';
   document.getElementById('f-date').value = 'all';
   document.getElementById('f-operator').value = 'all';
-  // Also clear hour banner — it's part of the filter set even though it's not a dropdown.
+  const poSel = document.getElementById('f-po');
+  if (poSel) poSel.value = 'all';
+  // Also clear sort + hour banner — both are part of the filter set even though they're not dropdowns.
+  sortBy = null; sortDir = 'asc';
+  document.querySelectorAll('.data-table th.sortable').forEach(th => th.classList.remove('sort-asc','sort-desc'));
   hourFilter = null;
   document.getElementById('hour-filter-banner').style.display = 'none';
   loadData();
+});
+
+// §5b — PO column sort. Client-side on the currently rendered page; no refetch.
+document.querySelectorAll('.data-table th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (sortBy === key) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortBy = key;
+      sortDir = 'asc';
+    }
+    document.querySelectorAll('.data-table th.sortable').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+    th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    render();
+  });
 });
 
 document.getElementById('btn-refresh').addEventListener('click', () => {

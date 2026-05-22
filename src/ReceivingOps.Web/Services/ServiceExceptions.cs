@@ -23,3 +23,9 @@ public class PayloadTooLargeException : Exception
 {
     public PayloadTooLargeException(string message) : base(message) { }
 }
+
+/// <summary>Input shape is invalid (out-of-range qty, malformed param). Maps to HTTP 400.</summary>
+public class ValidationException : Exception
+{
+    public ValidationException(string message) : base(message) { }
+}

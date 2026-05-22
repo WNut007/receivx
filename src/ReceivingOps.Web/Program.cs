@@ -83,6 +83,7 @@ builder.Services.AddScoped<IWarehouseRepository, WarehouseRepository>();
 builder.Services.AddScoped<IAssignmentRepository, AssignmentRepository>();
 builder.Services.AddScoped<IPullRepository, PullRepository>();
 builder.Services.AddScoped<IReceiptRepository, ReceiptRepository>();
+builder.Services.AddScoped<IPurchaseOrderRepository, PurchaseOrderRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
 
@@ -91,6 +92,8 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IReceiptService, ReceiptService>();
 builder.Services.AddScoped<ICloseService, CloseService>();
 builder.Services.AddScoped<IMastersService, MastersService>();
+builder.Services.AddScoped<IPurchaseOrderAdminService, PurchaseOrderAdminService>();
+builder.Services.AddScoped<IPullAdminService, PullAdminService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 

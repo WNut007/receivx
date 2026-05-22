@@ -19,4 +19,7 @@ public class Pull
     public DateTime? ReopenedAt { get; set; }
     public Guid? ReopenedBy { get; set; }
     public string? ReopenReason { get; set; }
+    // §3.5 — when true, FIFO scope is restricted to POs linked to this pull (PO.PullId = this.Id).
+    // Default false = warehouse-wide FIFO (backward compat). Immutable after pull creation.
+    public bool LockPoByPull { get; set; }
 }

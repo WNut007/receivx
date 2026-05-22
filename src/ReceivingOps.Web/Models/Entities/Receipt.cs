@@ -4,6 +4,12 @@ public class Receipt
 {
     public Guid Id { get; set; }
     public Guid PullItemId { get; set; }
+
+    // §4.7 v2 — PO binding. Set by the server's FIFO allocator (positive rows)
+    // or copied from the original (reversal rows). Never chosen by the user.
+    public Guid PurchaseOrderId { get; set; }
+    public Guid PurchaseOrderLineId { get; set; }
+
     public byte HourOfDay { get; set; }
     public int QtyReceived { get; set; }       // positive = receive, negative = reversal
     public string? LotBatch { get; set; }

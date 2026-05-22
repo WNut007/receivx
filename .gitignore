@@ -36,3 +36,9 @@ secrets.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Local DB backups (manual snapshots; large + machine-specific)
+db_backup/
+
+# Dev server stdout capture (from `dotnet run | tee dev-server.log`)
+dev-server.log

@@ -14,11 +14,13 @@ public class PullsApiController : ControllerBase
 {
     private readonly IPullRepository _pulls;
     private readonly ICloseService _close;
+    private readonly IPullAdminService _admin;
 
-    public PullsApiController(IPullRepository pulls, ICloseService close)
+    public PullsApiController(IPullRepository pulls, ICloseService close, IPullAdminService admin)
     {
         _pulls = pulls;
         _close = close;
+        _admin = admin;
     }
 
     // §6 GET /api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=
@@ -69,6 +71,38 @@ public class PullsApiController : ControllerBase
             }
         }
         return Task.FromResult<ActionResult<PullDetail>>(Ok(pull));
+    }
+
+    // §3.5 POST /api/pulls — create a new pull with optional LockPoByPull
+    [HttpPost]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullDetail>> Create([FromBody] PullCreateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            var newId = await _admin.CreateAsync(req, ct);
+            var detail = await _pulls.GetByIdAsync(newId, ct);
+            return CreatedAtAction(nameof(GetById), new { id = newId }, detail);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // §3.5 PUT /api/pulls/{id} — edit PullDate / Eta / Notes
+    // LockPoByPull must echo the current value or 409 (strict immutability, both directions).
+    [HttpPut("{id:guid}")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullDetail>> Update(Guid id, [FromBody] PullUpdateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            await _admin.UpdateAsync(id, req, ct);
+            var detail = await _pulls.GetByIdAsync(id, ct);
+            return Ok(detail);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
     }
 
     // §7.4 POST /api/pulls/{id}/close

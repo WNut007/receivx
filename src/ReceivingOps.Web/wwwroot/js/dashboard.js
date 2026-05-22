@@ -97,6 +97,7 @@
       dateISO:       iso,
       dateGroup:     classifyDateGroup(iso),
       warehouse:     s.warehouseCode,
+      warehouseId:   s.warehouseId,
       whName:        s.warehouseName,
       status:        s.status,
       itemCount:     s.itemCount,
@@ -112,14 +113,19 @@
       operator:      operator,
       operatorCount: 1,               // server doesn't track multi-operator yet
       eta:           s.eta || '—',
+      etaRaw:        s.eta || '',
+      notesRaw:      s.notes || '',
       tags:          tags,
       isReopened:    s.isReopened,
+      // §3.5 — mirror of Pulls.LockPoByPull; surfaces in card + drawer + modal
+      lockPoByPull:  !!s.lockPoByPull,
     };
   }
 
   // ============ FETCH ============
   function currentWhFilter()   { return document.getElementById('wh-filter').value; }
   function currentDateFilter() { return document.getElementById('date-filter').value; }
+  function currentLockFilter() { return document.getElementById('lock-filter')?.value || 'all'; }
   function currentSearch()     { return document.getElementById('search-input').value.trim(); }
 
   async function loadPulls() {
@@ -163,6 +169,9 @@
         if (p.dateISO < customRange.from || p.dateISO > customRange.to) return false;
       } else if (p.dateGroup !== d) return false;
     }
+    const lock = currentLockFilter();
+    if (lock === 'locked'   && !p.lockPoByPull) return false;
+    if (lock === 'unlocked' &&  p.lockPoByPull) return false;
     const q = currentSearch().toLowerCase();
     if (q) {
       const h = `${p.id} ${p.warehouse} ${p.whName} ${p.operator}`.toLowerCase();
@@ -218,10 +227,13 @@
                        : p.status === 'fully_received' ? 'Ready to close'
                        : 'In progress';
 
+    const lockBadge = p.lockPoByPull
+      ? `<span class="lock-badge" title="Pull-locked PO allocation (§3.5)"><i class="bi bi-lock-fill"></i></span>`
+      : '';
     card.innerHTML = `
       ${lockedIcon}
       <div class="card-head">
-        <span class="card-id">${p.id}</span>
+        <span class="card-id">${p.id}${lockBadge}</span>
         <span class="card-date">${p.date.split(' ').slice(0,2).join(' ')}</span>
       </div>
       <div class="card-wh">${p.warehouse} · ${p.whName}</div>
@@ -329,6 +341,35 @@
       : 'Not started';
     document.getElementById('d-operator').textContent = p.operator;
 
+    // §3.5 — lock mode pill + linked POs
+    const modeEl = document.getElementById('d-lock-mode');
+    if (modeEl) {
+      modeEl.innerHTML = p.lockPoByPull
+        ? `<span class="lock-mode-pill locked"><i class="bi bi-lock-fill"></i> Pull-locked</span>`
+        : `<span class="lock-mode-pill unlocked"><i class="bi bi-globe"></i> Warehouse-wide</span>`;
+    }
+    const linkedLinkEl = document.getElementById('d-linked-pos-link');
+    const linkedEl = document.getElementById('d-linked-pos');
+    if (linkedEl && linkedLinkEl) {
+      if (p.lockPoByPull) {
+        linkedEl.textContent = 'Loading…';
+        linkedLinkEl.href = `/Pos?pullId=${encodeURIComponent(p.pullId)}`;
+        linkedLinkEl.style.pointerEvents = 'auto';
+        // Fetch linked-POs count for this pull; counted client-side.
+        fetch('/api/pos?warehouseId=' + encodeURIComponent(p.warehouseId || ''))
+          .then(r => r.ok ? r.json() : [])
+          .then(rows => {
+            const n = rows.filter(r => r.pullId === p.pullId).length;
+            linkedEl.textContent = `${n} PO${n === 1 ? '' : 's'} linked`;
+          })
+          .catch(() => { linkedEl.textContent = '—'; });
+      } else {
+        linkedEl.textContent = 'n/a (cross-pull pool)';
+        linkedLinkEl.removeAttribute('href');
+        linkedLinkEl.style.pointerEvents = 'none';
+      }
+    }
+
     const launchBtn = document.getElementById('d-launch');
     if (p.status === 'closed') {
       launchBtn.innerHTML = `<i class="bi bi-eye me-1"></i> View (read-only)`;
@@ -364,6 +405,146 @@
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
   }
+
+  // ============ §3.5 / §7.15 — PULL CREATE / EDIT MODAL ============
+  // One modal serves both create and edit. In edit mode, PullNumber + Warehouse
+  // + the LockPoByPull checkbox are all disabled (immutable post-create).
+  // The server enforces all three; this is UI defense-in-depth + a clear hint.
+  const pullModalEl = document.getElementById('pullModal');
+  const pullModal = pullModalEl ? new bootstrap.Modal(pullModalEl) : null;
+  let pullModalMode = 'create';   // 'create' | 'edit'
+  let editingPullId = null;        // GUID when mode === 'edit'
+  let warehousesCache = null;      // /api/warehouses?status=active
+
+  async function ensureWarehouses() {
+    if (warehousesCache) return warehousesCache;
+    try {
+      const r = await fetch('/api/warehouses?status=active');
+      warehousesCache = r.ok ? await r.json() : [];
+    } catch { warehousesCache = []; }
+    return warehousesCache;
+  }
+
+  function populateWarehouseSelect(sel, current) {
+    sel.innerHTML = warehousesCache
+      .map(w => `<option value="${w.id}">${w.code} · ${w.name}</option>`)
+      .join('');
+    if (current) sel.value = current;
+  }
+
+  async function openCreatePullModal() {
+    if (!pullModal) return;
+    pullModalMode = 'create';
+    editingPullId = null;
+    document.getElementById('pm-title').textContent = 'New Pull';
+    document.getElementById('pm-save').textContent = 'Create pull';
+
+    await ensureWarehouses();
+    populateWarehouseSelect(document.getElementById('pm-warehouse'), null);
+
+    document.getElementById('pm-pull-number').value = '';
+    document.getElementById('pm-pull-number').disabled = false;
+    document.getElementById('pm-warehouse').disabled = false;
+    document.getElementById('pm-pull-date').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('pm-eta').value = '';
+    document.getElementById('pm-notes').value = '';
+
+    const lockChk = document.getElementById('pm-lock-po-by-pull');
+    lockChk.checked = false;
+    lockChk.disabled = false;
+    document.getElementById('pm-lock-card').classList.remove('locked-immutable');
+    document.getElementById('pm-lock-help').textContent =
+      'When enabled, only POs explicitly linked to this pull can be received against. ' +
+      'Cannot be changed after creation (§7.15 / §3.5 Mode B).';
+
+    pullModal.show();
+  }
+
+  async function openEditPullModal() {
+    if (!pullModal || !selectedPullId) return;
+    const p = pulls.find(x => x.pullId === selectedPullId);
+    if (!p) return;
+    pullModalMode = 'edit';
+    editingPullId = p.pullId;
+    document.getElementById('pm-title').textContent = 'Edit Pull · ' + p.id;
+    document.getElementById('pm-save').textContent = 'Save changes';
+
+    await ensureWarehouses();
+    populateWarehouseSelect(document.getElementById('pm-warehouse'), p.warehouseId || null);
+
+    document.getElementById('pm-pull-number').value = p.id;
+    document.getElementById('pm-pull-number').disabled = true;   // immutable
+    document.getElementById('pm-warehouse').disabled = true;     // immutable
+    document.getElementById('pm-pull-date').value = p.dateISO;
+    document.getElementById('pm-eta').value = p.etaRaw || '';
+    document.getElementById('pm-notes').value = p.notesRaw || '';
+
+    const lockChk = document.getElementById('pm-lock-po-by-pull');
+    lockChk.checked = p.lockPoByPull;
+    lockChk.disabled = true;                                     // §7.15 immutable
+    document.getElementById('pm-lock-card').classList.toggle('locked-immutable', p.lockPoByPull);
+    document.getElementById('pm-lock-help').innerHTML =
+      '<i class="bi bi-lock-fill"></i> Immutable after pull creation (§7.15). ' +
+      'Cancel and re-issue if the allocation mode needs to change.';
+
+    drawer.hide();
+    pullModal.show();
+  }
+
+  async function savePullModal() {
+    if (!pullModal) return;
+    const body = {
+      pullDate:     document.getElementById('pm-pull-date').value || null,
+      eta:          document.getElementById('pm-eta').value.trim() || null,
+      notes:        document.getElementById('pm-notes').value.trim() || null,
+      lockPoByPull: document.getElementById('pm-lock-po-by-pull').checked,
+    };
+
+    let url, method;
+    if (pullModalMode === 'create') {
+      body.pullNumber  = document.getElementById('pm-pull-number').value.trim();
+      body.warehouseId = document.getElementById('pm-warehouse').value;
+      if (!body.pullNumber || !body.warehouseId || !body.pullDate) {
+        return showToast('Missing required field', 'Pull #, warehouse, date');
+      }
+      url = '/api/pulls';
+      method = 'POST';
+    } else {
+      url = '/api/pulls/' + encodeURIComponent(editingPullId);
+      method = 'PUT';
+    }
+
+    const btn = document.getElementById('pm-save');
+    btn.disabled = true;
+    try {
+      const r = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+      if (!r.ok) {
+        let title = 'Save failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        showToast('Could not save pull', title);
+        return;
+      }
+      pullModal.hide();
+      showToast(pullModalMode === 'create' ? 'Pull created' : 'Pull updated',
+                pullModalMode === 'create'
+                    ? body.pullNumber + (body.lockPoByPull ? ' · locked' : '')
+                    : 'Saved');
+      await loadPulls();
+    } catch (e) {
+      showToast('Network error', e.message || 'Could not reach server');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('btn-new-pull')?.addEventListener('click', openCreatePullModal);
+  document.getElementById('d-edit')?.addEventListener('click', openEditPullModal);
+  document.getElementById('pm-save')?.addEventListener('click', savePullModal);
 
   // ============ EXPORT TO EXCEL ============
   // Identical to the mockup — operates on the in-memory filtered list.
@@ -425,6 +606,7 @@
 
   // ============ FILTER LISTENERS ============
   document.getElementById('wh-filter').addEventListener('change', render);
+  document.getElementById('lock-filter')?.addEventListener('change', render);
   // Debounce search so we don't refilter on every keystroke (but no refetch
   // since server already returned everything for this date range).
   let searchTimer = null;

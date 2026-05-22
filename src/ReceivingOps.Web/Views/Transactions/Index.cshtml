@@ -130,6 +130,12 @@
             <option value="all">All operators</option>
           </select>
         </div>
+        <div class="field-group">
+          <span class="field-label">PO</span>
+          <select class="form-select" id="f-po">
+            <option value="all">All POs</option>
+          </select>
+        </div>
         <button class="btn" id="btn-clear-filters" title="Clear filters">
           <i class="bi bi-x-circle"></i> Clear
         </button>
@@ -144,6 +150,8 @@
               <th style="width: 90px;">Action</th>
               <th>Pull / Warehouse</th>
               <th>Item</th>
+              <th class="col-po sortable" data-sort="po" title="Click to sort by PO · Line"
+                  style="width: 140px;">PO · Line <span class="sort-indicator"></span></th>
               <th style="width: 60px;" class="num">Hour</th>
               <th style="width: 110px;" class="num">Qty</th>
               <th>Lot / Pallet</th>

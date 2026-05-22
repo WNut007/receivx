@@ -22,6 +22,7 @@ public class PullRepository : IPullRepository
                 p.ClosedAt,
                 cb.Name AS ClosedByName,
                 CAST(CASE WHEN p.ReopenedAt IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS IsReopened,
+                p.LockPoByPull,
                 ISNULL(vp.TotalExpected,  0) AS TotalExpected,
                 ISNULL(vp.TotalReceived,  0) AS TotalReceived,
                 ISNULL(vp.ActiveItemCount, 0) +
@@ -176,6 +177,7 @@ public class PullRepository : IPullRepository
             ClosedAt = summary.ClosedAt,
             ClosedByName = summary.ClosedByName,
             IsReopened = summary.IsReopened,
+            LockPoByPull = summary.LockPoByPull,
             TotalExpected = summary.TotalExpected,
             TotalReceived = summary.TotalReceived,
             ItemCount = summary.ItemCount,
