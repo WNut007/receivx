@@ -383,39 +383,52 @@
     }
     .app-nav-toggle:hover { background: var(--surface-3); color: var(--text); }
 
-    /* Hamburger / nav toggle — rounded white card with chevron icon.
-       Single visual treatment in both nav modes:
-         - horizontal: click hides the bar (floating card takes over)
-         - vertical:   click collapses the sidebar to an icon rail
-       Chevron points LEFT (<) when nav is visible/expanded; rotates 180°
-       when the vertical sidebar is collapsed. In horizontal-hidden state
-       the floating-hamburger (chevron-right) sits in the corner instead. */
+    /* Hamburger / nav toggle — split-button with internal vertical divider
+       at 1/3 from the left. Left section is a blank "grip" area; the right
+       2/3 centers the chevron. Same visual treatment in both nav modes;
+       chevron rotates 180° when the vertical sidebar is collapsed.
+       The horizontal-hidden state is covered by the floating hamburger. */
     .app-nav-hamburger {
       background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      width: 40px;
-      height: 30px;
+      border: 0.5px solid var(--border);
+      width: 56px;
+      height: 36px;
       border-radius: 8px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+      display: flex;
+      align-items: stretch;
       padding: 0;
+      overflow: hidden;
       cursor: pointer;
       box-shadow: var(--shadow-sm);
-      transition: background 0.15s ease, border-color 0.15s ease,
-                  box-shadow 0.15s ease, transform 0.18s ease;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease,
+                  transform 0.18s ease;
       flex-shrink: 0;
     }
+    .app-nav-hamburger::before {
+      content: '';
+      width: 33.33%;
+      border-right: 0.5px solid var(--border);
+      flex-shrink: 0;
+      transition: border-right-color 0.15s ease;
+    }
     .app-nav-hamburger:hover {
-      background: var(--surface-2);
       border-color: var(--border-bright);
       box-shadow: var(--shadow-md);
     }
+    .app-nav-hamburger:hover::before {
+      border-right-color: var(--border-bright);
+    }
     .app-nav-hamburger:active { transform: scale(0.96); }
 
+    .app-nav-chevron-wrap {
+      width: 66.67%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
     .app-nav-chevron-icon {
-      font-size: 15px;
+      font-size: 14px;
       line-height: 1;
       color: var(--text-dim);
       transition: transform 0.25s ease, color 0.15s ease;
@@ -694,8 +707,8 @@
       .app-nav.position-horizontal { padding: 10px 14px; gap: 8px; }
       .app-nav-item .label { display: none; }
       .app-nav-profile-trigger .who { display: none; }
-      /* Larger hit target on touch */
-      .app-nav-hamburger { width: 46px; height: 36px; }
+      /* Larger hit target on touch — preserve 56:36 ≈ 1.55:1 ratio */
+      .app-nav-hamburger { width: 62px; height: 40px; }
     }
 
     /* Hide redundant in-page theme switchers and user-chips — the app-nav owns these now.
@@ -791,10 +804,12 @@
       </div>
     `;
 
-    // Hamburger button markup — single chevron-left card across both modes.
-    // CSS rotates 180° when the vertical sidebar collapses; for horizontal
+    // Hamburger button markup — split-button across both modes.
+    // The ::before pseudo paints the left "grip" 1/3 + divider; the wrap
+    // span occupies the right 2/3 and centers the chevron. CSS rotates
+    // the chevron 180° when the vertical sidebar collapses; for horizontal
     // "hidden" state the floating-hamburger (chevron-right) takes over.
-    const hamburgerIconHTML = `<i class="bi bi-chevron-left app-nav-chevron-icon"></i>`;
+    const hamburgerIconHTML = `<span class="app-nav-chevron-wrap"><i class="bi bi-chevron-left app-nav-chevron-icon"></i></span>`;
     const hamburgerTitle = PREF.navPosition === 'vertical' ? 'Toggle Navigation Size' : 'Hide navigation';
     const hamburgerHTML = `
       <button class="app-nav-hamburger" id="app-nav-hide-toggle" title="${hamburgerTitle}" aria-label="${hamburgerTitle}">
