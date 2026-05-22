@@ -758,8 +758,7 @@
               <div class="meta-line"><span>Username</span><span>${u.username || '—'}</span></div>
               <div class="meta-line"><span>Session</span><span>${u.signedInAt ? new Date(u.signedInAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>
             </div>
-            <a class="app-nav-profile-menu-item" href="config.html"><i class="bi bi-person-gear"></i> Profile &amp; account</a>
-            <a class="app-nav-profile-menu-item" href="config.html"><i class="bi bi-sliders"></i> Settings</a>
+            <a class="app-nav-profile-menu-item" href="/Config"><i class="bi bi-sliders"></i> Settings</a>
 
             <button class="app-nav-profile-menu-item app-nav-theme-toggle" id="app-nav-theme-toggle" aria-expanded="false">
               <i class="bi bi-palette"></i>
@@ -785,7 +784,6 @@
               </button>
             </div>
 
-            <a class="app-nav-profile-menu-item" href="#" id="app-nav-help"><i class="bi bi-question-circle"></i> Help &amp; support</a>
             <div class="app-nav-profile-divider"></div>
             <button class="app-nav-profile-menu-item danger" id="app-nav-signout"><i class="bi bi-box-arrow-right"></i> Logout</button>
           </div>
@@ -995,9 +993,6 @@
       window.location.href = LOGIN_URL;
     });
 
-    // Help (placeholder)
-    const help = document.getElementById('app-nav-help');
-    if (help) help.addEventListener('click', (e) => { e.preventDefault(); alert('Help center coming soon'); });
   }
 
   function setBehavior(b) {
