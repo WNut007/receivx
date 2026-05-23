@@ -27,48 +27,82 @@
             <p class="page-subtitle">Closed pulls with delivery activity. Click a row to preview the DO or export PDF.</p>
         </div>
 
-        @if (Model.Count == 0)
-        {
-            <div class="empty">
-                No closed pulls with delivery activity yet. Close a pull (Receive → Close)
-                with at least one non-cancelled receipt and it will appear here.
-            </div>
-        }
-        else
-        {
-            <table class="reports-table">
-                <thead>
-                    <tr>
-                        <th>Pull #</th>
-                        <th>Date</th>
-                        <th>Warehouse</th>
-                        <th>Reference</th>
-                        <th class="text-end">Received</th>
-                        <th>Closed by</th>
-                        <th class="actions">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var p in Model)
+        <div class="reports-filter-bar">
+            <input type="text" class="form-control filter-q" placeholder="Search PO number, item code…">
+            <input type="text" class="form-control filter-pull" placeholder="Pull number">
+            <input type="date" class="form-control filter-from">
+            <input type="date" class="form-control filter-to">
+            <select class="form-select filter-wh">
+                <option value="">All warehouses</option>
+                @* Warehouse options populated client-side from /api/warehouses *@
+            </select>
+            <span class="result-count" id="result-count">@Model.Count pull@(Model.Count == 1 ? "" : "s")</span>
+        </div>
+
+        <div class="reports-split">
+            <aside class="reports-list-pane">
+                <div class="list-header">CLOSED PULLS</div>
+                <ul class="pull-rows" id="pull-rows">
+                    @if (Model.Count == 0)
                     {
-                        <tr>
-                            <td><span class="pull-num">@p.PullNumber</span></td>
-                            <td>@p.PullDate.ToString("yyyy-MM-dd")</td>
-                            <td>@p.WarehouseCode · @p.WarehouseName</td>
-                            <td>@(string.IsNullOrEmpty(p.ReferenceNumber) ? "—" : p.ReferenceNumber)</td>
-                            <td class="text-end">@p.TotalReceived.ToString("N0")</td>
-                            <td>@(p.ClosedByName ?? "—")</td>
-                            <td class="actions">
-                                <a href="/Reports/Do/@p.Id" title="Open the DO preview"><i class="bi bi-eye"></i> Preview</a>
-                                <a href="/Reports/Do/@p.Id/pdf" title="Download the DO as PDF"><i class="bi bi-download"></i> PDF</a>
-                            </td>
-                        </tr>
+                        <li class="list-empty">
+                            No closed pulls with delivery activity yet. Close a pull (Receive → Close)
+                            with at least one non-cancelled receipt and it will appear here.
+                        </li>
                     }
-                </tbody>
-            </table>
-        }
+                    else
+                    {
+                        @foreach (var p in Model)
+                        {
+                            <li class="pull-row"
+                                data-pull-id="@p.Id"
+                                data-pull-number="@p.PullNumber"
+                                data-warehouse-id="@p.WarehouseId">
+                                <div class="row-top">
+                                    <span class="pull-number">@p.PullNumber</span>
+                                    @if (p.LockPoByPull)
+                                    {
+                                        <span class="pull-lock-badge" title="PO allocation locked to this pull">PO LOCK</span>
+                                    }
+                                </div>
+                                <div class="row-meta">
+                                    <span>@p.PullDate.ToString("yyyy-MM-dd")</span>
+                                    <span>@p.WarehouseCode</span>
+                                </div>
+                                <div class="row-stats">
+                                    <span>Items <b>@p.ItemCount</b></span>
+                                    <span>Qty <b>@p.TotalReceived.ToString("N0")</b></span>
+                                    @if (!string.IsNullOrEmpty(p.ReferenceNumber))
+                                    {
+                                        <span title="Reference: @p.ReferenceNumber"><i class="bi bi-paperclip"></i></span>
+                                    }
+                                </div>
+                            </li>
+                        }
+                    }
+                </ul>
+            </aside>
+
+            <main class="reports-preview-pane">
+                <div class="preview-toolbar">
+                    <div class="preview-title" id="preview-title">SELECT A PULL TO PREVIEW</div>
+                    <div class="preview-actions">
+                        <button class="btn btn-outline-secondary btn-print" id="btn-print" disabled>
+                            <i class="bi bi-printer"></i> Print
+                        </button>
+                        <button class="btn btn-primary btn-export-pdf" id="btn-export-pdf" disabled>
+                            <i class="bi bi-download"></i> Export PDF
+                        </button>
+                    </div>
+                </div>
+                <div class="preview-body" id="preview-body">
+                    <div class="preview-empty">Click a pull from the left to see its delivery orders.</div>
+                </div>
+            </main>
+        </div>
     </div>
 </div>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="~/js/reports.js" asp-append-version="true"></script>
 </body>
 </html>

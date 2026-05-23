@@ -8,6 +8,11 @@ using ReceivingOps.Web.Services;
 namespace ReceivingOps.Web.Controllers;
 
 // v2.x Phase 7.3 — Reports view (Delivery Order render).
+// v2.x Phase 7.4 — Two-pane layout: list + inline HTML preview replaces the
+// standalone /Reports/Do/{id} page. The PDF endpoint moves under /api/reports
+// in commit 4 — for the duration of commit 1 it stays at /Reports/Do/{id}/pdf
+// so the existing smoke + any external links keep working until that commit.
+//
 // CanManagePulls = admin + supervisor (matches Phase 5c /Pos convention —
 // the operator who closed the pull also wants to print the paperwork; non-
 // admins on other warehouses are scoped out at the repo query.)
@@ -24,7 +29,8 @@ public class ReportsController : Controller
     }
 
     // GET /Reports — list of closed pulls with delivery activity (the DO
-    // candidates). Non-admin sessions get their session warehouse only.
+    // candidates) rendered server-side into the two-pane layout. Non-admin
+    // sessions get their session warehouse only.
     [HttpGet("/Reports")]
     public async Task<IActionResult> Index(CancellationToken ct)
     {
@@ -34,40 +40,11 @@ public class ReportsController : Controller
         return View(rows);
     }
 
-    // GET /Reports/Do/{id} — page chrome that embeds the PDF in an iframe.
-    // FastReport.OpenSource.Web does not ship the interactive JS viewer
-    // assets, so we lean on the browser's built-in PDF viewer. BuildAsync
-    // still runs as the eligibility gate (open pull or no-receipt pull →
-    // 400 before the iframe even loads).
-    [HttpGet("/Reports/Do/{id:guid}")]
-    public async Task<IActionResult> Do(Guid id, CancellationToken ct)
-    {
-        try
-        {
-            using var report = await _doService.BuildAsync(id, ct);
-            // Scope-check: same pattern as PullsApiController.ResolveAsync.
-            // Non-admin → 403 if the pull is not on their session warehouse.
-            if (!User.IsInRole("admin"))
-            {
-                var sessionWh = ParseGuid(User.FindFirstValue("warehouseId"));
-                var pull = await _pulls.GetByIdAsync(id, ct);
-                if (pull is null || pull.WarehouseId != sessionWh)
-                    return Forbid();
-            }
-            ViewData["PageId"] = "reports";
-            ViewData["PullId"] = id;
-            return View();
-        }
-        catch (NotFoundException) { return NotFound(); }
-        catch (BusinessException ex) { return BadRequest(ex.Message); }
-    }
-
-    // GET /Reports/Do/{id}/pdf — PDF stream served INLINE so the browser's
-    // built-in PDF viewer can render it inside the preview iframe. The
-    // ?dl=1 toggle forces attachment disposition (used by the explicit
-    // Download PDF button); without it the suggested filename rides along
-    // in Content-Disposition: inline so right-click Save still gets a
-    // sensible name.
+    // GET /Reports/Do/{id}/pdf — direct PDF stream. Inline disposition so the
+    // commit-2 Export PDF button can open it in a new tab; ?dl=1 forces an
+    // attachment download. Rewired to /api/reports/do/{id}/export.pdf in
+    // commit 4 when the preview endpoint lands and the URL space gets
+    // canonicalized.
     [HttpGet("/Reports/Do/{id:guid}/pdf")]
     public async Task<IActionResult> DoPdf(Guid id, [FromQuery(Name = "dl")] int dl, CancellationToken ct)
     {
@@ -85,8 +62,6 @@ public class ReportsController : Controller
             using var pdf = new PDFSimpleExport();
             report.Export(pdf, ms);
 
-            // Resolve pull number for the filename — separate fetch is fine
-            // (one extra query per download; cached at the SQL Server level).
             var detail = await _pulls.GetByIdAsync(id, ct);
             var filename = $"{(detail?.PullNumber ?? id.ToString())}-DO.pdf";
             var disposition = dl == 1 ? "attachment" : "inline";
