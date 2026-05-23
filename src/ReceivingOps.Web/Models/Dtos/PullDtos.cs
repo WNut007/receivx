@@ -141,4 +141,5 @@ public class PullUpdateRequest
     public string? Eta { get; set; }
     public string? Notes { get; set; }
     public bool LockPoByPull { get; set; }             // §3.5 — must echo; mismatch → 409
+    public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — must echo current value; mismatch → 409
 }

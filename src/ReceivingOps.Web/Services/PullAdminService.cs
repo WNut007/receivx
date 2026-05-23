@@ -88,7 +88,7 @@ public class PullAdminService : IPullAdminService
         try
         {
             var pull = await conn.QuerySingleOrDefaultAsync<PullLockRow>(new CommandDefinition(@"
-                SELECT Id, PullNumber, Status, LockPoByPull
+                SELECT Id, PullNumber, Status, LockPoByPull, LockHourCap
                 FROM   dbo.Pulls WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = id }, transaction: tx, cancellationToken: ct))
@@ -98,6 +98,13 @@ public class PullAdminService : IPullAdminService
             if (req.LockPoByPull != pull.LockPoByPull)
                 throw new BusinessException(
                     "LockPoByPull is immutable after pull creation.");
+
+            // v2.1 Phase 6 — LockHourCap is immutable after create. Same strict-echo
+            // pattern as LockPoByPull — the cap flag is a procurement-level decision
+            // taken once and rejected on every subsequent edit attempt.
+            if (req.LockHourCap != pull.LockHourCap)
+                throw new BusinessException(
+                    "LockHourCap is immutable after pull creation.");
 
             // §7.12 — closed pulls are read-only at this surface (reopen via §7.5 first).
             if (string.Equals(pull.Status, "closed", StringComparison.Ordinal))
@@ -160,5 +167,6 @@ public class PullAdminService : IPullAdminService
         public string PullNumber { get; set; } = "";
         public string Status { get; set; } = "";
         public bool LockPoByPull { get; set; }
+        public bool LockHourCap { get; set; }
     }
 }
