@@ -379,7 +379,18 @@
     applyModalReadOnlyMode();
 
     // ---- Load transactions for this (item, hour) ----
+    // Render immediately so the modal paints fast; if the journal cache is
+    // empty or stale (which is the state right after confirmReceipt clears it
+    // with `txCacheLoaded = false`), kick off a fetch and re-render once it
+    // lands. Without this, opening the modal after a receive would show
+    // "No transactions yet" even though the receipt is in the DB — the cache
+    // was only being refreshed by the drawer's lazy load.
     renderModalTransactions(item.code, hour);
+    txEnsureLoaded().then(() => {
+      if (modal.classList.contains('open') && window._activeHour === hour) {
+        renderModalTransactions(item.code, hour);
+      }
+    });
 
     // ---- Fire initial FIFO preview for the pre-filled qty ----
     hideAllocPanel();
