@@ -119,6 +119,8 @@
       isReopened:    s.isReopened,
       // §3.5 — mirror of Pulls.LockPoByPull; surfaces in card + drawer + modal
       lockPoByPull:  !!s.lockPoByPull,
+      // v2.1 Hour Cap — surfaces in drawer badge + modal echo + filter (default true).
+      lockHourCap:   s.lockHourCap === undefined ? true : !!s.lockHourCap,
     };
   }
 
@@ -348,6 +350,13 @@
         ? `<span class="lock-mode-pill locked"><i class="bi bi-lock-fill"></i> Pull-locked</span>`
         : `<span class="lock-mode-pill unlocked"><i class="bi bi-globe"></i> Warehouse-wide</span>`;
     }
+    // v2.1 Hour Cap — strict (green) / loose (amber) pill below the PO-allocation pill.
+    const hcapEl = document.getElementById('d-hcap-mode');
+    if (hcapEl) {
+      hcapEl.innerHTML = p.lockHourCap
+        ? `<span class="lock-mode-pill hcap-strict"><i class="bi bi-clock-fill"></i> Strict</span>`
+        : `<span class="lock-mode-pill hcap-loose"><i class="bi bi-clock"></i> Loose (over-receive allowed)</span>`;
+    }
     const linkedLinkEl = document.getElementById('d-linked-pos-link');
     const linkedEl = document.getElementById('d-linked-pos');
     if (linkedEl && linkedLinkEl) {
@@ -469,6 +478,15 @@
       'When enabled, only POs explicitly linked to this pull can be received against. ' +
       'Cannot be changed after creation (§7.15 / §3.5 Mode B).';
 
+    // v2.1 Hour Cap — strict by default for new pulls.
+    const hcapChk = document.getElementById('pm-lock-hour-cap');
+    hcapChk.checked = true;
+    hcapChk.disabled = false;
+    document.getElementById('pm-hcap-card').classList.remove('locked-immutable');
+    document.getElementById('pm-hcap-help').textContent =
+      'When enabled, receives that would exceed a window’s expected qty are rejected. ' +
+      'Uncheck for vendors that over-ship intentionally. Immutable after creation.';
+
     pullModal.show();
   }
 
@@ -499,6 +517,15 @@
       '<i class="bi bi-lock-fill"></i> Immutable after pull creation (§7.15). ' +
       'Cancel and re-issue if the allocation mode needs to change.';
 
+    // v2.1 Hour Cap — echo current value; disabled + immutability hint, like PO lock.
+    const hcapChk = document.getElementById('pm-lock-hour-cap');
+    hcapChk.checked = p.lockHourCap;
+    hcapChk.disabled = true;
+    document.getElementById('pm-hcap-card').classList.toggle('locked-immutable', p.lockHourCap);
+    document.getElementById('pm-hcap-help').innerHTML =
+      '<i class="bi bi-clock-fill"></i> Immutable after pull creation. ' +
+      'Cancel and re-issue if the hour-cap policy needs to change.';
+
     drawer.hide();
     pullModal.show();
   }
@@ -510,6 +537,7 @@
       eta:          document.getElementById('pm-eta').value.trim() || null,
       notes:        document.getElementById('pm-notes').value.trim() || null,
       lockPoByPull: document.getElementById('pm-lock-po-by-pull').checked,
+      lockHourCap:  document.getElementById('pm-lock-hour-cap').checked,
     };
 
     let url, method;

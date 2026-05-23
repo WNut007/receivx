@@ -256,13 +256,17 @@
             </div>
         </div>
 
-        <!-- §3.5 / §7.15 — lock mode + linked POs -->
+        <!-- §3.5 / §7.15 — lock mode + linked POs.  v2.1 Hour Cap adds the hour-cap row. -->
         <div class="drawer-section">
-            <div class="drawer-section-title">PO allocation mode (§3.5)</div>
+            <div class="drawer-section-title">Strict mode (§3.5 · §7.1 v2.1)</div>
             <div class="timeline">
                 <div class="timeline-row">
-                    <span class="timeline-label">Mode</span>
+                    <span class="timeline-label">PO allocation</span>
                     <span class="timeline-value" id="d-lock-mode">—</span>
+                </div>
+                <div class="timeline-row">
+                    <span class="timeline-label">Hour cap</span>
+                    <span class="timeline-value" id="d-hcap-mode">—</span>
                 </div>
                 <div class="timeline-row">
                     <span class="timeline-label">Linked POs</span>
@@ -331,6 +335,21 @@
                                     <span class="lock-toggle-help" id="pm-lock-help">
                                         When enabled, only POs explicitly linked to this pull can be received against.
                                         Cannot be changed after creation (§7.15 / §3.5 Mode B).
+                                    </span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                    <!-- v2.1 Hour Cap (§7.1 v2.1) — strict by default, immutable after create. -->
+                    <div class="col-12">
+                        <div class="lock-toggle-card" id="pm-hcap-card">
+                            <label class="lock-toggle-label">
+                                <input type="checkbox" id="pm-lock-hour-cap" checked>
+                                <span class="lock-toggle-text">
+                                    <span class="lock-toggle-title"><i class="bi bi-clock-fill"></i> Strict per-hour capacity</span>
+                                    <span class="lock-toggle-help" id="pm-hcap-help">
+                                        When enabled, receives that would exceed a window's expected qty are rejected.
+                                        Uncheck for vendors that over-ship intentionally. Immutable after creation.
                                     </span>
                                 </span>
                             </label>

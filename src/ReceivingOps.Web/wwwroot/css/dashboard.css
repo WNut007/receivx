@@ -1067,6 +1067,11 @@
   }
   .lock-mode-pill.locked   { color: var(--accent); background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
   .lock-mode-pill.unlocked { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+  /* v2.1 Hour Cap — strict is the safe default (green/complete family); loose is
+     the deliberate exception (amber/pending family). Distinct from locked/unlocked
+     so the two pills don't blur together when both appear in the drawer. */
+  .lock-mode-pill.hcap-strict { color: var(--complete); background: var(--complete-bg); border-color: color-mix(in srgb, var(--complete) 30%, transparent); }
+  .lock-mode-pill.hcap-loose  { color: var(--pending);  background: var(--pending-bg);  border-color: color-mix(in srgb, var(--pending)  30%, transparent); }
 
   /* Pull modal — lock-toggle card */
   .lock-toggle-card {

@@ -605,7 +605,14 @@
 
     const seq = ++_allocRequestSeq;
     try {
-      const r = await fetch(`/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`);
+      // v2.1 Hour Cap — pass &hour= so the server can surface "Insufficient hour
+      // capacity" 409 in the preview before walking PO lines. The active hour
+      // comes from openModal (stored on window._activeHour); omit if absent
+      // (no harm — Receive's commit-time check is the authoritative gate).
+      const hour = (typeof window._activeHour === 'number') ? window._activeHour : null;
+      const url = `/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`
+                + (hour !== null ? `&hour=${hour}` : '');
+      const r = await fetch(url);
       if (seq !== _allocRequestSeq) return;   // stale response — newer typing replaced it
 
       if (r.status === 409) {
