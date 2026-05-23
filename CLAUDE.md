@@ -5,14 +5,18 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Status:** v2.1.4 shipped on `main` (2026-05-23, tag `v2.1.4` at
 `87e8e48`, pushed to origin). v2.1.4 is Phase 7.3 — Delivery Order
 render. `/Reports` lists closed-with-receipts pulls, `/Reports/Do/{id}`
-embeds a FastReport WebReport HTML preview, and `/Reports/Do/{id}/pdf`
-streams a direct PDF via `FastReport.OpenSource.Export.PdfSimple`. Build
-is programmatic (no .frx file) — A4 portrait with company header,
-vendor/warehouse blocks, reference, table of delivery slices, total qty,
-and close-auth text block. Data source is a DataTable (the
+embeds the PDF in an iframe (browser's built-in PDF viewer handles
+zoom/scroll/print), and `/Reports/Do/{id}/pdf` streams a direct PDF via
+`FastReport.OpenSource.Export.PdfSimple`. Build is programmatic (no .frx
+file) — A4 portrait with company header, vendor/warehouse blocks,
+reference, table of delivery slices, total qty, and close-auth text
+block. Data source is a DataTable (the
 `RegisterData<T>(IEnumerable<T>, string)` business-object overload does
-not surface via `GetDataSource()` in OpenSource — known gotcha). Nav
-entry enabled for admin + supervisor. Battery: 30/30 PASS (added
+not surface via `GetDataSource()` in OpenSource — known gotcha).
+`FastReport.OpenSource.Web` ships only an embedded spinner SVG — the
+interactive WebReport JS viewer assets are commercial-only, so iframe-
+to-PDF is the right preview path (fixed in `d435779`). Nav entry
+enabled for admin + supervisor. Battery: 30/30 PASS (added
 `smoke-do-report.ps1`).
 
 Lineage: v2.1.3 (`e0e3820`) added FastReport.OpenSource bootstrap
