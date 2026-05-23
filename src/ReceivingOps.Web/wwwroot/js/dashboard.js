@@ -196,7 +196,7 @@
             <span class="column-dot ${col.key}"></span>
             <span class="column-name">${col.label}</span>
           </div>
-          <span class="column-count">${colItems.length}</span>
+          <span class="column-count-badge status-${col.key.replace(/_/g, '-')}">${colItems.length}</span>
         </div>
         <div class="column-body"></div>
       `;
