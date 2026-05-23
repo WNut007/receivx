@@ -28,9 +28,11 @@ public class PurchaseOrdersApiController : ControllerBase
         [FromQuery] string? status,
         [FromQuery] string? itemCode,
         [FromQuery] string? q,
+        [FromQuery] DateOnly? orderDateFrom,
+        [FromQuery] DateOnly? orderDateTo,
         CancellationToken ct)
     {
-        var rows = await _repo.QueryAsync(warehouseId, status, itemCode, q, ct);
+        var rows = await _repo.QueryAsync(warehouseId, status, itemCode, q, orderDateFrom, orderDateTo, ct);
         return Ok(rows);
     }
 

@@ -10,7 +10,9 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
     public PurchaseOrderRepository(IDbConnectionFactory factory) => _factory = factory;
 
     public async Task<IReadOnlyList<PoListRow>> QueryAsync(
-        Guid? warehouseId, string? status, string? itemCode, string? q, CancellationToken ct = default)
+        Guid? warehouseId, string? status, string? itemCode, string? q,
+        DateOnly? orderDateFrom, DateOnly? orderDateTo,
+        CancellationToken ct = default)
     {
         var where = new List<string>();
         var p = new DynamicParameters();
@@ -30,6 +32,17 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             // Filter POs to those that contain a line for the given item.
             where.Add("EXISTS (SELECT 1 FROM dbo.PurchaseOrderLines pol2 WHERE pol2.PurchaseOrderId = po.Id AND pol2.ItemCode = @ItemCode)");
             p.Add("ItemCode", itemCode.Trim());
+        }
+        // OrderDate is DATE (no time) so inclusive bounds are correct on both ends.
+        if (orderDateFrom is { } from)
+        {
+            where.Add("po.OrderDate >= @OrderDateFrom");
+            p.Add("OrderDateFrom", from.ToDateTime(TimeOnly.MinValue));
+        }
+        if (orderDateTo is { } to)
+        {
+            where.Add("po.OrderDate <= @OrderDateTo");
+            p.Add("OrderDateTo", to.ToDateTime(TimeOnly.MinValue));
         }
         if (!string.IsNullOrWhiteSpace(q))
         {

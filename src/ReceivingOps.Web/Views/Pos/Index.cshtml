@@ -77,9 +77,36 @@
             <option value="unlinked">Cross-pull pool</option>
           </select>
         </div>
+        <div class="field-group">
+          <span class="field-label">Date Range</span>
+          <select class="form-select" id="f-date" title="Filter by OrderDate">
+            <option value="all">All dates</option>
+            <option value="today">Today</option>
+            <option value="last_2_days" selected>Last 2 days</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="this_week">This week</option>
+            <option value="last_week">Last week</option>
+            <option value="custom">Custom range…</option>
+          </select>
+        </div>
         <button class="btn" id="btn-clear-filters" title="Clear filters">
           <i class="bi bi-x-circle"></i> Clear
         </button>
+      </div>
+
+      <!-- Custom range row — revealed only when Date Range = "Custom range…" -->
+      <div class="custom-date-row" id="custom-date-row">
+        <div class="field-group">
+          <span class="field-label">From</span>
+          <input type="date" class="form-control" id="date-from">
+        </div>
+        <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+        <div class="field-group">
+          <span class="field-label">To</span>
+          <input type="date" class="form-control" id="date-to">
+        </div>
+        <button type="button" class="btn" id="date-apply"><i class="bi bi-funnel me-1"></i> Apply</button>
+        <button type="button" class="btn" id="date-clear"><i class="bi bi-x me-1"></i> Clear</button>
       </div>
 
       <div class="table-wrap">

@@ -10,7 +10,9 @@ public interface IPurchaseOrderRepository
 {
     /// <summary>GET /api/pos — list with per-PO line summary (count + ordered + received).</summary>
     Task<IReadOnlyList<PoListRow>> QueryAsync(
-        Guid? warehouseId, string? status, string? itemCode, string? q, CancellationToken ct = default);
+        Guid? warehouseId, string? status, string? itemCode, string? q,
+        DateOnly? orderDateFrom, DateOnly? orderDateTo,
+        CancellationToken ct = default);
 
     /// <summary>GET /api/pos/{id} — header + lines (no receipts inline; the
     /// caller fetches per-line receipts through the existing transactions journal).</summary>

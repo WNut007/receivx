@@ -114,7 +114,41 @@ function buildListQuery() {
   if (whId && whId !== 'all') params.set('warehouseId', whId);
   const status = document.getElementById('f-status').value;
   if (status && status !== 'all') params.set('status', status);
+  // OrderDate range — preset buckets + Custom range… read from the date
+  // inputs. Filters by PurchaseOrders.OrderDate server-side.
+  const range = computeDateRange(document.getElementById('f-date').value);
+  if (range.from) params.set('orderDateFrom', range.from);
+  if (range.to)   params.set('orderDateTo',   range.to);
   return params.toString();
+}
+
+// OrderDate is a DATE column (no time / no tz). Return YYYY-MM-DD strings;
+// the server's DateOnly binder accepts them directly. Calendar-day buckets,
+// matching Dashboard/Transactions/Reports naming.
+function computeDateRange(label) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const offset = n => { const d = new Date(today); d.setDate(d.getDate() + n); return d; };
+  if (label === 'today')       return { from: ymd(today),       to: ymd(today) };
+  if (label === 'last_2_days') return { from: ymd(offset(-1)),  to: ymd(today) };
+  if (label === 'yesterday')   return { from: ymd(offset(-1)),  to: ymd(offset(-1)) };
+  if (label === 'this_week') {
+    const day = today.getDay() || 7;       // Mon=1..Sun=7
+    return { from: ymd(offset(-(day - 1))), to: ymd(today) };
+  }
+  if (label === 'last_week') {
+    const day = today.getDay() || 7;
+    const thisMonday = offset(-(day - 1));
+    const lastMonday = new Date(thisMonday); lastMonday.setDate(lastMonday.getDate() - 7);
+    const lastSunday = new Date(thisMonday); lastSunday.setDate(lastSunday.getDate() - 1);
+    return { from: ymd(lastMonday), to: ymd(lastSunday) };
+  }
+  if (label === 'custom') {
+    const from = document.getElementById('date-from')?.value || null;
+    const to   = document.getElementById('date-to')?.value   || null;
+    return { from, to };
+  }
+  return { from: null, to: null };
 }
 
 async function loadList() {
@@ -596,11 +630,36 @@ document.getElementById('f-search').addEventListener('input', () => {
   document.getElementById(id).addEventListener('change', loadList);
 });
 document.getElementById('f-linkage').addEventListener('change', renderList);   // client-side cut
+
+// Date Range — preset paths refetch immediately; Custom waits for Apply so
+// the operator picks both dates before firing. Mirrors Dashboard/Transactions.
+document.getElementById('f-date').addEventListener('change', (e) => {
+  const isCustom = e.target.value === 'custom';
+  document.getElementById('custom-date-row').classList.toggle('visible', isCustom);
+  if (!isCustom) loadList();
+});
+document.getElementById('date-apply').addEventListener('click', () => {
+  const from = document.getElementById('date-from').value;
+  const to   = document.getElementById('date-to').value;
+  if (!from || !to) { showToast('Pick both dates', 'From and To required', 'danger'); return; }
+  if (from > to)    { showToast('Invalid range', '"From" must be earlier than "To"', 'danger'); return; }
+  loadList();
+});
+document.getElementById('date-clear').addEventListener('click', () => {
+  document.getElementById('date-from').value = '';
+  document.getElementById('date-to').value = '';
+  loadList();
+});
+
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.getElementById('f-search').value = '';
   document.getElementById('f-warehouse').value = 'all';
   document.getElementById('f-status').value = 'open';
   document.getElementById('f-linkage').value = 'all';
+  document.getElementById('f-date').value = 'last_2_days';
+  document.getElementById('date-from').value = '';
+  document.getElementById('date-to').value = '';
+  document.getElementById('custom-date-row').classList.remove('visible');
   loadList();
 });
 document.getElementById('btn-refresh').addEventListener('click', () => {
@@ -636,6 +695,19 @@ document.addEventListener('click', (e) => {
 });
 
 /* ---------- Startup ---------- */
+// Restore the Date Range from ?dateRange=... if the URL specifies a
+// recognized value; the HTML default is already "last_2_days" so a bare
+// /Pos load drops into the operational window without JS doing anything.
+(function restoreDateFilterFromUrl() {
+  const sel = document.getElementById('f-date');
+  const want = new URLSearchParams(window.location.search).get('dateRange');
+  if (!sel || !want) return;
+  if (Array.from(sel.options).some(o => o.value === want)) {
+    sel.value = want;
+    document.getElementById('custom-date-row')?.classList.toggle('visible', want === 'custom');
+  }
+})();
+
 (async () => {
   await Promise.all([loadCurrentUser(), loadWarehouses()]);
   await loadList();
