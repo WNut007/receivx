@@ -155,9 +155,22 @@ hardcoded SQL login.
 - **Item-search typeahead in Add-Line modal** — same pattern as the
   pull-search autocomplete (commit `8ebfff8`) once the candidate item
   catalog grows past a few hundred per warehouse.
-- Lower-priority janitorial items (Reports view, operator-dropdown
-  source for transactions, audit retention policy) — see
-  memory's `receivx_build_state.md` § "Next up".
+- **Reports view (Phase 7)** — DO (delivery order) report rendering with
+  browser preview + PDF export + multi-page support. **Tool chosen: FastReport
+  Open Source** (MIT license, NuGet `FastReport.OpenSource` +
+  `FastReport.OpenSource.Web`, .NET 8 compatible, web viewer included,
+  basic PDF export — sufficient for internal warehouse DO; no encryption/
+  signing needed). Designer = FastReport Designer Community Edition
+  (Windows desktop, free). The local commercial copy at `C:\Nut\FastReport
+  .NET & FastReport.Core Enterprise v2025.2.12` is **not** to be
+  committed — repo stays on the MIT OS package. Migration effort is low
+  (2 package refs + DI + 1 controller). Stale NuGet-restore traces in
+  `obj/project.assets.json` referencing `fastreport.web 2020.1.12` and
+  `fastreport.core3.web.demo 2024.1.6` are leftovers from earlier local
+  experimentation; they don't bind to any code.
+- Lower-priority janitorial items (operator-dropdown source for
+  transactions, audit retention policy) — see memory's
+  `receivx_build_state.md` § "Next up".
 
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
