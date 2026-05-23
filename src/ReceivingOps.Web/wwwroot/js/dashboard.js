@@ -175,6 +175,11 @@
       if (d === 'custom') {
         if (!customRange) return true;
         if (p.dateISO < customRange.from || p.dateISO > customRange.to) return false;
+      } else if (d === 'last_2_days') {
+        // Calendar-day semantics: today OR yesterday. Matches the warehouse
+        // mental model ("วันนี้กับเมื่อวาน") — NOT rolling 48 hours, which
+        // would clip into day-before-yesterday and confuse operators.
+        if (p.dateGroup !== 'today' && p.dateGroup !== 'yesterday') return false;
       } else if (p.dateGroup !== d) return false;
     }
     const lock = currentLockFilter();
@@ -1244,6 +1249,19 @@
       sel.value = found ? prev : 'all';
     } catch (e) { /* keep the static fallback options */ }
   }
+
+  // Restore date filter from URL (?dateRange=...) if present + valid; the
+  // HTML default is already "last_2_days" so a bare /Dashboard URL drops
+  // into the operational window without JS doing anything.
+  (function restoreDateFilterFromUrl() {
+    const sel = document.getElementById('date-filter');
+    const want = new URLSearchParams(window.location.search).get('dateRange');
+    if (!want || !sel) return;
+    if (Array.from(sel.options).some(o => o.value === want)) {
+      sel.value = want;
+      document.getElementById('custom-date-row')?.classList.toggle('visible', want === 'custom');
+    }
+  })();
 
   populateWhFilter().then(loadPulls);
 })();
