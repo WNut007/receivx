@@ -2,20 +2,20 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.2 shipped on `main` (2026-05-23, tag `v2.1.2` at
-`59bcf37`, pushed to origin). v2.1.2 is the Phase 7.1 foundation —
-adds `dbo.Pulls.ReferenceNumber NVARCHAR(64) NULL` (vendor invoice /
-delivery-batch ID, editable post-create) and wires it through DTO + repo
-+ service + create/edit modal input. No Reports view yet — Phase 7.2
-will install FastReport.OpenSource + CompanyInfo config, 7.3 ships the
-DO endpoint + .frx template + Reports controller.
+**Status:** v2.1.3 shipped on `main` (2026-05-23, tag `v2.1.3` at
+`1087c4e`, pushed to origin). v2.1.3 is the Phase 7.2 foundation —
+adds `FastReport.OpenSource 2026.2.1` + `FastReport.OpenSource.Web
+2026.2.1` (MIT, NOT the cached commercial demo) + `CompanyInfo` POCO
+bound from `appsettings.json` + `AddFastReport()` / `UseFastReport()`
+in Program.cs. No report endpoints yet — Phase 7.3 ships the DO
+endpoint + .frx template + Reports controller.
 
-v2.1.1 (tag `5d88b86`) added the drawer's close-auth section (signer +
-role + signature SVG + PNG download). v2.1 (tag `3b6ed06`) bundled
-PullItem admin (in-app authoring surface, retires
-`tools/add-pull-item.ps1` as primary path) + Hour Cap (configurable
-per-pull strict cap on per-hour ExpectedQty) + UI polish. v2.0 tag
-`a43fab7` preserved. 28/28 smoke battery green at v2.1.2 tip. See
+Lineage: v2.1.2 (`59bcf37`) added `Pulls.ReferenceNumber` (Phase 7.1).
+v2.1.1 (`5d88b86`) added the drawer's close-auth section (signer +
+role + signature SVG + PNG download). v2.1 (`3b6ed06`) bundled PullItem
+admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
+(configurable per-pull strict cap) + UI polish. v2.0 (`a43fab7`)
+preserved. 29/29 smoke battery green at v2.1.3 tip. See
 `docs/migration/v1-to-v2.md` for the v2 runbook + rollback steps; v2.1
 spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 
