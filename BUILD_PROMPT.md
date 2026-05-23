@@ -216,6 +216,12 @@ CREATE TABLE dbo.Pulls (
     --   false: FIFO scope = all open POs in the warehouse (cross-pull pool)
     --   true:  FIFO scope = only POs explicitly linked to this pull (po.PullId = this.Id)
     LockPoByPull   BIT              NOT NULL CONSTRAINT DF_Pulls_LockPoByPull DEFAULT 0,
+    -- v2.1 — per-hour cap enforcement policy — IMMUTABLE after pull creation (see §7.15)
+    --   true:  receive is rejected (409) when qty would push window.ReceivedQty past
+    --          window.ExpectedQty (the strict, default behavior)
+    --   false: per-hour ExpectedQty is a planning hint only; overage is allowed when
+    --          the PO has remaining capacity (the legacy §7.1 v2 behavior)
+    LockHourCap    BIT              NOT NULL CONSTRAINT DF_Pulls_LockHourCap  DEFAULT 1,
     CONSTRAINT FK_Pulls_Warehouse  FOREIGN KEY (WarehouseId) REFERENCES dbo.Warehouses(Id),
     CONSTRAINT FK_Pulls_CreatedBy  FOREIGN KEY (CreatedBy)   REFERENCES dbo.Users(Id),
     CONSTRAINT FK_Pulls_ClosedBy   FOREIGN KEY (ClosedBy)    REFERENCES dbo.Users(Id),
@@ -227,6 +233,8 @@ CREATE INDEX IX_Pulls_Status ON dbo.Pulls(Status);
 ```
 
 > **Why `LockPoByPull` is `NOT NULL` with a default of `0`**: backward compatibility for existing pulls — every pre-feature pull defaults to "warehouse-wide FIFO" (the v1 semantic). New pulls can opt into strict per-pull locking via the create form. Once set, the value is immutable for the life of the pull (see §7.15).
+>
+> **Why `LockHourCap` is `NOT NULL` with a default of `1`** (v2.1): strict-by-default is the safer choice — per-user feedback after v2 deploy, operators expect the per-hour `ExpectedQty` to act as a hard cap and were surprised when over-receive went through silently. The Phase 6 schema migration backfilled every existing pull to `1`, so post-deploy receives that would have over-received now 409 (preserving any existing over-state as-is — the gate is for *new* receives only). Procurement can opt a pull into loose mode (`LockHourCap = 0`) at create-time when vendors are known to over-ship — same immutability rule as `LockPoByPull` (see §7.15).
 
 ### 4.5 PullItems
 
@@ -322,9 +330,9 @@ POs and pulls can be linked in two different ways depending on how the planner s
 
 The FIFO `OrderDate ASC, PoNumber ASC` ordering applies in both modes; what changes is the filter clause in the query (see §7.2).
 
-### 4.6 PullItemWindows — expected qty per hour (planning hint)
+### 4.6 PullItemWindows — expected qty per hour (planning + configurable cap)
 
-Hour-of-day expected quantities are **planning hints**, not hard caps. The PO line's `OrderedQty` is the hard limit (see §4.5a). `PullItemWindows.ReceivedQty` is still maintained as a denormalized cache so the UI can render per-hour progress quickly.
+Hour-of-day expected quantities are **per-hour planned receipts**. Whether they act as a hard cap or a planning hint is configurable per pull via `Pulls.LockHourCap` (§4.4). `PullItemWindows.ReceivedQty` is maintained as a denormalized cache so the UI can render per-hour progress quickly.
 
 ```sql
 CREATE TABLE dbo.PullItemWindows (
@@ -339,7 +347,9 @@ CREATE TABLE dbo.PullItemWindows (
 );
 ```
 
-> **What changed**: the old `CK_PIW_Caps` constraint enforced `ReceivedQty <= ExpectedQty`. That constraint is **removed** — receiving may now legitimately exceed the per-hour planned quantity (e.g. a truck arrives early and unloads two hours' worth in one) as long as the PO has remaining `OrderedQty`. The UI still shows per-hour expectation as a guide but no longer treats overage as an error.
+> **What changed in v2**: the old `CK_PIW_Caps` constraint enforced `ReceivedQty <= ExpectedQty` at the DB level. That constraint is **removed** — overage is physically representable in the table (e.g. when a truck arrives early and unloads two hours' worth in one). Whether overage is actually *allowed* is now a per-pull policy decision enforced in the application layer (`ReceiptService.ReceiveAsync`) based on `Pulls.LockHourCap` — see §7.1 for the dual-cap model.
+>
+> **What changed in v2.1**: the application-layer gate landed. With `LockHourCap = 1` (the post-v2.1 default), `ReceiveAsync` rejects any qty that would push `ReceivedQty` past `ExpectedQty` with a `409 "Insufficient hour capacity"`. With `LockHourCap = 0`, the legacy v2 behavior is preserved — per-hour `ExpectedQty` is a planning hint and only the PO is a hard cap. Existing over-state on rows is *not* retroactively repaired by the migration; the gate only blocks *future* receives.
 
 ### 4.7 Receipts — append-only with reverse-entry
 
@@ -660,10 +670,10 @@ Every endpoint returns `application/json`. Errors are RFC 7807 `ProblemDetails`.
 ### Pulls
 | Method | Route | Body | Auth | Returns |
 |---|---|---|---|---|
-| GET  | `/api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=` | — | authenticated | list with progress + `lockPoByPull` per row |
-| GET  | `/api/pulls/{id}`                  | — | authenticated | full pull + items + windows + `lockPoByPull` |
-| POST | `/api/pulls`                       | `{ pullNumber, warehouseId, pullDate, lockPoByPull?, ... }` | CanManagePulls | created. `lockPoByPull` defaults to `false` if omitted; **immutable** thereafter (see §7.15) |
-| PUT  | `/api/pulls/{id}`                  | edits | CanManagePulls | updated (refused if closed). **Rejects** any change to `lockPoByPull` with `409` (§7.15) |
+| GET  | `/api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=` | — | authenticated | list with progress + `lockPoByPull` + `lockHourCap` per row |
+| GET  | `/api/pulls/{id}`                  | — | authenticated | full pull + items + windows + `lockPoByPull` + `lockHourCap` |
+| POST | `/api/pulls`                       | `{ pullNumber, warehouseId, pullDate, lockPoByPull?, lockHourCap?, ... }` | CanManagePulls | created. `lockPoByPull` defaults to `false`, `lockHourCap` defaults to `true` (strict). Both **immutable** thereafter (see §7.15) |
+| PUT  | `/api/pulls/{id}`                  | edits | CanManagePulls | updated (refused if closed). **Rejects** any change to `lockPoByPull` or `lockHourCap` with `409` (§7.15). The body must echo the current value of both flags. |
 | POST | `/api/pulls/{id}/close`            | `{ signatureSvg }` | CanManagePulls | 204 (refused unless every active window is full) |
 | POST | `/api/pulls/{id}/reopen`           | `{ reason }` | **CanReopenPull** | 204 (only when status='closed') |
 | PUT  | `/api/pulls/{id}/items/{itemId}/status` | `{ status }` | CanManagePulls | updated item (refused if pull closed) |
@@ -675,7 +685,7 @@ A single `POST /api/receipts` call may produce **multiple receipt rows** when th
 | Method | Route | Body | Auth | Returns |
 |---|---|---|---|---|
 | POST | `/api/receipts` | `{ pullItemId, hour, qty, lotBatch?, palletId?, binLocation?, qcStatus?, note? }` | CanReceive | `{ allocations: [{ receiptId, purchaseOrderId, poNumber, purchaseOrderLineId, qty }], totalQty, newReceivedQty, fullyReceived, scope: "warehouse-wide" \| "pull-locked" }` |
-| GET  | `/api/receipts/preview?pullItemId=&qty=` | — | CanReceive | `{ allocations: [...], totalAllocatable, shortage, scope }` — preview FIFO allocation without committing; the `scope` field drives the badge in the Receive Goods modal |
+| GET  | `/api/receipts/preview?pullItemId=&qty=&hour=` | — | CanReceive | `{ allocations: [...], totalAllocatable, shortage, scope }` — preview FIFO allocation without committing; the `scope` field drives the badge in the Receive Goods modal. `hour` is **optional** for back-compat; when supplied and the pull's `lockHourCap = true`, the preview also surfaces `"Insufficient hour capacity"` `409` before reading PO lines (so the modal's alloc panel shows the localized error early). |
 | POST | `/api/receipts/{id}/cancel` | `{ reason, note? }` | CanReceive | `{ reversalReceiptId, newReceivedQty, poLineRestored }` — cancel one receipt row; qty goes back to that row's PO line |
 | GET  | `/api/receipts?pullId={id}&itemCode=&hour=` | — | authenticated | journal scoped to one pull, each row includes its PO context |
 
@@ -716,11 +726,25 @@ The `q` filter supports **multi-token AND match** — split on whitespace and re
 
 Every rule below **must be re-checked on the server** — never trust the client.
 
-### 7.1 PO cap is the hard limit (no hour cap)
+### 7.1 PO cap is the hard limit; per-hour cap is configurable (dual-cap model)
 
-The total quantity received against a PO line (sum of all positive receipt rows minus all reversals) must never exceed `OrderedQty`. The per-hour `ExpectedQty` in `PullItemWindows` is **planning only** — overage on a single hour is allowed as long as PO capacity exists.
+`POST /api/receipts` enforces **two independent caps** that fire in this order — strictest-first so the operator sees the most localized error:
 
-`POST /api/receipts` must reject when the **total open PO line capacity for that item in the FIFO scope** is less than the requested qty. The scope depends on the pull's `LockPoByPull` flag (see §4.5b):
+**Cap 1 — Per-hour `ExpectedQty`** (v2.1 — `Pulls.LockHourCap`).
+Fires only when the pull was created with `LockHourCap = 1` (the post-v2.1 default for new pulls + the backfill value for every pre-existing pull). When the requested qty would push `PullItemWindows.ReceivedQty` past `PullItemWindows.ExpectedQty` for the target `(PullItemId, HourOfDay)`, the receive is rejected with `409 Conflict`:
+
+```
+title:  "Insufficient hour capacity"
+detail: "Hour HH:00 expected N pcs, already received M. Pick a different
+         hour window or adjust quantity."
+```
+
+When `LockHourCap = 0`, the per-hour `ExpectedQty` is a **planning hint only** — overage on a single hour is allowed (the legacy v2 behavior). This is the escape hatch for vendors known to over-ship.
+
+The DB-level `CK_PIW_Caps` constraint that used to enforce this at the schema level was removed in the v2 migration (see §4.6). Enforcement now lives in `ReceiptService.ReceiveAsync` so it can be toggled per pull at create-time.
+
+**Cap 2 — Total PO line capacity** (the hard limit, always enforced).
+The total quantity received against a PO line (sum of all positive receipt rows minus all reversals) must never exceed `OrderedQty`. The scope depends on the pull's `LockPoByPull` flag (see §4.5b):
 
 ```sql
 -- Mode A (LockPoByPull = 0): warehouse-wide
@@ -742,6 +766,10 @@ If Mode B is active and the result set is **empty** (no linked POs at all) → r
 
 The DB-level `CK_POL_Caps` (PO line) is the last line of defense.
 
+**Why hour-cap fires first**: localized error before broader PO-shortage one ("hour 14 is full" is more actionable than "no PO capacity"), and skipping the PO line locks when the window will reject anyway saves contention with concurrent receives on other items.
+
+**Why close is hour-cap-agnostic**: `POST /api/pulls/{id}/close` checks "any window where `ExpectedQty > ReceivedQty` is outstanding" (§7.4). Over-windows (`Received > Expected`) are *not* outstanding, so a pull carrying legacy over-state from before the migration can still be closed normally. The strict cap is for *future* receives only.
+
 ### 7.2 FIFO allocation algorithm (lock-aware)
 
 The server allocates the requested qty across open PO lines **automatically, in FIFO order by `OrderDate`**, and creates one `Receipts` row per allocation slice. The user **does not see PO numbers in the Receive Goods modal until allocation completes** — there is no PO dropdown, no override, no manual selection. This guarantees consistent FIFO discipline across the operation.
@@ -749,8 +777,18 @@ The server allocates the requested qty across open PO lines **automatically, in 
 **Algorithm** (run inside the receive transaction, see §7.2a):
 
 ```text
-Input: pullId, warehouseId, itemCode, qtyRequested, lockPoByPull
+Input: pullId, warehouseId, itemCode, hourOfDay, qtyRequested,
+       lockPoByPull, lockHourCap
 Output: List<(poLineId, qtyToAllocate)>
+
+0. (v2.1) If lockHourCap == true — hour-cap check BEFORE the FIFO walk:
+     SELECT ExpectedQty, ReceivedQty FROM dbo.PullItemWindows
+     WITH (UPDLOCK, ROWLOCK)
+     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay
+     remaining = ExpectedQty - ReceivedQty
+     if qtyRequested > remaining
+        → throw BusinessException("Insufficient hour capacity...")
+   Skipped when lockHourCap == false (planning-hint mode).
 
 1. Build the FIFO query. Base WHERE clause filters open lines for itemCode.
    - If lockPoByPull == false: add "AND po.WarehouseId = @WarehouseId"
@@ -770,6 +808,8 @@ Output: List<(poLineId, qtyToAllocate)>
 7. Return the list. The caller will tag the audit with
    "Scope: pull-locked" or "Scope: warehouse-wide FIFO" based on lockPoByPull.
 ```
+
+> **Step 0 ordering note** (v2.1): the hour-cap check runs *before* the FIFO read so a window that would reject doesn't take any PO-line locks. This both surfaces the more localized error first and reduces contention with concurrent receives on other items in the same warehouse. The window row gets `UPDLOCK + ROWLOCK` so a concurrent receive on the same `(PullItem, Hour)` can't race past the cap.
 
 The allocator's read **must use `WITH (UPDLOCK, HOLDLOCK)`** on `PurchaseOrderLines` so two concurrent receive calls for the same item see consistent remaining quantities. `HOLDLOCK` upgrades the range lock to serializable for the FIFO query — without this, two concurrent receives could each see 1500 remaining on the same PO line and both try to take 1000, double-spending the line.
 
@@ -1133,6 +1173,7 @@ Two fields capture the planner/procurement intent at object-creation time and ar
 | Field | Set when | Mutability after create |
 |---|---|---|
 | `Pulls.LockPoByPull` | Pull is created via `POST /api/pulls`. Defaults to `false` if omitted. | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockPoByPull is immutable after pull creation."` |
+| `Pulls.LockHourCap` (v2.1) | Pull is created via `POST /api/pulls`. Defaults to `true` if omitted (strict-by-default). | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockHourCap is immutable after pull creation."` — same strict-echo pattern as `LockPoByPull`. |
 | `PurchaseOrders.PullId` | PO is created via `POST /api/pos`. Optional in the request body; defaults to `NULL`. | **Immutable.** `PUT /api/pos/{id}` rejects any change including `NULL → NOT NULL` and `NOT NULL → NULL` with `"PO–pull link is immutable. Cancel and reissue if you need to change."` |
 
 **Why strict immutability**:

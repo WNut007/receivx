@@ -3,10 +3,11 @@
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
 **Status:** v2.0 shipped on `main` (2026-05-23, tag `v2.0`). v2.1 in
-progress on `v2.1-migration` — Phases 6.1/6.2/6.3/6.4 done (PullItem
-admin: backend CRUD + windows sub-resource + drawer UI + add-pull-item
-script retired). 19/19 smoke battery green. See `docs/migration/v1-to-v2.md`
-for the v2 runbook + rollback steps.
+progress on `v2.1-migration` — two parallel work streams: PullItem admin
+(Phases 6.1–6.4 PullItem series, all done) plus Hour Cap (Phases 6.0–6.6
+hourcap series, all done). 25/25 smoke battery green. See
+`docs/migration/v1-to-v2.md` for the v2 runbook + rollback steps. v2.1
+docs landed in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 
 ## Stack
 - .NET 8 LTS, C# 12
@@ -35,8 +36,20 @@ for the v2 runbook + rollback steps.
 - All numeric arithmetic is whole units (int, not decimal)
 
 ## v2 invariants (load-bearing)
-- **PO cap is the hard limit (§7.1).** Per-hour `PullItemWindows.ExpectedQty`
-  is a planning hint; overage is allowed if PO capacity exists.
+- **Dual-cap model (§7.1)** — receive enforces two independent caps in this
+  order: (1) per-hour `ExpectedQty` *when* `Pulls.LockHourCap = true`; (2) PO
+  line `OrderedQty` always. Cap 1 fires before the FIFO walk so the operator
+  gets the localized error first and no PO line locks are taken when the
+  window will reject anyway.
+- **PO cap is always the hard limit (§7.1).** No matter the per-pull
+  hour-cap setting, total received against a PO line can never exceed
+  `OrderedQty`.
+- **Per-hour cap is configurable per pull (v2.1, §7.1).**
+  `Pulls.LockHourCap` set at create-time and immutable thereafter. Default
+  `true` (strict). When `false`, per-hour `ExpectedQty` is a planning hint
+  only — legacy v2 behavior. The Phase 6.1 backfill set every existing pull
+  to `true`; pre-existing over-state is preserved as-is but FUTURE receives
+  on the same window are now blocked.
 - **FIFO is server-only (§7.14).** The modal MUST NOT expose a PO selector.
   The server allocates by `PurchaseOrders.OrderDate ASC, PoNumber ASC`.
 - **One receive call may produce multiple `Receipts` rows (§7.2a)** when the
@@ -50,13 +63,21 @@ for the v2 runbook + rollback steps.
 - **Locking pattern**: receive transaction uses
   `WITH (UPDLOCK, HOLDLOCK, ROWLOCK)` on the FIFO read of
   `dbo.PurchaseOrderLines` — gives serializable range protection so two
-  concurrent receivers can't double-spend a line.
+  concurrent receivers can't double-spend a line. The hour-cap pre-check
+  also takes `UPDLOCK + ROWLOCK` on the matching `PullItemWindows` row.
 - **§3.5 per-pull lock (§7.15 immutability)**: `Pulls.LockPoByPull` set at
   create-time and immutable thereafter. When true, FIFO scope is restricted
   to POs whose `PullId` matches; otherwise FIFO is warehouse-wide. Audit
   message carries the `Scope:` tag (wire contract per BUILD_PROMPT.md §8.1).
   `PurchaseOrders.PullId` is also immutable post-create — stricter than the
   §7.13 receipt-reference rule (applies even when no receipts reference).
+  The v2.1 `LockHourCap` flag follows the same immutability pattern — PUT
+  echoes current value or 409.
+- **Close gate is hour-cap-agnostic (§7.4).** `POST /api/pulls/{id}/close`
+  counts windows where `ExpectedQty > ReceivedQty` (outstanding). Over-
+  windows are `Expected < Received` and therefore not outstanding — a pull
+  carrying legacy over-state from before the v2.1 migration can still be
+  closed normally.
 
 ## Workflow
 1. Schema first (`db/001_schema.sql` then `db/010_…`–`014_…` for v2) before
