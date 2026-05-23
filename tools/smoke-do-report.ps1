@@ -110,12 +110,19 @@ OK "List page renders + smoke pull present"
 Step "GET /Reports/Do/{id} → 200 + FastReport viewer scaffolding"
 $do = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)" -Method GET -WebSession $sv -UseBasicParsing
 if ($do.StatusCode -ne 200) { Fail "DO preview returned $($do.StatusCode)" }
-# Render output should contain SOME FastReport-specific markup. The exact
-# shape varies by FR version; check for the DO title text we baked into the
-# report builder.
-if ($do.Content -notmatch 'DELIVERY ORDER') { Fail "DO HTML missing 'DELIVERY ORDER' title — viewer not rendering" }
+# The WebReport viewer scaffolds its container + a bundled JS that AJAX-
+# fetches the actual report from /_fr. Smoke checks ensure:
+#   (1) Render() was awaited (no Task ToString leak — caught a real bug)
+#   (2) The FR viewer container is present
+#   (3) The FR webreport bundle script is wired in
+# Report-payload content (pull number, reference, etc.) is validated end-
+# to-end via the PDF endpoint below — no need to spin up a headless JS
+# runtime here.
+if ($do.Content -match 'System\.Threading\.Tasks\.Task') { Fail "View printed Task.ToString — Render() not awaited" }
+if ($do.Content -notmatch 'fr-webreport') { Fail "FastReport viewer container missing" }
+if ($do.Content -notmatch 'webreport-script\.bundle') { Fail "FastReport webreport bundle script missing" }
 if ($do.Content -notmatch 'Download PDF') { Fail "DO page chrome missing Download PDF button" }
-OK "Preview renders the DO title + page chrome"
+OK "Preview renders the FR viewer scaffolding + page chrome"
 
 # ----------------------------------------------------------------------------
 # 3. /Reports/Do/{id}/pdf — non-empty application/pdf

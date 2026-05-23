@@ -53,9 +53,9 @@
             </div>
         </div>
         <div class="report-host">
-            @* FastReport's WebReport renders its own HTML scaffolding —
-               Render() returns an HtmlString that we pass straight through. *@
-            @Html.Raw(Model.Render())
+            @* FastReport's WebReport.Render() is async in OpenSource.Web —
+               returns Task<IHtmlContent>. Await it directly into the page. *@
+            @(await Model.Render())
         </div>
     </div>
 </div>
