@@ -2,15 +2,21 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.3 shipped on `main` (2026-05-23, tag `v2.1.3` at
-`1087c4e`, pushed to origin). v2.1.3 is the Phase 7.2 foundation —
-adds `FastReport.OpenSource 2026.2.1` + `FastReport.OpenSource.Web
-2026.2.1` (MIT, NOT the cached commercial demo) + `CompanyInfo` POCO
-bound from `appsettings.json` + `AddFastReport()` / `UseFastReport()`
-in Program.cs. No report endpoints yet — Phase 7.3 ships the DO
-endpoint + .frx template + Reports controller.
+**Status:** v2.1.4 shipped on `main` (2026-05-23, tag `v2.1.4` at
+`87e8e48`, pushed to origin). v2.1.4 is Phase 7.3 — Delivery Order
+render. `/Reports` lists closed-with-receipts pulls, `/Reports/Do/{id}`
+embeds a FastReport WebReport HTML preview, and `/Reports/Do/{id}/pdf`
+streams a direct PDF via `FastReport.OpenSource.Export.PdfSimple`. Build
+is programmatic (no .frx file) — A4 portrait with company header,
+vendor/warehouse blocks, reference, table of delivery slices, total qty,
+and close-auth text block. Data source is a DataTable (the
+`RegisterData<T>(IEnumerable<T>, string)` business-object overload does
+not surface via `GetDataSource()` in OpenSource — known gotcha). Nav
+entry enabled for admin + supervisor. Battery: 30/30 PASS (added
+`smoke-do-report.ps1`).
 
-Lineage: v2.1.2 (`59bcf37`) added `Pulls.ReferenceNumber` (Phase 7.1).
+Lineage: v2.1.3 (`e0e3820`) added FastReport.OpenSource bootstrap
+(Phase 7.2). v2.1.2 (`59bcf37`) added `Pulls.ReferenceNumber` (Phase 7.1).
 v2.1.1 (`5d88b86`) added the drawer's close-auth section (signer +
 role + signature SVG + PNG download). v2.1 (`3b6ed06`) bundled PullItem
 admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
