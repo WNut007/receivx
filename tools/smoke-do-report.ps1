@@ -122,14 +122,22 @@ OK "Preview embeds PDF iframe + page chrome wired"
 # ----------------------------------------------------------------------------
 # 3. /Reports/Do/{id}/pdf — non-empty application/pdf
 # ----------------------------------------------------------------------------
-Step "GET /Reports/Do/{id}/pdf → non-empty application/pdf"
+Step "GET /Reports/Do/{id}/pdf → inline application/pdf"
 $pdf = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)/pdf" -Method GET -WebSession $sv -UseBasicParsing
 if ($pdf.StatusCode -ne 200) { Fail "PDF returned $($pdf.StatusCode)" }
 if ($pdf.Headers['Content-Type'] -notmatch 'application/pdf') { Fail "Wrong Content-Type: $($pdf.Headers['Content-Type'])" }
+$cd = $pdf.Headers['Content-Disposition']
+if ($cd -notmatch '^inline') { Fail "PDF default must be Content-Disposition: inline (got: $cd) — iframe will be blank otherwise" }
 if ($pdf.RawContentLength -lt 1000) { Fail "PDF suspiciously small ($($pdf.RawContentLength) bytes)" }
 $head4 = [System.Text.Encoding]::ASCII.GetString($pdf.Content[0..3])
 if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4' (expected '%PDF')" }
-OK "PDF streams ($($pdf.RawContentLength) bytes) with %PDF magic"
+OK "PDF streams inline ($($pdf.RawContentLength) bytes) with %PDF magic"
+
+Step "GET /Reports/Do/{id}/pdf?dl=1 → attachment disposition"
+$pdfDl = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)/pdf?dl=1" -Method GET -WebSession $sv -UseBasicParsing
+$cdDl = $pdfDl.Headers['Content-Disposition']
+if ($cdDl -notmatch '^attachment') { Fail "?dl=1 must force attachment (got: $cdDl)" }
+OK "?dl=1 toggles to attachment for explicit download"
 
 # ----------------------------------------------------------------------------
 # 4. Eligibility — open pull → 400

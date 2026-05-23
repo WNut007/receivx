@@ -62,11 +62,14 @@ public class ReportsController : Controller
         catch (BusinessException ex) { return BadRequest(ex.Message); }
     }
 
-    // GET /Reports/Do/{id}/pdf — direct PDF stream download. Bypasses the
-    // WebReport viewer; useful for one-click "save to disk" + email-the-
-    // delivery-receipt-to-the-vendor flows.
+    // GET /Reports/Do/{id}/pdf — PDF stream served INLINE so the browser's
+    // built-in PDF viewer can render it inside the preview iframe. The
+    // ?dl=1 toggle forces attachment disposition (used by the explicit
+    // Download PDF button); without it the suggested filename rides along
+    // in Content-Disposition: inline so right-click Save still gets a
+    // sensible name.
     [HttpGet("/Reports/Do/{id:guid}/pdf")]
-    public async Task<IActionResult> DoPdf(Guid id, CancellationToken ct)
+    public async Task<IActionResult> DoPdf(Guid id, [FromQuery(Name = "dl")] int dl, CancellationToken ct)
     {
         try
         {
@@ -86,7 +89,9 @@ public class ReportsController : Controller
             // (one extra query per download; cached at the SQL Server level).
             var detail = await _pulls.GetByIdAsync(id, ct);
             var filename = $"{(detail?.PullNumber ?? id.ToString())}-DO.pdf";
-            return File(ms.ToArray(), "application/pdf", filename);
+            var disposition = dl == 1 ? "attachment" : "inline";
+            Response.Headers["Content-Disposition"] = $"{disposition}; filename=\"{filename}\"";
+            return File(ms.ToArray(), "application/pdf");
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(ex.Message); }
