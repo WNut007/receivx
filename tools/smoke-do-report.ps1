@@ -1,20 +1,21 @@
-# Smoke test: v2.x Phase 7.3 — Delivery Order report end-to-end.
+# Smoke test: v2.x Phase 7.4 — Reports DO end-to-end (two-pane layout +
+# aggregated HTML preview + canonicalized PDF export).
 #
-# Exercises the full Reports surface from the DB up:
-#   - /Reports list page returns 200 + carries the smoke pull row
-#   - /Reports/Do/{id} HTML preview returns 200 + carries FastReport
-#     viewer scaffolding
-#   - /Reports/Do/{id}/pdf streams a non-empty application/pdf with the
-#     %PDF-1.x magic bytes
-#   - Eligibility gate: open pull → 400; pull with no receipts → 400
-#   - Non-admin warehouse scope: pull on another warehouse → 403
+# Exercises:
+#   1. /Reports list page renders + carries the smoke pull row with the
+#      two-pane DOM shell.
+#   2. /api/reports/do/{id}/preview returns HTML with one .do-document
+#      per PO and aggregated lines (no duplicate (Item × PoLine), no
+#      HOUR column).
+#   3. /api/reports/do/{id}/export.pdf returns a non-empty
+#      attachment-disposition application/pdf with %PDF magic bytes.
+#   4. Eligibility gate: open pull → preview returns 400.
+#   5. Old /Reports/Do/{id}/pdf URL is gone (returns 404).
 #
-# Setup: creates PL-DOR-{tick} loose pull (LockPoByPull=false, LockHourCap
-# =false), adds a SUMMARY item with a window, receives, closes via SQL
-# (skip the signature canvas — test path uses the close API path with a
-# tiny SVG). Cleans up at the end.
-#
-# Assumes ReceivingOps.Web running on http://localhost:5213.
+# Aggregation test specifically writes TWO receipts at DIFFERENT hours
+# against the same (Item × PoLine) and asserts the preview collapses
+# them to one row with SUM(qty). This is the user's original bug
+# (WIDGET-1000-05 showing twice at 1:00 and 6:00).
 
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5213'
@@ -46,28 +47,25 @@ function Login($user, $pass, $whId) {
     return $sv
 }
 
-function InvokeExpectFail($method, $uri, $body, $session, $expectedStatus) {
+function InvokeExpectStatus($method, $uri, $session, $expected) {
     try {
-        $args = @{ Uri = $uri; Method = $method; WebSession = $session; ContentType = 'application/json' }
-        if ($body) { $args.Body = $body }
-        Invoke-RestMethod @args | Out-Null
-        return $null
+        Invoke-WebRequest -Uri $uri -Method $method -WebSession $session -UseBasicParsing | Out-Null
+        return 200
     }
     catch {
         $resp = $_.Exception.Response
         if ($null -eq $resp) { throw }
-        $status = [int]$resp.StatusCode
-        if ($status -ne $expectedStatus) { return [pscustomobject]@{ Status=$status; Wrong=$true } }
-        return [pscustomobject]@{ Status=$status; Wrong=$false }
+        return [int]$resp.StatusCode
     }
 }
 
 $sv = Login 'sadmin' 'admin' $WH_01
 
 # ----------------------------------------------------------------------------
-# Setup — create a fresh pull, add item + window, receive, close.
+# Setup — create a fresh pull, add item with 2 windows + receive twice at
+# different hours against the SAME (Item × PoLine). Close the pull.
 # ----------------------------------------------------------------------------
-Step "Setup: create PL-DOR pull + item + receipt + close"
+Step "Setup: create PL-DOR pull + dual-window item + 2 receipts + close"
 $pullNum = "PL-DOR-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
 $pullBody = @{
     pullNumber = $pullNum; warehouseId = $WH_01
@@ -78,82 +76,100 @@ $pullBody = @{
 } | ConvertTo-Json
 $pull = Invoke-RestMethod -Uri "$base/api/pulls" -Method POST -Body $pullBody -ContentType 'application/json' -WebSession $sv
 
+# Two windows on the same item → forces 2 receipts that must collapse to
+# a single line in the DO preview (aggregation test).
 $itemBody = @{
     itemCode = 'SUMMARY'; description = 'DO smoke SUMMARY'
-    windows = @(@{ hourOfDay = 10; expectedQty = 50 })
+    windows = @(
+        @{ hourOfDay = 10; expectedQty = 50 },
+        @{ hourOfDay = 14; expectedQty = 30 }
+    )
 } | ConvertTo-Json -Depth 5
 $item = Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/items" -Method POST -Body $itemBody -ContentType 'application/json' -WebSession $sv
 
-$recvBody = @{
-    pullItemId = $item.id; hourOfDay = 10; qty = 50
-    lotBatch = $null; palletId = $null; binLocation = $null; qcStatus = 'pending'; note = $null
-} | ConvertTo-Json
-Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $recvBody -ContentType 'application/json' -WebSession $sv | Out-Null
+foreach ($w in @(@{ h = 10; q = 50 }, @{ h = 14; q = 30 })) {
+    $recvBody = @{
+        pullItemId = $item.id; hourOfDay = $w.h; qty = $w.q
+        lotBatch = $null; palletId = $null; binLocation = $null; qcStatus = 'pending'; note = $null
+    } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $recvBody -ContentType 'application/json' -WebSession $sv | Out-Null
+}
 
 $closeBody = @{ signatureSvg = $SAMPLE_SVG } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/close" -Method POST -Body $closeBody -ContentType 'application/json' -WebSession $sv | Out-Null
-OK "PL-DOR pull set up + closed"
+OK "PL-DOR pull set up + closed (2 receipts at hours 10 + 14, total 80)"
 
 # ----------------------------------------------------------------------------
-# 1. /Reports list page — 200 + carries the smoke pull
+# 1. /Reports list page — 200 + two-pane DOM + smoke pull row present
 # ----------------------------------------------------------------------------
-Step "GET /Reports → 200 + carries the smoke pull row"
+Step "GET /Reports → 200 + two-pane DOM + smoke pull row"
 $page = Invoke-WebRequest -Uri "$base/Reports" -Method GET -WebSession $sv -UseBasicParsing
 if ($page.StatusCode -ne 200) { Fail "GET /Reports returned $($page.StatusCode)" }
+foreach ($needle in 'reports-filter-bar','reports-split','reports-list-pane','reports-preview-pane','preview-toolbar') {
+    if ($page.Content -notmatch [regex]::Escape($needle)) { Fail "Two-pane DOM missing: $needle" }
+}
 if ($page.Content -notmatch [regex]::Escape($pullNum)) { Fail "Reports list missing $pullNum" }
-if ($page.Content -notmatch 'INV-DOR-001') { Fail "Reports list missing reference INV-DOR-001" }
-OK "List page renders + smoke pull present"
+if ($page.Content -notmatch 'data-pull-id=') { Fail "List rows missing data-pull-id attribute" }
+OK "List page renders with two-pane DOM + smoke pull present"
 
 # ----------------------------------------------------------------------------
-# 2. /Reports/Do/{id} HTML preview — 200 + FastReport viewer markup
+# 2. /api/reports/do/{id}/preview — HTML fragment + aggregated lines
 # ----------------------------------------------------------------------------
-Step "GET /Reports/Do/{id} → 200 + FastReport viewer scaffolding"
-$do = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)" -Method GET -WebSession $sv -UseBasicParsing
-if ($do.StatusCode -ne 200) { Fail "DO preview returned $($do.StatusCode)" }
-# Preview page embeds the PDF in an iframe (FR OpenSource.Web ships no
-# viewer JS — the browser's built-in PDF viewer renders the report). The
-# iframe src must point at the PDF endpoint for the same pull.
-$expectedSrc = "/Reports/Do/$($pull.id)/pdf"
-if ($do.Content -notmatch '<iframe[^>]+src="') { Fail "DO preview missing iframe element" }
-if ($do.Content -notmatch [regex]::Escape($expectedSrc)) { Fail "iframe src not pointing at PDF endpoint for this pull" }
-if ($do.Content -notmatch 'Download PDF') { Fail "DO page chrome missing Download PDF button" }
-OK "Preview embeds PDF iframe + page chrome wired"
+Step "GET /api/reports/do/{id}/preview → aggregated HTML fragment"
+$prev = Invoke-WebRequest -Uri "$base/api/reports/do/$($pull.id)/preview" -Method GET -WebSession $sv -UseBasicParsing
+if ($prev.StatusCode -ne 200) { Fail "Preview returned $($prev.StatusCode)" }
+if ($prev.Content -notmatch '<article class="do-document"') { Fail "Preview missing .do-document element" }
+if ($prev.Content -notmatch 'DELIVERY ORDER') { Fail "Preview missing DELIVERY ORDER label" }
+if ($prev.Content -notmatch 'Total delivered') { Fail "Preview missing total row" }
+# AGGREGATION ASSERTION: SUMMARY item appears in exactly ONE row, not two,
+# and the qty reflects SUM(50, 30) = 80 (not the hour-split 50 / 30).
+$tbody = [regex]::Match($prev.Content, '<tbody>(?s)(.*?)</tbody>').Groups[1].Value
+$summaryRows = ([regex]::Matches($tbody, '<td class="mono">SUMMARY</td>')).Count
+if ($summaryRows -ne 1) { Fail "Expected 1 SUMMARY row after aggregation, got $summaryRows" }
+if ($tbody -notmatch '>80<') { Fail "Aggregated qty 80 not present — hours not summing" }
+# No hour column in the new layout
+$thead = [regex]::Match($prev.Content, '<thead>(?s)(.*?)</thead>').Groups[1].Value
+if ($thead -match '>HOUR<') { Fail "Preview still has HOUR column header — aggregation incomplete" }
+OK "Preview renders 1 aggregated row (qty=80) and no HOUR column"
 
 # ----------------------------------------------------------------------------
-# 3. /Reports/Do/{id}/pdf — non-empty application/pdf
+# 3. /api/reports/do/{id}/export.pdf — attachment + %PDF
 # ----------------------------------------------------------------------------
-Step "GET /Reports/Do/{id}/pdf → inline application/pdf"
-$pdf = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)/pdf" -Method GET -WebSession $sv -UseBasicParsing
+Step "GET /api/reports/do/{id}/export.pdf → attachment %PDF"
+$pdf = Invoke-WebRequest -Uri "$base/api/reports/do/$($pull.id)/export.pdf" -Method GET -WebSession $sv -UseBasicParsing
 if ($pdf.StatusCode -ne 200) { Fail "PDF returned $($pdf.StatusCode)" }
 if ($pdf.Headers['Content-Type'] -notmatch 'application/pdf') { Fail "Wrong Content-Type: $($pdf.Headers['Content-Type'])" }
 $cd = $pdf.Headers['Content-Disposition']
-if ($cd -notmatch '^inline') { Fail "PDF default must be Content-Disposition: inline (got: $cd) — iframe will be blank otherwise" }
+if ($cd -notmatch '^attachment') { Fail "PDF must be attachment, got: $cd" }
+if ($cd -notmatch [regex]::Escape("$pullNum-DO.pdf")) { Fail "PDF filename should be $pullNum-DO.pdf, got: $cd" }
 if ($pdf.RawContentLength -lt 1000) { Fail "PDF suspiciously small ($($pdf.RawContentLength) bytes)" }
 $head4 = [System.Text.Encoding]::ASCII.GetString($pdf.Content[0..3])
-if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4' (expected '%PDF')" }
-OK "PDF streams inline ($($pdf.RawContentLength) bytes) with %PDF magic"
-
-Step "GET /Reports/Do/{id}/pdf?dl=1 → attachment disposition"
-$pdfDl = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)/pdf?dl=1" -Method GET -WebSession $sv -UseBasicParsing
-$cdDl = $pdfDl.Headers['Content-Disposition']
-if ($cdDl -notmatch '^attachment') { Fail "?dl=1 must force attachment (got: $cdDl)" }
-OK "?dl=1 toggles to attachment for explicit download"
+if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }
+OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic"
 
 # ----------------------------------------------------------------------------
-# 4. Eligibility — open pull → 400
+# 4. Eligibility — open pull → 400 from preview
 # ----------------------------------------------------------------------------
-Step "Open pull → /Reports/Do/{id} returns 400"
-$openPullBody = @{
+Step "Open pull → /api/reports/do/{id}/preview returns 400"
+$openBody = @{
     pullNumber = "PL-DOR-OPEN-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
     warehouseId = $WH_01; pullDate = (Get-Date -Format 'yyyy-MM-dd')
     eta = $null; notes = $null; lockPoByPull = $false; lockHourCap = $false
 } | ConvertTo-Json
-$openPull = Invoke-RestMethod -Uri "$base/api/pulls" -Method POST -Body $openPullBody -ContentType 'application/json' -WebSession $sv
-$r = InvokeExpectFail 'GET' "$base/Reports/Do/$($openPull.id)" $null $sv 400
-if (-not $r -or $r.Wrong) { Fail "Open pull expected 400, got $($r.Status)" }
-OK "Open pull rejected with 400"
+$openPull = Invoke-RestMethod -Uri "$base/api/pulls" -Method POST -Body $openBody -ContentType 'application/json' -WebSession $sv
+$status = InvokeExpectStatus 'GET' "$base/api/reports/do/$($openPull.id)/preview" $sv 400
+if ($status -ne 400) { Fail "Open pull preview expected 400, got $status" }
+OK "Open pull preview rejected with 400"
+
+# ----------------------------------------------------------------------------
+# 5. Old URL gone — /Reports/Do/{id}/pdf must be 404
+# ----------------------------------------------------------------------------
+Step "Legacy /Reports/Do/{id}/pdf URL is gone (404)"
+$legacy = InvokeExpectStatus 'GET' "$base/Reports/Do/$($pull.id)/pdf" $sv 404
+if ($legacy -ne 404) { Fail "Legacy URL expected 404, got $legacy" }
+OK "Legacy PDF URL retired"
 
 SqlCleanup
 Write-Host ""
-Write-Host "ALL PASS — DO report end-to-end (list + HTML preview + PDF + eligibility gate)." -ForegroundColor Green
+Write-Host "ALL PASS — Reports DO refactor (two-pane + aggregated HTML + PDF export)." -ForegroundColor Green
 exit 0

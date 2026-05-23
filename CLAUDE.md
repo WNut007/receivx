@@ -2,25 +2,39 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.4 shipped on `main` (2026-05-23, tag `v2.1.4` at
-`87e8e48`, pushed to origin). v2.1.4 is Phase 7.3 — Delivery Order
-render. `/Reports` lists closed-with-receipts pulls, `/Reports/Do/{id}`
-embeds the PDF in an iframe (browser's built-in PDF viewer handles
-zoom/scroll/print), and `/Reports/Do/{id}/pdf` streams a direct PDF via
-`FastReport.OpenSource.Export.PdfSimple`. Build is programmatic (no .frx
-file) — A4 portrait with company header, vendor/warehouse blocks,
-reference, table of delivery slices, total qty, and close-auth text
-block. Data source is a DataTable (the
-`RegisterData<T>(IEnumerable<T>, string)` business-object overload does
-not surface via `GetDataSource()` in OpenSource — known gotcha).
-`FastReport.OpenSource.Web` ships only an embedded spinner SVG — the
-interactive WebReport JS viewer assets are commercial-only, so iframe-
-to-PDF is the right preview path (fixed in `d435779`). Nav entry
-enabled for admin + supervisor. Battery: 30/30 PASS (added
-`smoke-do-report.ps1`).
+**Status:** v2.1.5 shipped on `main` (2026-05-24, tag `v2.1.5` at
+`6008fa6`, pushed to origin). v2.1.5 is Phase 7.4 — Reports DO refactor:
+two-pane layout (closed-pull list on left, inline HTML preview on right)
++ aggregated lines (one row per Item × PO·Line, hour column gone) +
+canonicalized URLs. `/Reports` is now a single page rendering the
+two-pane shell; row click fetches
+`/api/reports/do/{id}/preview` (HTML fragment from `_DoPreview.cshtml`
+partial) and injects it into the preview pane. The Export PDF button
+hits `/api/reports/do/{id}/export.pdf` (multi-page A4, one DO per PO).
+Print button opens a stand-alone window with the preview HTML +
+`reports.css` and calls `window.print()`.
 
-Lineage: v2.1.3 (`e0e3820`) added FastReport.OpenSource bootstrap
-(Phase 7.2). v2.1.2 (`59bcf37`) added `Pulls.ReferenceNumber` (Phase 7.1).
+`DoReportData` is the single source of truth — both the HTML partial
+and the FastReport programmatic builder consume it, so paper and screen
+never drift. Aggregation lives in SQL
+(`PullRepository.GetDoReportRowsAsync` — `GROUP BY (PO, PoLineNumber,
+ItemCode) SUM(QtyReceived) HAVING SUM > 0`); reversal pair math nets out
+because reversal rows carry negative qty and the voided originals are
+excluded via `ReversedById IS NULL`. Vendor display fallback:
+`VendorName → VendorCode → em-dash` (no more "(unknown vendor)").
+
+Removed: standalone `Do.cshtml` page, the
+`/Reports/Do/{id}` route, the `/Reports/Do/{id}/pdf?dl=1` URL, the
+embedded PDF iframe pattern (FastReport.OpenSource.Web's missing JS
+viewer made it the wrong tool anyway — see
+`feedback_fastreport_opensource_web` memory). `DeliveryOrderService`
+shed its `IReceiptRepository` dependency.
+
+Lineage: v2.1.4 (`87e8e48`) shipped Phase 7.3 (initial DO render via
+iframe-to-PDF). v2.1.3 (`e0e3820`) added FastReport.OpenSource
+bootstrap (Phase 7.2). v2.1.2 (`59bcf37`) added
+`Pulls.ReferenceNumber` (Phase 7.1).
+
 v2.1.1 (`5d88b86`) added the drawer's close-auth section (signer +
 role + signature SVG + PNG download). v2.1 (`3b6ed06`) bundled PullItem
 admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
