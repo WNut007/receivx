@@ -69,6 +69,9 @@ docs landed in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
   create-time and immutable thereafter. When true, FIFO scope is restricted
   to POs whose `PullId` matches; otherwise FIFO is warehouse-wide. Audit
   message carries the `Scope:` tag (wire contract per BUILD_PROMPT.md §8.1).
+  Application-layer default flipped to `true` (strict-by-default) in v2.1
+  — symmetry with LockHourCap. DB column DEFAULT stays `0` so the
+  column-add migration didn't retroactively flip pre-feature pulls.
   `PurchaseOrders.PullId` is also immutable post-create — stricter than the
   §7.13 receipt-reference rule (applies even when no receipts reference).
   The v2.1 `LockHourCap` flag follows the same immutability pattern — PUT

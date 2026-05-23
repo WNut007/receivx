@@ -471,7 +471,7 @@
     document.getElementById('pm-notes').value = '';
 
     const lockChk = document.getElementById('pm-lock-po-by-pull');
-    lockChk.checked = false;
+    lockChk.checked = true;            // v2.1 default — pull-locked is the safe choice
     lockChk.disabled = false;
     document.getElementById('pm-lock-card').classList.remove('locked-immutable');
     document.getElementById('pm-lock-help').textContent =

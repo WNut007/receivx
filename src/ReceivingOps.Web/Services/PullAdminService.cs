@@ -53,11 +53,12 @@ public class PullAdminService : IPullAdminService
                     CreatedBy = actorId,
                 }, transaction: tx, cancellationToken: ct));
 
-            // Audit suffix calls out both lock flags so the create event surfaces both
-            // strict-mode choices in /Masters audit search.
+            // Audit suffix calls out non-default strict-mode choices so create events
+            // for the common case stay clean in /Masters audit search and exceptional
+            // (loose) pulls stand out. Post-v2.1 the default for both flags is `true`.
             var lockParts = new List<string>();
-            if (req.LockPoByPull) lockParts.Add("LockPoByPull=true");
-            if (!req.LockHourCap) lockParts.Add("LockHourCap=false");  // default true is the "normal" case
+            if (!req.LockPoByPull) lockParts.Add("LockPoByPull=false");
+            if (!req.LockHourCap)  lockParts.Add("LockHourCap=false");
             var lockSuffix = lockParts.Count > 0 ? $" ({string.Join(", ", lockParts)})" : "";
             await _audit.WriteAsync(conn, tx, "create", "Pull", newId.ToString(),
                 $"Created pull {req.PullNumber} for warehouse {req.WarehouseId}{lockSuffix}", ct);

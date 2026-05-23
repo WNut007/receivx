@@ -126,7 +126,7 @@ public class PullCreateRequest
     public DateTime PullDate { get; set; }
     public string? Eta { get; set; }
     public string? Notes { get; set; }
-    public bool LockPoByPull { get; set; } = false;    // §3.5 immutable after create
+    public bool LockPoByPull { get; set; } = true;     // v2.1 — strict by default; immutable after create (§7.15)
     public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — strict by default; immutable after create
 }
 

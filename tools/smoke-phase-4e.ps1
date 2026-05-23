@@ -75,15 +75,19 @@ function PutPull([string]$id, [hashtable]$body) {
 }
 
 # ============================================================================
-# (1) POST without lockPoByPull → LockPoByPull=false
+# (1) POST without lockPoByPull → LockPoByPull=true (v2.1 strict default).
+#     Explicitly send lockPoByPull=false to test the unlocked path; the
+#     "omit → defaults to false" semantic was removed in v2.1 (PullCreateRequest
+#     default = true; see CLAUDE.md "v2 invariants" + BUILD_PROMPT §4.4).
 # ============================================================================
-Step "(1) POST /api/pulls without lockPoByPull → 201, LockPoByPull=false"
+Step "(1) POST /api/pulls with lockPoByPull=false → 201, persisted as false"
 $p1 = PostPull @{
-    pullNumber  = 'PL-SMOKE-4E-1'
-    warehouseId = $WH_01
-    pullDate    = '2026-05-30'
-    eta         = '14:00'
-    notes       = '4e smoke unlocked'
+    pullNumber   = 'PL-SMOKE-4E-1'
+    warehouseId  = $WH_01
+    pullDate     = '2026-05-30'
+    eta          = '14:00'
+    notes        = '4e smoke unlocked'
+    lockPoByPull = $false
 }
 if ($p1.pullNumber -ne 'PL-SMOKE-4E-1') { Fail "Expected pullNumber=PL-SMOKE-4E-1, got '$($p1.pullNumber)'" }
 if ($p1.lockPoByPull -ne $false)        { Fail "Expected lockPoByPull=false, got $($p1.lockPoByPull)" }

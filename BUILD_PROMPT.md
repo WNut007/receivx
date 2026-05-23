@@ -215,6 +215,10 @@ CREATE TABLE dbo.Pulls (
     -- PO scoping policy — IMMUTABLE after pull creation (see §7.15)
     --   false: FIFO scope = all open POs in the warehouse (cross-pull pool)
     --   true:  FIFO scope = only POs explicitly linked to this pull (po.PullId = this.Id)
+    -- DB default 0 (backward compat); application-layer default true since v2.1
+    -- (see PullCreateRequest + create-form checkbox — strict-by-default symmetry
+    --  with LockHourCap). The DB DEFAULT stays 0 so the column add migration
+    --  does not retroactively flip pre-feature pulls into Mode B.
     LockPoByPull   BIT              NOT NULL CONSTRAINT DF_Pulls_LockPoByPull DEFAULT 0,
     -- v2.1 — per-hour cap enforcement policy — IMMUTABLE after pull creation (see §7.15)
     --   true:  receive is rejected (409) when qty would push window.ReceivedQty past
@@ -232,7 +236,7 @@ CREATE INDEX IX_Pulls_WhDate ON dbo.Pulls(WarehouseId, PullDate);
 CREATE INDEX IX_Pulls_Status ON dbo.Pulls(Status);
 ```
 
-> **Why `LockPoByPull` is `NOT NULL` with a default of `0`**: backward compatibility for existing pulls — every pre-feature pull defaults to "warehouse-wide FIFO" (the v1 semantic). New pulls can opt into strict per-pull locking via the create form. Once set, the value is immutable for the life of the pull (see §7.15).
+> **Why `LockPoByPull` is `NOT NULL` with a DB default of `0`**: backward compatibility for existing pulls at column-add time — every pre-feature pull defaults to "warehouse-wide FIFO" (the v1 semantic) so the migration doesn't retroactively flip live state. **Application-layer default is `true` since v2.1** (`PullCreateRequest.LockPoByPull = true`, create-form checkbox pre-checked) — strict-by-default symmetry with `LockHourCap`. Operators opt out by unchecking the box (or sending `lockPoByPull: false` in the POST body) when they want a pull to draw from the warehouse pool. Once set, the value is immutable for the life of the pull (see §7.15).
 >
 > **Why `LockHourCap` is `NOT NULL` with a default of `1`** (v2.1): strict-by-default is the safer choice — per-user feedback after v2 deploy, operators expect the per-hour `ExpectedQty` to act as a hard cap and were surprised when over-receive went through silently. The Phase 6 schema migration backfilled every existing pull to `1`, so post-deploy receives that would have over-received now 409 (preserving any existing over-state as-is — the gate is for *new* receives only). Procurement can opt a pull into loose mode (`LockHourCap = 0`) at create-time when vendors are known to over-ship — same immutability rule as `LockPoByPull` (see §7.15).
 
@@ -672,7 +676,7 @@ Every endpoint returns `application/json`. Errors are RFC 7807 `ProblemDetails`.
 |---|---|---|---|---|
 | GET  | `/api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=` | — | authenticated | list with progress + `lockPoByPull` + `lockHourCap` per row |
 | GET  | `/api/pulls/{id}`                  | — | authenticated | full pull + items + windows + `lockPoByPull` + `lockHourCap` |
-| POST | `/api/pulls`                       | `{ pullNumber, warehouseId, pullDate, lockPoByPull?, lockHourCap?, ... }` | CanManagePulls | created. `lockPoByPull` defaults to `false`, `lockHourCap` defaults to `true` (strict). Both **immutable** thereafter (see §7.15) |
+| POST | `/api/pulls`                       | `{ pullNumber, warehouseId, pullDate, lockPoByPull?, lockHourCap?, ... }` | CanManagePulls | created. Both `lockPoByPull` and `lockHourCap` default to `true` (strict-by-default since v2.1). Both **immutable** thereafter (see §7.15) |
 | PUT  | `/api/pulls/{id}`                  | edits | CanManagePulls | updated (refused if closed). **Rejects** any change to `lockPoByPull` or `lockHourCap` with `409` (§7.15). The body must echo the current value of both flags. |
 | POST | `/api/pulls/{id}/close`            | `{ signatureSvg }` | CanManagePulls | 204 (refused unless every active window is full) |
 | POST | `/api/pulls/{id}/reopen`           | `{ reason }` | **CanReopenPull** | 204 (only when status='closed') |
@@ -1172,7 +1176,7 @@ Two fields capture the planner/procurement intent at object-creation time and ar
 
 | Field | Set when | Mutability after create |
 |---|---|---|
-| `Pulls.LockPoByPull` | Pull is created via `POST /api/pulls`. Defaults to `false` if omitted. | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockPoByPull is immutable after pull creation."` |
+| `Pulls.LockPoByPull` | Pull is created via `POST /api/pulls`. Application-layer default is `true` since v2.1 (strict-by-default; the DB column default stays `0` for the column-add migration). | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockPoByPull is immutable after pull creation."` |
 | `Pulls.LockHourCap` (v2.1) | Pull is created via `POST /api/pulls`. Defaults to `true` if omitted (strict-by-default). | **Immutable.** `PUT /api/pulls/{id}` rejects any change with `"LockHourCap is immutable after pull creation."` — same strict-echo pattern as `LockPoByPull`. |
 | `PurchaseOrders.PullId` | PO is created via `POST /api/pos`. Optional in the request body; defaults to `NULL`. | **Immutable.** `PUT /api/pos/{id}` rejects any change including `NULL → NOT NULL` and `NOT NULL → NULL` with `"PO–pull link is immutable. Cancel and reissue if you need to change."` |
 

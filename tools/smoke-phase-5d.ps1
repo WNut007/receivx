@@ -123,22 +123,26 @@ if ($lockedSeen -lt 1) { Fail "Expected at least one locked pull in seed; saw $l
 OK "All $($rows.Count) rows carry lockPoByPull (locked count = $lockedSeen)"
 
 # ----------------------------------------------------------------------------
-# 4. POST /api/pulls — default false + explicit true round-trip
+# 4. POST /api/pulls — explicit-false unlocked + explicit-true locked round-trip.
+#    v2.1 flipped the default-on-omit to true (strict-by-default), so the unlocked
+#    path now has to send lockPoByPull=false explicitly. The "omit → false" semantic
+#    is gone — see CLAUDE.md "v2 invariants" + BUILD_PROMPT §4.4.
 # ----------------------------------------------------------------------------
 $tick = [DateTime]::UtcNow.Ticks % 1000000
 $unlockedNumber = "PL-SMOKE-5D-U$tick"
 $lockedNumber   = "PL-SMOKE-5D-L$tick"
 
-Step "POST /api/pulls WITHOUT lockPoByPull → persisted as false (default)"
+Step "POST /api/pulls with lockPoByPull=false → persisted as false"
 $bodyU = @{
     pullNumber = $unlockedNumber
     warehouseId = $WH_01
     pullDate = (Get-Date).ToString('yyyy-MM-dd')
     notes = '5d smoke unlocked'
+    lockPoByPull = $false
 } | ConvertTo-Json
 $createdU = Invoke-RestMethod -Uri "$base/api/pulls" -Method POST -Body $bodyU -ContentType 'application/json' -WebSession $adm
-if ($createdU.lockPoByPull -ne $false) { Fail "Expected lockPoByPull=false default, got $($createdU.lockPoByPull)" }
-OK "Default-unlocked pull $unlockedNumber created"
+if ($createdU.lockPoByPull -ne $false) { Fail "Expected lockPoByPull=false, got $($createdU.lockPoByPull)" }
+OK "Explicit-false unlocked pull $unlockedNumber created"
 
 Step "POST /api/pulls WITH lockPoByPull=true → persisted as true"
 $bodyL = @{

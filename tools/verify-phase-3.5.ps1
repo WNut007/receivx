@@ -81,16 +81,20 @@ if ($vCol -ne '1') { Fail "vw_PurchaseOrderAvailability does not project PullId"
 OK "View projects PullId"
 
 # ========================================================================
-# 6. Existing pulls — LockPoByPull = 0 (backward compat)
+# 6. Seeded pulls — LockPoByPull = 0 (backward compat)
 #    Phase 3.5 introduces PL-2900 + PL-2901 with LockPoByPull = 1
 #    (PL-2900 = linked+locked demo; PL-2901 = lock+no-PO fixture).
+#    v2.1 flipped the create-form default to true, so any user-created
+#    or smoke pull may legitimately be locked. The invariant tested here
+#    is "the column-add migration didn't retroactively flip seeded
+#    pulls"; explicitly scope to the seeded PL-28xx fixtures.
 # ========================================================================
-Step "All pre-3.5 pulls (PL-2840..PL-2851) have LockPoByPull = 0"
-$preLocked = Q "SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber NOT IN ('PL-2900','PL-2901') AND LockPoByPull <> 0;"
-if ($preLocked -ne '0') { Fail "Some pre-3.5 pulls have LockPoByPull <> 0. Count: $preLocked" }
-$totalUnlocked = Q "SELECT COUNT(*) FROM dbo.Pulls WHERE LockPoByPull = 0;"
-if ([int]$totalUnlocked -lt 12) { Fail "Expected >= 12 unlocked pulls, got $totalUnlocked" }
-OK "All 12 existing pulls retain LockPoByPull = 0"
+Step "All pre-3.5 seeded pulls (PL-28xx) have LockPoByPull = 0"
+$preLocked = Q "SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber LIKE 'PL-28%' AND PullNumber NOT IN ('PL-2900','PL-2901') AND LockPoByPull <> 0;"
+if ($preLocked -ne '0') { Fail "Some pre-3.5 seeded pulls have LockPoByPull <> 0. Count: $preLocked" }
+$seededUnlocked = Q "SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber LIKE 'PL-28%' AND LockPoByPull = 0;"
+if ([int]$seededUnlocked -lt 12) { Fail "Expected >= 12 seeded unlocked pulls, got $seededUnlocked" }
+OK "All 12 seeded PL-28xx pulls retain LockPoByPull = 0"
 
 # ========================================================================
 # 7. Linked PO demo — PO-2401-018 → PL-2847
