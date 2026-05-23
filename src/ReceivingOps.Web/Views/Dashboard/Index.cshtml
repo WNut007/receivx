@@ -349,6 +349,11 @@
                         <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">ETA</label>
                         <input type="text" class="form-control" id="pm-eta" placeholder="e.g. 14:00">
                     </div>
+                    <!-- v2.x Phase 7.1 — vendor invoice / delivery-batch ID. Optional; surfaces on the DO render in Phase 7.2+. -->
+                    <div class="col-12">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Reference</label>
+                        <input type="text" class="form-control" id="pm-reference" maxlength="64" placeholder="e.g. INV-2026-0042 (optional)">
+                    </div>
                     <div class="col-12">
                         <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Notes</label>
                         <textarea class="form-control" id="pm-notes" rows="2" placeholder="Optional"></textarea>

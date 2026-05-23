@@ -125,6 +125,8 @@
       closedByName:  s.closedByName || null,
       closedByRole:  s.closedByRole || null,
       signatureSvg:  s.signatureSvg || null,
+      // v2.x Phase 7.1 — vendor invoice / delivery-batch ID. Editable post-create.
+      referenceNumber: s.referenceNumber || null,
     };
   }
 
@@ -606,6 +608,7 @@
     document.getElementById('pm-warehouse').disabled = false;
     document.getElementById('pm-pull-date').value = new Date().toISOString().slice(0, 10);
     document.getElementById('pm-eta').value = '';
+    document.getElementById('pm-reference').value = '';
     document.getElementById('pm-notes').value = '';
 
     const lockChk = document.getElementById('pm-lock-po-by-pull');
@@ -645,6 +648,7 @@
     document.getElementById('pm-warehouse').disabled = true;     // immutable
     document.getElementById('pm-pull-date').value = p.dateISO;
     document.getElementById('pm-eta').value = p.etaRaw || '';
+    document.getElementById('pm-reference').value = p.referenceNumber || '';
     document.getElementById('pm-notes').value = p.notesRaw || '';
 
     const lockChk = document.getElementById('pm-lock-po-by-pull');
@@ -671,11 +675,12 @@
   async function savePullModal() {
     if (!pullModal) return;
     const body = {
-      pullDate:     document.getElementById('pm-pull-date').value || null,
-      eta:          document.getElementById('pm-eta').value.trim() || null,
-      notes:        document.getElementById('pm-notes').value.trim() || null,
-      lockPoByPull: document.getElementById('pm-lock-po-by-pull').checked,
-      lockHourCap:  document.getElementById('pm-lock-hour-cap').checked,
+      pullDate:        document.getElementById('pm-pull-date').value || null,
+      eta:             document.getElementById('pm-eta').value.trim() || null,
+      notes:           document.getElementById('pm-notes').value.trim() || null,
+      referenceNumber: document.getElementById('pm-reference').value.trim() || null,
+      lockPoByPull:    document.getElementById('pm-lock-po-by-pull').checked,
+      lockHourCap:     document.getElementById('pm-lock-hour-cap').checked,
     };
 
     let url, method;
