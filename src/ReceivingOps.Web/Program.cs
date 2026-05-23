@@ -1,9 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FastReport.Web;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using ReceivingOps.Web.Data;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
 
@@ -98,6 +100,17 @@ builder.Services.AddScoped<IPullItemAdminService, PullItemAdminService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
+// ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
+// CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
+// consumed by the DO report header (Phase 7.3+) via IOptions<CompanyInfo>.
+// Defaults to empty strings on missing section so startup never crashes on
+// a fresh deploy that hasn't filled the placeholders.
+builder.Services.Configure<CompanyInfo>(builder.Configuration.GetSection("CompanyInfo"));
+
+// FastReport DI — registers the engine + Web viewer services. Endpoints +
+// .frx templates land in Phase 7.3; this commit only wires the bootstrap.
+builder.Services.AddFastReport();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
@@ -111,6 +124,11 @@ app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// FastReport Web viewer middleware — mounts /_fr/* routes for the embedded
+// preview component. Reports themselves are served by a dedicated controller
+// in Phase 7.3; this just enables the viewer's runtime assets.
+app.UseFastReport();
 
 app.MapControllerRoute(
     name: "default",
