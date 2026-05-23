@@ -297,34 +297,6 @@
       display: none;
     }
 
-    /* Theme switch */
-    .app-nav-theme {
-      display: inline-flex;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 100px;
-      padding: 3px;
-      box-shadow: var(--shadow-sm);
-    }
-    .app-nav-theme-swatch {
-      width: 24px; height: 24px;
-      border-radius: 50%;
-      border: none;
-      cursor: pointer;
-      position: relative;
-      transition: transform 0.15s ease;
-    }
-    .app-nav-theme-swatch:hover { transform: scale(1.08); }
-    .app-nav-theme-swatch.active::after {
-      content: '';
-      position: absolute; inset: -3px;
-      border: 2px solid var(--accent);
-      border-radius: 50%;
-    }
-    .app-nav-theme-swatch.light    { background: linear-gradient(135deg, #f6f5f1 50%, #ffffff 50%); border: 1px solid #d4d0c6; }
-    .app-nav-theme-swatch.midnight { background: linear-gradient(135deg, #0e1116 50%, #5fd49a 50%); }
-    .app-nav-theme-swatch.slate    { background: linear-gradient(135deg, #eef1f4 50%, #2e4d6b 50%); }
-
     /* Nav toggle (hide/show) — old style kept for backward-compat */
     .app-nav-toggle {
       background: var(--surface-2);
@@ -683,12 +655,6 @@
     // Trail markup is shared between horizontal nav and vertical utility bar
     const trailHTML = `
       <div class="app-nav-trail">
-        <div class="app-nav-theme" role="group" aria-label="Theme">
-          <button class="app-nav-theme-swatch light"    data-theme="light"    title="Light"></button>
-          <button class="app-nav-theme-swatch midnight" data-theme="midnight" title="Midnight"></button>
-          <button class="app-nav-theme-swatch slate"    data-theme="slate"    title="Slate"></button>
-        </div>
-
         <div class="app-nav-profile">
           <button class="app-nav-profile-trigger" id="app-nav-profile-btn">
             <span class="avatar">${initials}</span>
@@ -835,9 +801,6 @@
     function applyThemeChoice(name) {
       PREF.theme = name;
       document.documentElement.setAttribute('data-theme', name);
-      // Update swatch row
-      document.querySelectorAll('.app-nav-theme-swatch').forEach(s =>
-        s.classList.toggle('active', s.dataset.theme === name));
       // Update profile-menu Theme submenu options
       document.querySelectorAll('.app-nav-theme-option').forEach(s =>
         s.classList.toggle('active', s.dataset.theme === name));
@@ -849,11 +812,6 @@
         if (s.dataset.theme) s.classList.toggle('active', s.dataset.theme === name);
       });
     }
-
-    // Theme swatch row (top utility / horizontal trail)
-    document.querySelectorAll('.app-nav-theme-swatch').forEach(b => {
-      b.addEventListener('click', () => applyThemeChoice(b.dataset.theme));
-    });
 
     // Theme submenu inside profile dropdown
     const themeToggle = document.getElementById('app-nav-theme-toggle');
