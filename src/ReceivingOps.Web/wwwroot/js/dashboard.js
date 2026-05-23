@@ -807,7 +807,14 @@
     if (!drawerPullIdForItems) return;
     const it = drawerItems.find(x => x.id === itemId);
     if (!it) return;
-    if (!confirm('Delete item ' + it.itemCode + '? Windows will cascade.')) return;
+    const ok = await confirmAction({
+      title: 'Delete item ' + it.itemCode + '?',
+      message: 'All hour windows on this item will cascade. Refused if any window has receipts.',
+      icon: 'trash',
+      confirmLabel: 'Delete item',
+      danger: true,
+    });
+    if (!ok) return;
     const r = await fetch(
       '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
       '/items/' + encodeURIComponent(itemId),

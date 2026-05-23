@@ -131,7 +131,13 @@ document.getElementById('btn-discard').addEventListener('click', () => {
 });
 
 document.getElementById('btn-reset').addEventListener('click', async () => {
-  if (!confirm('Reset all preferences to defaults? Your account stays signed in.')) return;
+  const ok = await confirmAction({
+    title: 'Reset preferences to defaults?',
+    message: 'Theme, nav layout, and behavior return to defaults. Your account stays signed in.',
+    icon: 'warning',
+    confirmLabel: 'Reset preferences',
+  });
+  if (!ok) return;
   PREFS.theme = 'light';
   PREFS.position = 'horizontal';
   PREFS.behavior = 'sticky';
@@ -141,7 +147,13 @@ document.getElementById('btn-reset').addEventListener('click', async () => {
 });
 
 document.getElementById('btn-signout').addEventListener('click', async () => {
-  if (!confirm('Sign out and return to login?')) return;
+  const ok = await confirmAction({
+    title: 'Sign out?',
+    message: 'You will need to sign in again to return.',
+    icon: 'info',
+    confirmLabel: 'Sign out',
+  });
+  if (!ok) return;
   try {
     await fetch('/api/auth/logout', { method: 'POST' });
   } catch (e) { /* ignore */ }

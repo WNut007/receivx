@@ -1004,3 +1004,192 @@
   }, { passive: true });
 
 })();
+
+/* ============================================================================
+ * window.confirmAction — design-system custom confirm modal
+ * ----------------------------------------------------------------------------
+ * Mirror of wwwroot/js/app-nav.js — keep the two in sync when editing.
+ * Drop-in replacement for window.confirm(); returns Promise<boolean>.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  const css = `
+    .confirm-modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+      z-index: 1080;
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .confirm-modal-card {
+      background: var(--surface, #fff);
+      border: 0.5px solid var(--border, rgba(0,0,0,0.12));
+      border-radius: 12px;
+      max-width: 420px; width: 100%;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      color: var(--text, #1a1a1a);
+    }
+    .confirm-modal-icon {
+      width: 36px; height: 36px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 18px; line-height: 1;
+    }
+    .confirm-modal-icon.danger  { background: #FCEBEB; color: #A32D2D; }
+    .confirm-modal-icon.warning { background: #FAEEDA; color: #854F0B; }
+    .confirm-modal-icon.info    { background: #E6F1FB; color: #0C447C; }
+    .confirm-modal-title {
+      font-size: 16px; font-weight: 500; line-height: 1.4;
+      margin: 14px 0 6px 0;
+    }
+    .confirm-modal-message {
+      font-size: 13px; line-height: 1.6;
+      color: var(--text-muted, #666);
+      margin: 0;
+    }
+    .confirm-modal-details {
+      background: var(--surface-2, #f7f7f7);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-top: 14px;
+      font-size: 13px;
+    }
+    .confirm-modal-details .cm-row {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 2px 0;
+    }
+    .confirm-modal-details .cm-label { color: var(--text-muted, #888); }
+    .confirm-modal-buttons {
+      display: flex; justify-content: flex-end; gap: 10px;
+      margin-top: 18px;
+    }
+    .confirm-modal-btn {
+      padding: 8px 16px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; border: 1px solid; line-height: 1.4;
+      font-family: inherit;
+    }
+    .confirm-modal-btn:focus-visible {
+      outline: 2px solid var(--accent, #2563eb); outline-offset: 2px;
+    }
+    .confirm-modal-btn-cancel {
+      background: transparent;
+      border-color: var(--border, rgba(0,0,0,0.18));
+      color: var(--text, #333);
+    }
+    .confirm-modal-btn-cancel:hover { background: var(--surface-2, #f5f5f5); }
+    .confirm-modal-btn-confirm {
+      background: var(--accent, #2563eb);
+      border-color: var(--accent, #2563eb);
+      color: white;
+    }
+    .confirm-modal-btn-confirm.danger {
+      background: #E24B4A; border-color: #A32D2D; color: white;
+    }
+    .confirm-modal-btn-confirm.danger:hover { background: #C13F3E; }
+  `;
+  const style = document.createElement('style');
+  style.setAttribute('data-confirm-modal', '');
+  style.textContent = css;
+  document.head.appendChild(style);
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  const ICONS = {
+    trash:   'bi-trash',
+    warning: 'bi-exclamation-triangle',
+    info:    'bi-info-circle',
+  };
+
+  window.confirmAction = function (opts) {
+    return new Promise((resolve) => {
+      const o = opts || {};
+      const title        = o.title        || 'Confirm?';
+      const message      = o.message      || '';
+      const iconName     = o.icon         || 'warning';
+      const confirmLabel = o.confirmLabel || 'Confirm';
+      const cancelLabel  = o.cancelLabel  || 'Cancel';
+      const danger       = !!o.danger;
+      const details      = o.details      || null;
+
+      const iconClass = ICONS[iconName] || ICONS.warning;
+      const tint = danger ? 'danger' : (iconName === 'info' ? 'info' : 'warning');
+
+      let detailsHtml = '';
+      if (details && typeof details === 'object') {
+        const rows = Object.keys(details).map(k =>
+          '<div class="cm-row">' +
+            '<span class="cm-label">' + escHtml(k) + '</span>' +
+            '<span>' + escHtml(details[k]) + '</span>' +
+          '</div>'
+        ).join('');
+        if (rows) detailsHtml = '<div class="confirm-modal-details">' + rows + '</div>';
+      }
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'confirm-modal-backdrop';
+      backdrop.setAttribute('role', 'presentation');
+      backdrop.innerHTML =
+        '<div class="confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">' +
+          '<span class="confirm-modal-icon ' + tint + '">' +
+            '<i class="bi ' + iconClass + '"></i>' +
+          '</span>' +
+          '<h3 class="confirm-modal-title" id="confirm-modal-title">' + escHtml(title) + '</h3>' +
+          (message ? '<p class="confirm-modal-message">' + escHtml(message) + '</p>' : '') +
+          detailsHtml +
+          '<div class="confirm-modal-buttons">' +
+            '<button type="button" class="confirm-modal-btn confirm-modal-btn-cancel" data-confirm-act="cancel">' +
+              escHtml(cancelLabel) +
+            '</button>' +
+            '<button type="button" class="confirm-modal-btn confirm-modal-btn-confirm ' + (danger ? 'danger' : '') + '" data-confirm-act="confirm">' +
+              escHtml(confirmLabel) +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(backdrop);
+
+      const cancelBtn  = backdrop.querySelector('[data-confirm-act="cancel"]');
+      const confirmBtn = backdrop.querySelector('[data-confirm-act="confirm"]');
+      const prevFocus = document.activeElement;
+      cancelBtn.focus();
+
+      function cleanup(result) {
+        document.removeEventListener('keydown', onKey, true);
+        backdrop.remove();
+        if (prevFocus && typeof prevFocus.focus === 'function') {
+          try { prevFocus.focus(); } catch (e) { /* element gone */ }
+        }
+        resolve(result);
+      }
+
+      function onKey(e) {
+        if (e.key === 'Escape') {
+          e.preventDefault(); e.stopPropagation();
+          cleanup(false);
+          return;
+        }
+        if (e.key === 'Tab') {
+          const focusables = [cancelBtn, confirmBtn];
+          const idx = focusables.indexOf(document.activeElement);
+          e.preventDefault();
+          if (idx === -1) { cancelBtn.focus(); return; }
+          const next = e.shiftKey
+            ? (idx === 0 ? focusables.length - 1 : idx - 1)
+            : (idx === focusables.length - 1 ? 0 : idx + 1);
+          focusables[next].focus();
+          return;
+        }
+      }
+      document.addEventListener('keydown', onKey, true);
+
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) cleanup(false);
+      });
+      cancelBtn.addEventListener('click', () => cleanup(false));
+      confirmBtn.addEventListener('click', () => cleanup(true));
+    });
+  };
+})();

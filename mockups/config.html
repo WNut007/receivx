@@ -786,8 +786,14 @@
   });
 
   // ---- Reset preferences ----
-  document.getElementById('btn-reset').addEventListener('click', () => {
-    if (!confirm('Reset all preferences to defaults? Your account stays signed in.')) return;
+  document.getElementById('btn-reset').addEventListener('click', async () => {
+    const ok = await confirmAction({
+      title: 'Reset preferences to defaults?',
+      message: 'Theme, nav layout, and behavior return to defaults. Your account stays signed in.',
+      icon: 'warning',
+      confirmLabel: 'Reset preferences',
+    });
+    if (!ok) return;
     localStorage.removeItem('pullController.theme');
     localStorage.removeItem('app.navPosition');
     localStorage.removeItem('app.navBehavior');
@@ -795,8 +801,14 @@
   });
 
   // ---- Sign out ----
-  document.getElementById('btn-signout').addEventListener('click', () => {
-    if (!confirm('Sign out and return to login?')) return;
+  document.getElementById('btn-signout').addEventListener('click', async () => {
+    const ok = await confirmAction({
+      title: 'Sign out?',
+      message: 'You will need to sign in again to return.',
+      icon: 'info',
+      confirmLabel: 'Sign out',
+    });
+    if (!ok) return;
     localStorage.removeItem('auth.user');
     window.location.href = 'login.html';
   });

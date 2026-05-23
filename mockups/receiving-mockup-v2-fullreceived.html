@@ -2872,18 +2872,19 @@
   });
 
   // ============ REOPEN HANDLER (supervisor / admin only) ============
-  document.getElementById('btn-reopen-pull').addEventListener('click', () => {
+  document.getElementById('btn-reopen-pull').addEventListener('click', async () => {
     if (!pullClosed) return;
     if (!canReopenPull()) {
       showToast('Reopen not allowed', 'Supervisors only', 'error');
       return;
     }
     const pullId = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : document.getElementById('pull-select').value;
-    const ok = confirm(
-      `Reopen pull sheet ${pullId}?\n\n` +
-      `This will unlock the sheet for further editing. The previous close signature stays in the audit log, ` +
-      `and a "reopen" event will be recorded with your name and timestamp.`
-    );
+    const ok = await confirmAction({
+      title: `Reopen pull sheet ${pullId}?`,
+      message: 'This unlocks the sheet for further editing. The previous close signature stays in the audit log, and a "reopen" event is recorded with your name + timestamp.',
+      icon: 'warning',
+      confirmLabel: 'Reopen sheet',
+    });
     if (!ok) return;
 
     pullClosed = false;

@@ -334,7 +334,14 @@ async function saveAddLine() {
 
 async function deleteLine(lineId) {
   if (!currentDetail) return;
-  if (!confirm('Delete this line? Refused if any receipt references it (§7.13).')) return;
+  const ok = await confirmAction({
+    title: 'Delete this PO line?',
+    message: 'Refused if any receipt already references this line (§7.13).',
+    icon: 'trash',
+    confirmLabel: 'Delete line',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await jsonFetch(`/api/pos/${encodeURIComponent(currentDetail.id)}/lines/${encodeURIComponent(lineId)}`, {
       method: 'DELETE',
