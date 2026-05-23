@@ -35,6 +35,12 @@
         <p class="page-subtitle">Every receive and cancel across all pulls. Cancellations create reversal entries so the audit trail stays intact.</p>
       </div>
       <div style="display: flex; gap: 10px;">
+        <!-- Shown only when arrived via the /Receiving drawer's "Open full view ↗" link
+             (i.e., a ?pull=... query param is on the URL). Click navigates back to
+             /Receiving/{pull}. transactions.js wires the href in applyUrlFiltersToUi. -->
+        <a class="btn" id="btn-minimize" href="#" style="display: none;" title="Back to Receiving">
+          <i class="bi bi-arrows-angle-contract"></i> Minimize
+        </a>
         <button class="btn" id="btn-refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
         <button class="btn" id="btn-export"><i class="bi bi-download"></i> Export</button>
       </div>

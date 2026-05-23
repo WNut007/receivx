@@ -64,6 +64,17 @@ function applyUrlFiltersToUi() {
       label.innerHTML = `<i class="bi bi-clock"></i> ${String(h).padStart(2,'0')}:00${ctx.length ? ' · ' + ctx.join(' · ') : ''}`;
     }
   }
+
+  // "Minimize" — only meaningful when the user landed here from the
+  // /Receiving drawer's "Open full view ↗" link, which always includes
+  // ?pull=. Wire it to /Receiving/{pull} so the inverse navigation is
+  // symmetric.
+  const pull = params.get('pull');
+  const minBtn = document.getElementById('btn-minimize');
+  if (minBtn && pull) {
+    minBtn.href = '/Receiving/' + encodeURIComponent(pull);
+    minBtn.style.display = '';
+  }
 }
 
 /* ---------- Build query string from filter UI ---------- */
