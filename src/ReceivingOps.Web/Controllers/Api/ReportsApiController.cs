@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FastReport.Export.PdfSimple;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
@@ -7,9 +8,8 @@ using ReceivingOps.Web.Services;
 namespace ReceivingOps.Web.Controllers.Api;
 
 // v2.x Phase 7.4 — JSON/HTML API surface for the Reports page.
-//   GET /api/reports/do/{id}/preview  → HTML fragment from _DoPreview.cshtml
-// The PDF endpoint stays on the page-level ReportsController during commit 2
-// and gets canonicalized to /api/reports/do/{id}/export.pdf in commit 4.
+//   GET /api/reports/do/{id}/preview     → HTML fragment from _DoPreview.cshtml
+//   GET /api/reports/do/{id}/export.pdf  → PDF stream (FastReport, multi-page)
 [ApiController]
 [Authorize(Policy = "CanManagePulls")]
 [Route("api/reports")]
@@ -33,13 +33,7 @@ public class ReportsApiController : Controller
     {
         try
         {
-            if (!User.IsInRole("admin"))
-            {
-                var sessionWh = ParseGuid(User.FindFirstValue("warehouseId"));
-                var pull = await _pulls.GetByIdAsync(id, ct);
-                if (pull is null || pull.WarehouseId != sessionWh)
-                    return Forbid();
-            }
+            if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
             var data = await _doService.GetReportDataAsync(id, ct);
             // Full path — the api controller's view discovery would look under
             // Views/ReportsApi/ otherwise (controller name → folder mapping).
@@ -47,6 +41,40 @@ public class ReportsApiController : Controller
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    // GET /api/reports/do/{id}/export.pdf → PDF download. Always attachment
+    // (the iframe-preview disposition trick from Phase 7.3 is moot now that
+    // the preview is an HTML render, not an embedded PDF). Filename uses
+    // the pull number so the operator's downloads folder shows
+    // PL-XXXX-DO.pdf rather than a bare GUID.
+    [HttpGet("do/{id:guid}/export.pdf")]
+    public async Task<IActionResult> ExportPdf(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
+            using var report = await _doService.BuildAsync(id, ct);
+            using var ms = new MemoryStream();
+            using var pdf = new PDFSimpleExport();
+            report.Export(pdf, ms);
+
+            var detail = await _pulls.GetByIdAsync(id, ct);
+            var filename = $"{(detail?.PullNumber ?? id.ToString())}-DO.pdf";
+            Response.Headers["Content-Disposition"] = $"attachment; filename=\"{filename}\"";
+            return File(ms.ToArray(), "application/pdf");
+        }
+        catch (NotFoundException) { return NotFound(); }
+        catch (BusinessException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>
+    private async Task<bool> EnsureWarehouseScopeAsync(Guid pullId, CancellationToken ct)
+    {
+        if (User.IsInRole("admin")) return true;
+        var sessionWh = ParseGuid(User.FindFirstValue("warehouseId"));
+        var pull = await _pulls.GetByIdAsync(pullId, ct);
+        return pull is not null && pull.WarehouseId == sessionWh;
     }
 
     private static Guid? ParseGuid(string? s) => Guid.TryParse(s, out var g) ? g : null;

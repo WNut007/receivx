@@ -74,12 +74,11 @@
     }
 
     // ----- Export PDF -----------------------------------------------------
-    // Opens the existing PDF endpoint with ?dl=1 so the browser triggers
-    // an attachment download (inline disposition is the iframe-friendly
-    // default; ?dl=1 forces the Save As dialog).
+    // /api/reports/do/{id}/export.pdf always sets Content-Disposition:
+    // attachment so navigating to it triggers a Save As dialog.
     btnPdf.addEventListener('click', () => {
         if (!selectedPullId || btnPdf.disabled) return;
-        window.location.href = `/Reports/Do/${encodeURIComponent(selectedPullId)}/pdf?dl=1`;
+        window.location.href = `/api/reports/do/${encodeURIComponent(selectedPullId)}/export.pdf`;
     });
 
     // ----- Print ----------------------------------------------------------
