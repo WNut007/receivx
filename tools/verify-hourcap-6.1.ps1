@@ -68,10 +68,22 @@ OK "DF_Pulls_LockHourCap = ((1))"
 # ----------------------------------------------------------------------------
 # 2. Backfill — all existing pulls = 1
 # ----------------------------------------------------------------------------
-Step "All existing pulls have LockHourCap = 1"
-$nonStrict = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.Pulls WHERE LockHourCap = 0;" 2>&1
-if ([int]($nonStrict.Trim()) -ne 0) { Fail "$nonStrict pull(s) have LockHourCap = 0 after backfill (expected 0)" }
-OK "Backfill clean — all pulls strict"
+Step "All seeded pulls have LockHourCap = 1 (smoke/verify namespaces excluded)"
+# The backfill invariant is about pulls that existed BEFORE the migration —
+# i.e. seeded fixtures. Smoke harnesses (PL-SMOKE-%, PL-SHC-%, PL-VERIFY-%)
+# create loose pulls on purpose; counting them here would chase a moving
+# target, especially when an earlier smoke leaves a loose pull behind due
+# to a Receipts FK that blocks cleanup.
+$nonStrict = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -h -1 -W -Q @"
+SET NOCOUNT ON;
+SELECT COUNT(*) FROM dbo.Pulls
+WHERE LockHourCap = 0
+  AND PullNumber NOT LIKE 'PL-SMOKE-%'
+  AND PullNumber NOT LIKE 'PL-SHC-%'
+  AND PullNumber NOT LIKE 'PL-VERIFY-%';
+"@ 2>&1
+if ([int]($nonStrict.Trim()) -ne 0) { Fail "$nonStrict seeded pull(s) have LockHourCap = 0 after backfill (expected 0)" }
+OK "Backfill clean — all seeded pulls strict"
 
 # ----------------------------------------------------------------------------
 # 3. Read path — PullSummary + PullDetail expose lockHourCap

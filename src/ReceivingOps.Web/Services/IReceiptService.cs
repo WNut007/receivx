@@ -8,8 +8,11 @@ public interface IReceiptService
     /// §7.2 read-only FIFO preview. Same algorithm as ReceiveAsync but no locks,
     /// no inserts. The result may be stale by the time Confirm fires — the
     /// transactional path re-runs allocation under lock and is the source of truth.
+    /// When the pull has LockHourCap=true AND hourOfDay is supplied, the preview
+    /// also enforces the per-hour cap (409 "Insufficient hour capacity") before
+    /// reading PO lines, so the modal can surface the localized error early.
     /// </summary>
-    Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, CancellationToken ct = default);
+    Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, byte? hourOfDay = null, CancellationToken ct = default);
 
     /// <summary>
     /// §7.2a atomic multi-row receive. Locks the pull row + all candidate PO lines

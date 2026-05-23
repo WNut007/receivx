@@ -47,7 +47,29 @@ function CleanupReceipts {
             Invoke-RestMethod -Uri "$base/api/receipts/$rid/cancel" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
         } catch { }   # ignore failures during teardown
     }
+    RestoreHourCap
 }
+
+# v2.1 Hour Cap context: this smoke was written under §7.1 v2 where per-hour
+# ExpectedQty was a planning hint and over-receive was allowed. Hour Cap Phase 6.1
+# defaulted every existing pull to LockHourCap=1 (strict), which blocks
+# scenarios (1) + (7) here (receive past the hour's ExpectedQty). We flip
+# the test pulls to loose at setup and restore to strict at teardown so the
+# §3.5 lock-aware Receive scenarios this smoke owns stay backward-compatible
+# without rewriting the test data.
+$HCFlipPulls = "'PL-2847','PL-2900','PL-2901','PL-2840'"
+
+function FlipHourCapLoose {
+    $sql = "SET QUOTED_IDENTIFIER ON; SET NOCOUNT ON; UPDATE dbo.Pulls SET LockHourCap = 0 WHERE PullNumber IN ($HCFlipPulls);"
+    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+}
+
+function RestoreHourCap {
+    $sql = "SET QUOTED_IDENTIFIER ON; SET NOCOUNT ON; UPDATE dbo.Pulls SET LockHourCap = 1 WHERE PullNumber IN ($HCFlipPulls);"
+    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+}
+
+FlipHourCapLoose
 
 # ---------- Login ----------
 Step "Login (sadmin / WH-01)"
@@ -220,5 +242,10 @@ WHERE  PullItemId = '$PI_2900_PCBA' AND HourOfDay = 12;
 "@
 if ($net -ne '0') { Fail "Expected net=0 on PL-2900 hour 12 after cleanup, got '$net'" }
 OK "PL-2900 hour 12 net = 0"
+
+# v2.1 Hour Cap teardown — restore seeded test pulls to strict so the next
+# verify-hourcap-6.1 run stays green and other smokes don't get unexpected
+# loose behavior.
+RestoreHourCap
 
 Write-Host "`nPhase 4b smoke passed (all 8 scenarios)." -ForegroundColor Green

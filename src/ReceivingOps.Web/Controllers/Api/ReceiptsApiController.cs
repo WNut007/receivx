@@ -40,14 +40,17 @@ public class ReceiptsApiController : ControllerBase
         catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }
     }
 
-    // §7.2 / §3.5 GET /api/receipts/preview?pullItemId=&qty= — read-only FIFO preview (lock-aware)
+    // §7.2 / §3.5 GET /api/receipts/preview?pullItemId=&qty=&hour=
+    // hour is optional. When the pull has LockHourCap=true and the caller passes hour,
+    // the preview also surfaces "Insufficient hour capacity" 409 before allocating PO
+    // lines, so the modal's alloc panel can render the localized error early.
     [HttpGet("preview")]
     public async Task<ActionResult<ReceivePreviewResult>> Preview(
-        [FromQuery] Guid pullItemId, [FromQuery] int qty, CancellationToken ct)
+        [FromQuery] Guid pullItemId, [FromQuery] int qty, [FromQuery] byte? hour, CancellationToken ct)
     {
         try
         {
-            var result = await _receipts.PreviewAsync(pullItemId, qty, ct);
+            var result = await _receipts.PreviewAsync(pullItemId, qty, hour, ct);
             return Ok(result);
         }
         catch (ValidationException ex)  { return Problem(title: ex.Message, statusCode: 400); }

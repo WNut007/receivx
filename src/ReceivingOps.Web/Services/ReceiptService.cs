@@ -35,9 +35,10 @@ public class ReceiptService : IReceiptService
     //   - 403 on warehouse mismatch (non-admin)
     //   - 409 on closed pull, lock=true & no PO linked, or insufficient capacity
     // ============================================================================
-    public async Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, CancellationToken ct = default)
+    public async Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, byte? hourOfDay = null, CancellationToken ct = default)
     {
         if (qty <= 0) throw new ValidationException("Quantity must be positive");
+        if (hourOfDay is { } h && h > 23) throw new ValidationException("HourOfDay must be 0–23");
 
         var sessionWh = SessionWarehouseId();
         var isAdmin   = SessionIsAdmin();
@@ -47,7 +48,7 @@ public class ReceiptService : IReceiptService
         var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
             SELECT pi.Id AS PullItemId, pi.ItemCode,
                    p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
-                   p.LockPoByPull
+                   p.LockPoByPull, p.LockHourCap
             FROM   dbo.PullItems pi
             INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
             WHERE  pi.Id = @PullItemId;",
@@ -59,6 +60,15 @@ public class ReceiptService : IReceiptService
 
         if (string.Equals(pullCtx.PullStatus, "closed", StringComparison.Ordinal))
             throw new BusinessException("Pull is closed");
+
+        // v2.1 Phase 6 — hour-cap check fires BEFORE the FIFO walk per spec:
+        // localized error first, no point reading PO lines if the window will
+        // reject. Only runs when LockHourCap=true AND the caller supplied an
+        // hour (older clients that don't yet send ?hour= fall through; the
+        // commit-time check inside ReceiveAsync is the authoritative gate).
+        if (pullCtx.LockHourCap && hourOfDay is { } hr)
+            await EnforceHourCapAsync(conn, transaction: null, withLock: false,
+                                      pullCtx, hr, qty, ct);
 
         var openLines = (await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false,
                                                     pullCtx, ct)).AsList();
@@ -109,6 +119,45 @@ public class ReceiptService : IReceiptService
             if (remaining == 0) break;
         }
         return allocations;
+    }
+
+    // v2.1 Phase 6.2 — enforce per-hour cap when pull.LockHourCap = true.
+    // Reads the (PullItemId, HourOfDay) window row (optionally with UPDLOCK
+    // for the Receive transaction), computes remaining capacity, and throws
+    // BusinessException → 409 if the requested qty would push the window
+    // over its ExpectedQty. Message format is the user-facing contract
+    // — UI parses ProblemDetails.title to surface in the alloc panel.
+    private static async Task<int> EnforceHourCapAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        bool withLock,
+        PullItemContext pullCtx,
+        byte hourOfDay,
+        int requestedQty,
+        CancellationToken ct)
+    {
+        var hints = withLock ? "WITH (UPDLOCK, ROWLOCK)" : "";
+        var sql = $@"
+            SELECT ExpectedQty, ReceivedQty
+            FROM   dbo.PullItemWindows {hints}
+            WHERE  PullItemId = @PullItemId AND HourOfDay = @HourOfDay;";
+
+        var window = await conn.QuerySingleOrDefaultAsync<WindowCapRow>(new CommandDefinition(
+            sql, new { pullCtx.PullItemId, HourOfDay = hourOfDay },
+            transaction: transaction, cancellationToken: ct));
+
+        if (window is null)
+            throw new BusinessException(
+                $"Hour {hourOfDay:D2}:00 has no planned window on item {pullCtx.ItemCode}. " +
+                $"Add the window first (or pick a different hour).");
+
+        var remaining = window.ExpectedQty - window.ReceivedQty;
+        if (requestedQty > remaining)
+            throw new BusinessException(
+                $"Insufficient hour capacity. Hour {hourOfDay:D2}:00 expected {window.ExpectedQty} pcs, " +
+                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.");
+
+        return remaining;
     }
 
     // Builds the FIFO read query. SQL is fixed strings; the only branch is appended
@@ -171,11 +220,11 @@ public class ReceiptService : IReceiptService
         using var tx = conn.BeginTransaction();
         try
         {
-            // ----- 1. Lock the parent pull row + read its current status (incl. LockPoByPull) -----
+            // ----- 1. Lock the parent pull row + read its current status (incl. LockPoByPull + LockHourCap) -----
             var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
                 SELECT pi.Id AS PullItemId, pi.ItemCode,
                        p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
-                       p.LockPoByPull
+                       p.LockPoByPull, p.LockHourCap
                 FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
                 INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
                 WHERE  pi.Id = @PullItemId;",
@@ -189,6 +238,17 @@ public class ReceiptService : IReceiptService
             // §5.5 / §7.9 admin override
             if (!isAdmin && sessionWh != pullCtx.WarehouseId)
                 throw new ForbiddenException("You do not have access to this pull");
+
+            // v2.1 Phase 6 — hour-cap check BEFORE the PO walk (per spec order):
+            //   1. Pull-closed (above)
+            //   2. Hour cap (here)            ← new in 6.2
+            //   3. PO availability (below)
+            // Localized error first, and skipping the PO line locks when the window
+            // will reject avoids unnecessary contention. Holds UPDLOCK on the window
+            // row so a concurrent receive can't race past the cap.
+            if (pullCtx.LockHourCap)
+                await EnforceHourCapAsync(conn, transaction: tx, withLock: true,
+                                          pullCtx, req.HourOfDay, req.Qty, ct);
 
             // ----- 2. Lock all candidate PO lines — FIFO order (lock-aware via pullCtx.LockPoByPull) -----
             // UPDLOCK + HOLDLOCK gives serializable range protection for the FIFO query.
@@ -530,9 +590,11 @@ public class ReceiptService : IReceiptService
         public string PullStatus { get; set; } = "";
         public Guid WarehouseId { get; set; }
         // §3.5 — Preview/Receive SELECTs hydrate this from Pulls.LockPoByPull.
-        // Receive's existing SELECT doesn't include this column yet (4a touches Preview only);
-        // Dapper leaves the property at default(false), preserving warehouse-wide FIFO until 4b.
         public bool LockPoByPull { get; set; }
+        // v2.1 Phase 6 — Preview/Receive SELECTs hydrate this from Pulls.LockHourCap.
+        // When true, receive 409s before the FIFO walk if qty would push the
+        // (PullItemId, HourOfDay) window past its ExpectedQty.
+        public bool LockHourCap { get; set; }
     }
 
     private sealed class PoLineAvailability
@@ -559,6 +621,12 @@ public class ReceiptService : IReceiptService
         public string? BinLocation { get; set; }
         public string QcStatus { get; set; } = "pending";
         public Guid? ReversedById { get; set; }
+    }
+
+    private sealed class WindowCapRow
+    {
+        public int ExpectedQty { get; set; }
+        public int ReceivedQty { get; set; }
     }
 
     private sealed class PoLineLockRow
