@@ -30,13 +30,27 @@
         <div class="reports-filter-bar">
             <input type="text" class="form-control filter-q" placeholder="Search PO number, item code…">
             <input type="text" class="form-control filter-pull" placeholder="Pull number">
-            <input type="date" class="form-control filter-from">
-            <input type="date" class="form-control filter-to">
+            <select class="form-select filter-date-range" id="filter-date-range" title="Filter by ClosedAt">
+                <option value="all">All dates</option>
+                <option value="today">Today</option>
+                <option value="last_2_days" selected>Last 2 days</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="this_week">This week</option>
+                <option value="last_week">Last week</option>
+                <option value="custom">Custom range…</option>
+            </select>
             <select class="form-select filter-wh">
                 <option value="">All warehouses</option>
                 @* Warehouse options populated client-side from /api/warehouses *@
             </select>
             <span class="result-count" id="result-count">@Model.Count pull@(Model.Count == 1 ? "" : "s")</span>
+        </div>
+        <div class="reports-custom-date-row" id="reports-custom-date-row" hidden>
+            <span class="date-label">From</span>
+            <input type="date" class="form-control filter-from" id="filter-from">
+            <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+            <span class="date-label">To</span>
+            <input type="date" class="form-control filter-to" id="filter-to">
         </div>
 
         <div class="reports-split">
@@ -57,7 +71,8 @@
                             <li class="pull-row"
                                 data-pull-id="@p.Id"
                                 data-pull-number="@p.PullNumber"
-                                data-warehouse-id="@p.WarehouseId">
+                                data-warehouse-id="@p.WarehouseId"
+                                data-closed-at="@(p.ClosedAt?.ToString("yyyy-MM-dd") ?? "")">
                                 <div class="row-top">
                                     <span class="pull-number">@p.PullNumber</span>
                                     @if (p.LockPoByPull)
@@ -66,7 +81,7 @@
                                     }
                                 </div>
                                 <div class="row-meta">
-                                    <span>@p.PullDate.ToString("yyyy-MM-dd")</span>
+                                    <span title="Pull date">@p.PullDate.ToString("yyyy-MM-dd")</span>
                                     <span>@p.WarehouseCode</span>
                                 </div>
                                 <div class="row-stats">

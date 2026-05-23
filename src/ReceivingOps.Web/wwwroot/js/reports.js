@@ -114,35 +114,74 @@
     });
 
     // ----- Filter bar (client-side filter over server-rendered rows) -------
-    const filterQ    = document.querySelector('.filter-q');
-    const filterPull = document.querySelector('.filter-pull');
-    const filterFrom = document.querySelector('.filter-from');
-    const filterTo   = document.querySelector('.filter-to');
-    const filterWh   = document.querySelector('.filter-wh');
+    const filterQ         = document.querySelector('.filter-q');
+    const filterPull      = document.querySelector('.filter-pull');
+    const filterDateRange = document.getElementById('filter-date-range');
+    const filterFrom      = document.querySelector('.filter-from');
+    const filterTo        = document.querySelector('.filter-to');
+    const filterWh        = document.querySelector('.filter-wh');
+    const customDateRow   = document.getElementById('reports-custom-date-row');
 
     [filterQ, filterPull, filterFrom, filterTo, filterWh].forEach(el => {
         if (!el) return;
         el.addEventListener('input', applyFilters);
     });
+    if (filterDateRange) {
+        filterDateRange.addEventListener('change', () => {
+            if (customDateRow) customDateRow.hidden = filterDateRange.value !== 'custom';
+            applyFilters();
+        });
+    }
+
+    // Same buckets as dashboard.js — kept local to avoid cross-page coupling.
+    // Filters Reports rows by ClosedAt (DO is produced when the pull closes,
+    // so the operator's "what got delivered yesterday?" question naturally
+    // groups by close date, not pull date).
+    function classifyDateGroup(iso) {
+        if (!iso) return 'older';
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const d = new Date(iso + 'T00:00:00');
+        if (isNaN(d.getTime())) return 'older';
+        const diffDays = Math.round((today - d) / 86400000);
+        if (diffDays === 0)  return 'today';
+        if (diffDays === 1)  return 'yesterday';
+        if (diffDays <= 6)   return 'this_week';
+        if (diffDays <= 13)  return 'last_week';
+        return 'older';
+    }
 
     function applyFilters() {
         const q     = (filterQ.value    || '').trim().toLowerCase();
         const pn    = (filterPull.value || '').trim().toLowerCase();
+        const dr    = filterDateRange ? filterDateRange.value : 'all';
         const from  = filterFrom.value || '';
         const to    = filterTo.value   || '';
         const wh    = filterWh.value   || '';
         let visible = 0;
         rowsEl.querySelectorAll('.pull-row[data-pull-id]').forEach(row => {
-            const pull = (row.dataset.pullNumber || '').toLowerCase();
-            const date = row.querySelector('.row-meta span:nth-child(1)')?.textContent || '';
-            const code = row.querySelector('.row-meta span:nth-child(2)')?.textContent || '';
-            const hayQ = pull + ' ' + code;
+            const pull     = (row.dataset.pullNumber || '').toLowerCase();
+            const closedAt = row.dataset.closedAt || '';
+            const code     = row.querySelector('.row-meta span:nth-child(2)')?.textContent || '';
+            const hayQ     = pull + ' ' + code;
             let show = true;
-            if (q  && !hayQ.includes(q)) show = false;
-            if (pn && !pull.includes(pn)) show = false;
-            if (from && date < from) show = false;
-            if (to   && date > to)   show = false;
-            if (wh   && row.dataset.warehouseId !== wh) show = false;
+            if (q  && !hayQ.includes(q))    show = false;
+            if (pn && !pull.includes(pn))   show = false;
+            if (wh && row.dataset.warehouseId !== wh) show = false;
+            // Date range — same semantics as Dashboard, but the source field
+            // is ClosedAt (a Reports row is by definition a closed pull).
+            if (dr !== 'all') {
+                if (dr === 'custom') {
+                    if (from && closedAt < from) show = false;
+                    if (to   && closedAt > to)   show = false;
+                } else if (dr === 'last_2_days') {
+                    // Calendar-day semantics: today OR yesterday. Matches the
+                    // Dashboard pattern + "วันนี้กับเมื่อวาน" mental model.
+                    const grp = classifyDateGroup(closedAt);
+                    if (grp !== 'today' && grp !== 'yesterday') show = false;
+                } else if (classifyDateGroup(closedAt) !== dr) {
+                    show = false;
+                }
+            }
             row.style.display = show ? '' : 'none';
             if (show) visible++;
         });
@@ -165,6 +204,23 @@
         }
     }
     populateWarehouseFilter();
+
+    // Restore the date range filter from ?dateRange=... if the URL specifies
+    // a recognized value; the HTML default is already "last_2_days" so a
+    // bare /Reports load drops into the operational window with no JS.
+    (function restoreDateFilterFromUrl() {
+        if (!filterDateRange) return;
+        const want = new URLSearchParams(window.location.search).get('dateRange');
+        if (!want) return;
+        if (Array.from(filterDateRange.options).some(o => o.value === want)) {
+            filterDateRange.value = want;
+            if (customDateRow) customDateRow.hidden = want !== 'custom';
+        }
+    })();
+
+    // Run the filter once on load so the default "last_2_days" narrows the
+    // list immediately (the HTML <option selected> doesn't itself filter).
+    applyFilters();
 
     // ----- Helpers ---------------------------------------------------------
     function escapeHtml(s) {
