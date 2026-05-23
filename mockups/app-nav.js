@@ -55,7 +55,7 @@
     { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',           href: 'pos.html', roles: ['admin', 'supervisor'] },
     { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down', href: 'receiving-mockup-v2-fullreceived.html' },
     { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: 'transactions.html' },
-    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',         href: '#',  disabled: true },
+    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',         href: '/Reports', roles: ['admin', 'supervisor'] },
     { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',     href: 'masters.html' },
     { id: 'config',       label: 'Settings',        icon: 'bi-sliders',           href: 'config.html' },
   ];

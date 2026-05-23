@@ -57,6 +57,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-pull-close-display.ps1'
         'smoke-pull-reference.ps1'
         'smoke-fastreport-bootstrap.ps1'
+        'smoke-do-report.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'

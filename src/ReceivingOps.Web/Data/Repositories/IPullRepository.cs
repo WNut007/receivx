@@ -14,4 +14,10 @@ public interface IPullRepository
     // endpoints want shapes that don't carry the full pull summary.
     Task<IReadOnlyList<PullItemDto>> GetItemsAsync(Guid pullId, CancellationToken ct = default);
     Task<PullItemDto?> GetItemByIdAsync(Guid pullId, Guid itemId, CancellationToken ct = default);
+
+    // v2.x Phase 7.3 — DO-eligible pulls. Closed status AND net-positive
+    // received qty (excludes fully-cancelled cycles). warehouseId is
+    // optional — null returns all warehouses the caller has access to;
+    // the controller does the role-based scoping.
+    Task<IReadOnlyList<PullSummary>> GetClosedWithReceiptsAsync(Guid? warehouseId, CancellationToken ct = default);
 }

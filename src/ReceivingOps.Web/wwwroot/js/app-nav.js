@@ -97,7 +97,10 @@
     { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',              href: '/Pos',     roles: ['admin', 'supervisor'] },
     { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down',    href: '/Receiving' },
     { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: '/Transactions' },
-    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '#',  disabled: true },
+    // v2.x Phase 7.3 — DO render. Same CanManagePulls role gate as /Pos
+    // (admin + supervisor) since the same operators who close pulls also
+    // print the paperwork. Operators (warehouse staff) don't see the entry.
+    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '/Reports', roles: ['admin', 'supervisor'] },
     { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',        href: '/Masters' },
     { id: 'config',       label: 'Settings',        icon: 'bi-sliders',              href: '/Config' },
   ];
