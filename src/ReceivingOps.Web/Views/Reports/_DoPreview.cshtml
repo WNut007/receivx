@@ -101,15 +101,41 @@
         <footer class="do-footer">
             <div class="sig-block">
                 <div class="sig-line"></div>
-                <div class="sig-label">Received by</div>
-                @if (!string.IsNullOrWhiteSpace(Model.Pull.ClosedByName))
+                <div class="sig-label">RECEIVED BY</div>
+                <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
+                @if (Model.Pull.ClosedAt.HasValue)
                 {
-                    <div class="sig-name">@Model.Pull.ClosedByName</div>
+                    <div class="sig-time">@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</div>
                 }
             </div>
             <div class="sig-block">
-                <div class="sig-line"></div>
-                <div class="sig-label">Vendor signature / Date</div>
+                @{
+                    var sig = (Model.Pull.SignatureSvg ?? "").Trim();
+                    var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
+                    var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
+                }
+                @if (hasInlineSvg)
+                {
+                    <div class="sig-signature">@Html.Raw(sig)</div>
+                }
+                else if (hasDataUrl)
+                {
+                    <div class="sig-signature"><img src="@sig" alt="Supervisor signature" /></div>
+                }
+                else
+                {
+                    <div class="sig-line"></div>
+                }
+                <div class="sig-label">AUTHORIZED BY</div>
+                <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
+                @if (!string.IsNullOrEmpty(Model.Pull.ClosedByRole))
+                {
+                    <div class="sig-role">@Model.Pull.ClosedByRole.ToUpperInvariant()</div>
+                }
+                @if (Model.Pull.ClosedAt.HasValue)
+                {
+                    <div class="sig-time">@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</div>
+                }
             </div>
         </footer>
     </article>

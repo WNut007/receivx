@@ -363,6 +363,22 @@
     border-bottom: 1px solid var(--border);
     height: 36px;
   }
+  /* Authorized-by signature surface — pinned to a white card regardless of
+     theme so the SVG strokes (drawn dark on the close-modal canvas) keep
+     contrast under midnight/slate. Same pattern the dashboard drawer's
+     .signature-canvas uses (dashboard.css:1147). */
+  .sig-signature {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-height: 56px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sig-signature svg,
+  .sig-signature img { max-width: 100%; height: auto; display: block; }
+  .sig-signature:empty { display: none; }
   .sig-label {
     font-family: 'Roboto Mono', monospace;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
@@ -371,6 +387,15 @@
   }
   .sig-name {
     font-size: 13px; color: var(--text); font-weight: 500; margin-top: 2px;
+  }
+  .sig-role {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px; letter-spacing: 0.08em;
+    color: var(--text-dim); margin-top: 1px;
+  }
+  .sig-time {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px; color: var(--text-muted); margin-top: 2px;
   }
 
   /* ============ Responsive ============ */

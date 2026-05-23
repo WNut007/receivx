@@ -97,6 +97,7 @@ public class DeliveryOrderService : IDeliveryOrderService
                 ClosedAt        = pull.ClosedAt,
                 ClosedByName    = pull.ClosedByName,
                 ClosedByRole    = pull.ClosedByRole,
+                SignatureSvg    = pull.SignatureSvg,
                 TotalQty        = orders.Sum(o => o.TotalQty),
             },
             Orders  = orders,

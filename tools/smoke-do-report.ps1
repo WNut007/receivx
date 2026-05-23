@@ -133,6 +133,21 @@ if ($thead -match '>HOUR<') { Fail "Preview still has HOUR column header — agg
 OK "Preview renders 1 aggregated row (qty=80) and no HOUR column"
 
 # ----------------------------------------------------------------------------
+# 2b. Footer — RECEIVED BY + AUTHORIZED BY blocks + supervisor signature
+# ----------------------------------------------------------------------------
+Step "Footer carries RECEIVED BY + AUTHORIZED BY blocks + signature"
+$footer = [regex]::Match($prev.Content, '(?s)<footer class="do-footer">(.*?)</footer>').Value
+if (-not $footer)               { Fail "Footer element missing from DO preview" }
+if ($footer -notmatch 'RECEIVED BY')          { Fail "Footer missing 'RECEIVED BY' label (left block)" }
+if ($footer -notmatch 'AUTHORIZED BY')        { Fail "Footer missing 'AUTHORIZED BY' label (right block)" }
+if ($footer -match 'Vendor signature')        { Fail "Footer still has the old 'Vendor signature' label — rename incomplete" }
+if ($footer -notmatch [regex]::Escape($SAMPLE_SVG.Substring(0, 40))) {
+    Fail "Footer AUTHORIZED BY block missing the inline signature SVG"
+}
+if ($footer -notmatch 'class="sig-signature"') { Fail "Footer missing .sig-signature container" }
+OK "Footer renders RECEIVED BY + AUTHORIZED BY + inline signature"
+
+# ----------------------------------------------------------------------------
 # 3. /api/reports/do/{id}/export.pdf — attachment + %PDF
 # ----------------------------------------------------------------------------
 Step "GET /api/reports/do/{id}/export.pdf → attachment %PDF"

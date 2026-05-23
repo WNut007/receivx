@@ -26,6 +26,13 @@ public class DoPullHeader
     public DateTime? ClosedAt { get; set; }
     public string? ClosedByName { get; set; }
     public string? ClosedByRole { get; set; }
+    /// <summary>
+    /// Inline &lt;svg&gt; markup or data: URL (matches Pulls.SignatureSvg shape
+    /// — same field the dashboard drawer renders). The DO footer's
+    /// "AUTHORIZED BY" block draws it on a white-card surface so dark
+    /// strokes stay legible across the midnight/slate themes.
+    /// </summary>
+    public string? SignatureSvg { get; set; }
     /// <summary>Net delivered qty across every DO/line. Drives the toolbar caption.</summary>
     public int TotalQty { get; set; }
 }
