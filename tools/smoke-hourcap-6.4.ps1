@@ -53,18 +53,23 @@ OK "Razor view has every 6.4 id + renamed drawer section"
 # ----------------------------------------------------------------------------
 Step "dashboard.js wires lockHourCap end-to-end"
 $js = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\dashboard.js' -Raw
+# Literal-substring landmarks (whitespace-insensitive around `:` to tolerate
+# column-aligned reformats from later commits — e.g. Phase 7.1 added the
+# `referenceNumber:` line and aligned the whole block).
 foreach ($needle in @(
-    'lockHourCap:   s.lockHourCap',
     "getElementById('pm-lock-hour-cap')",
     "getElementById('pm-hcap-card')",
     "getElementById('pm-hcap-help')",
     "getElementById('d-hcap-mode')",
     'hcap-strict',
-    'hcap-loose',
-    'lockHourCap:  document.getElementById'
+    'hcap-loose'
 )) {
     if ($js -notmatch [regex]::Escape($needle)) { Fail "dashboard.js missing $needle" }
 }
+# adapt() forwarding + savePullModal body — match by key:value pair without
+# pinning whitespace, so adding sibling fields above/below stays compatible.
+if ($js -notmatch 'lockHourCap\s*:\s*s\.lockHourCap')                { Fail "dashboard.js missing adapt() forwarding for lockHourCap" }
+if ($js -notmatch 'lockHourCap\s*:\s*document\.getElementById')      { Fail "dashboard.js missing savePullModal body for lockHourCap" }
 # Create path defaults to true (checkbox.checked = true)
 if ($js -notmatch 'hcapChk\.checked\s*=\s*true') { Fail "dashboard.js openCreate doesn't default hcap checkbox to true" }
 # Edit path disables + echoes
