@@ -407,16 +407,21 @@
     box-shadow: var(--shadow-sm);
   }
   .period-now-badge.show { display: inline-block; }
-  .jump-to-now {
+  /* Jump-to-now icon button — mirror of wwwroot/css/receiving.css. */
+  .period-jump-now-btn {
     display: none;
-    margin-top: 4px;
-    font-size: 11px; color: var(--accent);
-    text-decoration: none;
-    font-family: 'Roboto Mono', monospace;
-    letter-spacing: 0.04em;
+    background: var(--progress-bg);
+    border-color: var(--progress-border);
+    color: var(--progress);
   }
-  .jump-to-now:hover { text-decoration: underline; }
-  .jump-to-now.show { display: inline-block; }
+  .period-jump-now-btn:hover {
+    background: var(--progress-bg);
+    border-color: var(--progress);
+    color: var(--progress);
+    filter: brightness(0.97);
+  }
+  .period-jump-now-btn.show { display: inline-flex; }
+  .period-jump-now-btn i { color: var(--progress); }
 
   .toolbar-divider {
     width: 1px;
@@ -1788,8 +1793,11 @@
         <button type="button" class="period-arrow" id="period-next" title="Next period" aria-label="Next period">
           <i class="bi bi-chevron-right"></i>
         </button>
+        <button type="button" class="period-arrow period-jump-now-btn" id="period-jump-now"
+                title="Jump to now" aria-label="Jump to current period">
+          <i class="bi bi-crosshair"></i>
+        </button>
       </div>
-      <a href="#" class="jump-to-now" id="period-jump-now">Jump to now ↺</a>
     </div>
     <div class="field-group">
       <span class="field-label">Warehouse</span>

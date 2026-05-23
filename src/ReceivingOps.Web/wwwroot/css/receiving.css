@@ -416,17 +416,25 @@
   }
   .period-now-badge.show { display: inline-block; }
 
-  .jump-to-now {
+  /* Jump-to-now icon button — same .period-arrow shape as the chevrons (so
+     the row baseline stays put even when this button toggles on/off), tinted
+     blue via the existing --progress* tokens so it reads as a distinct action
+     and tracks theme without per-theme overrides. Hidden by default; .show
+     class is toggled by JS when the selected period is off-NOW. */
+  .period-jump-now-btn {
     display: none;
-    margin-top: 4px;
-    font-size: 11px;
-    color: var(--accent);
-    text-decoration: none;
-    font-family: 'Roboto Mono', monospace;
-    letter-spacing: 0.04em;
+    background: var(--progress-bg);
+    border-color: var(--progress-border);
+    color: var(--progress);
   }
-  .jump-to-now:hover { text-decoration: underline; }
-  .jump-to-now.show { display: inline-block; }
+  .period-jump-now-btn:hover {
+    background: var(--progress-bg);
+    border-color: var(--progress);
+    color: var(--progress);
+    filter: brightness(0.97);
+  }
+  .period-jump-now-btn.show { display: inline-flex; }
+  .period-jump-now-btn i { color: var(--progress); }
 
   .toolbar-divider {
     width: 1px;
