@@ -449,7 +449,14 @@
       return;
     }
 
-    wrap.innerHTML = list.map(r => {
+    // Show only the 2 most recent — the count badge above already shows the
+    // total, and "View all in drawer →" handles the see-more case. Keeps the
+    // modal compact so the receive form stays on screen on shorter laptops.
+    const TOP_N = 2;
+    const visible = list.slice(0, TOP_N);
+    const overflow = list.length - visible.length;
+
+    wrap.innerHTML = visible.map(r => {
       const isReversal = r.qty < 0;
       const isVoided = !!r.reversedBy;
       const cls = (isReversal ? 'reversal' : '') + (isVoided ? ' voided' : '');
@@ -491,6 +498,21 @@
         </div>
       `;
     }).join('');
+
+    // Tail hint when there are more than the rendered top N. Click opens
+    // the drawer pre-filtered to this (item, hour) — same handoff as the
+    // "View all in drawer →" link in the header.
+    if (overflow > 0) {
+      wrap.innerHTML += `<a href="#" class="m-tx-more" data-tx-more>+ ${overflow} more — view in drawer</a>`;
+      const moreEl = wrap.querySelector('[data-tx-more]');
+      if (moreEl) {
+        moreEl.addEventListener('click', (e) => {
+          e.preventDefault();
+          closeModal();
+          if (typeof openTxDrawer === 'function') openTxDrawer({ hour, itemCode });
+        });
+      }
+    }
   }
 
   /* Small helpers — defined here to avoid relying on drawer-only globals */

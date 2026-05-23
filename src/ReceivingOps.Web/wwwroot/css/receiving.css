@@ -1046,6 +1046,19 @@
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
+  /* "+ N more — view in drawer" tail link below the top-N rendered rows. */
+  .m-tx-more {
+    display: block;
+    margin-top: 8px;
+    padding: 8px 10px;
+    text-align: center;
+    color: var(--accent);
+    background: var(--surface-2);
+    border-radius: 6px;
+    font-size: 12px;
+    text-decoration: none;
+  }
+  .m-tx-more:hover { background: var(--accent-bg); text-decoration: underline; }
   .m-tx-row {
     display: grid;
     grid-template-columns: 86px 1fr auto auto;
