@@ -2,11 +2,14 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1 shipped on `main` (2026-05-23, tag `v2.1` at `3b6ed06`,
-pushed to origin). v2.1 bundles PullItem admin (in-app authoring surface,
+**Status:** v2.1.1 shipped on `main` (2026-05-23, tag `v2.1.1` at
+`5d88b86`, pushed to origin). v2.1.1 is a patch on v2.1:
+  - Drawer surfaces signer name + role + signature SVG + PNG download
+    for closed pulls (commits `98ccddc`/`2241737`/`5d88b86`).
+v2.1 (tag at `3b6ed06`) bundled PullItem admin (in-app authoring surface,
 retires `tools/add-pull-item.ps1` as primary path) + Hour Cap (configurable
-per-pull strict cap on per-hour ExpectedQty) + UI polish. 26/26 smoke
-battery green. v2.0 tag `a43fab7` preserved. See
+per-pull strict cap on per-hour ExpectedQty) + UI polish. v2.0 tag
+`a43fab7` preserved. 27/27 smoke battery green at v2.1.1 tip. See
 `docs/migration/v1-to-v2.md` for the v2 runbook + rollback steps; v2.1
 spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 
