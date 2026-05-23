@@ -1336,11 +1336,13 @@ function openTxDrawer(ctx) {
   // Stash the hour filter on the drawer element so renderTxDrawer can apply it
   document.getElementById('txDrawer').dataset.hourFilter = (ctx && Number.isInteger(ctx.hour)) ? String(ctx.hour) : '';
 
-  // Build a deep link for the standalone Transactions page — include hour when present
+  // Build a deep link for the standalone Transactions page — include hour when present.
+  // Use the absolute MVC route /Transactions, not the mockup-relative
+  // transactions.html (which resolves to /Receiving/transactions.html → 404).
   const params = new URLSearchParams({ pull, warehouse: wh });
   if (ctx && Number.isInteger(ctx.hour))    params.set('hour', String(ctx.hour));
   if (ctx && ctx.itemCode)                  params.set('item', ctx.itemCode);
-  document.getElementById('tx-open-full').href = 'transactions.html?' + params.toString();
+  document.getElementById('tx-open-full').href = '/Transactions?' + params.toString();
 
   const backdrop = document.getElementById('txDrawer-backdrop');
   const drawer = document.getElementById('txDrawer');
