@@ -133,19 +133,26 @@ if ($thead -match '>HOUR<') { Fail "Preview still has HOUR column header — agg
 OK "Preview renders 1 aggregated row (qty=80) and no HOUR column"
 
 # ----------------------------------------------------------------------------
-# 2b. Footer — RECEIVED BY + AUTHORIZED BY blocks + supervisor signature
+# 2b. Footer — aligned RECEIVED BY (text-only) + AUTHORIZED BY (signature)
 # ----------------------------------------------------------------------------
-Step "Footer carries RECEIVED BY + AUTHORIZED BY blocks + signature"
+Step "Footer aligned: spacer left + signature right, both with divider + labels"
 $footer = [regex]::Match($prev.Content, '(?s)<footer class="do-footer">(.*?)</footer>').Value
-if (-not $footer)               { Fail "Footer element missing from DO preview" }
-if ($footer -notmatch 'RECEIVED BY')          { Fail "Footer missing 'RECEIVED BY' label (left block)" }
-if ($footer -notmatch 'AUTHORIZED BY')        { Fail "Footer missing 'AUTHORIZED BY' label (right block)" }
-if ($footer -match 'Vendor signature')        { Fail "Footer still has the old 'Vendor signature' label — rename incomplete" }
+if (-not $footer)                          { Fail "Footer element missing from DO preview" }
+if ($footer -notmatch 'RECEIVED BY')       { Fail "Footer missing 'RECEIVED BY' label (left block)" }
+if ($footer -notmatch 'AUTHORIZED BY')     { Fail "Footer missing 'AUTHORIZED BY' label (right block)" }
+if ($footer -match 'Vendor signature')     { Fail "Footer still has the old 'Vendor signature' label" }
+# Alignment requires: signature-spacer on left, signature-image on right,
+# sig-divider on both sides (NOT the old sig-line / sig-signature classes).
+if ($footer -notmatch 'class="signature-spacer"') { Fail "LEFT block missing .signature-spacer (alignment relies on it)" }
+if ($footer -notmatch 'class="signature-image"')  { Fail "RIGHT block missing .signature-image" }
+$dividerCount = ([regex]::Matches($footer, 'class="sig-divider"')).Count
+if ($dividerCount -ne 2) { Fail "Expected 2 sig-divider elements (one per block), got $dividerCount" }
+if ($footer -match 'class="sig-line"')      { Fail "Old .sig-line class still present — alignment refactor incomplete" }
+if ($footer -match 'class="sig-signature"') { Fail "Old .sig-signature class still present — alignment refactor incomplete" }
 if ($footer -notmatch [regex]::Escape($SAMPLE_SVG.Substring(0, 40))) {
-    Fail "Footer AUTHORIZED BY block missing the inline signature SVG"
+    Fail "AUTHORIZED BY signature-image missing the inline SVG"
 }
-if ($footer -notmatch 'class="sig-signature"') { Fail "Footer missing .sig-signature container" }
-OK "Footer renders RECEIVED BY + AUTHORIZED BY + inline signature"
+OK "Footer aligned: spacer/image (80px) + 2 dividers + RECEIVED BY/AUTHORIZED BY"
 
 # ----------------------------------------------------------------------------
 # 3. /api/reports/do/{id}/export.pdf — attachment + %PDF

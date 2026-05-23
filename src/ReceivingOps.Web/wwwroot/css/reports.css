@@ -355,35 +355,42 @@
 
   .do-footer {
     display: grid; grid-template-columns: 1fr 1fr;
-    gap: 32px;
-    margin-top: 32px;
+    gap: 24px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
-  .sig-block { padding-top: 4px; }
-  .sig-line {
-    border-bottom: 1px solid var(--border);
-    height: 36px;
-  }
-  /* Authorized-by signature surface — pinned to a white card regardless of
-     theme so the SVG strokes (drawn dark on the close-modal canvas) keep
-     contrast under midnight/slate. Same pattern the dashboard drawer's
-     .signature-canvas uses (dashboard.css:1147). */
-  .sig-signature {
-    background: #ffffff;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    min-height: 56px;
-    padding: 8px 10px;
-    margin-bottom: 6px;
+  .sig-block { display: flex; flex-direction: column; }
+
+  /* Critical alignment: both blocks reserve the SAME vertical space above
+     the divider so the divider lines land on the same Y and the labels
+     below baseline-align. LEFT is text-only (invisible spacer); RIGHT
+     hosts the signature image. */
+  .signature-spacer,
+  .signature-image {
+    min-height: 80px;
+    max-height: 80px;
     display: flex; align-items: center; justify-content: center;
+    padding: 4px 0;
+    overflow: hidden;
   }
-  .sig-signature svg,
-  .sig-signature img { max-width: 100%; height: auto; display: block; }
-  .sig-signature:empty { display: none; }
+  .signature-image svg,
+  .signature-image img {
+    max-width: 100%;
+    max-height: 70px;
+    width: auto;
+    height: auto;
+    display: block;
+  }
+
+  .sig-divider {
+    border-bottom: 1px solid var(--border-bright);
+    margin-bottom: 4px;
+  }
   .sig-label {
     font-family: 'Roboto Mono', monospace;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
     color: var(--text-muted); font-weight: 600;
-    margin-top: 6px;
   }
   .sig-name {
     font-size: 13px; color: var(--text); font-weight: 500; margin-top: 2px;
@@ -391,12 +398,18 @@
   .sig-role {
     font-family: 'Roboto Mono', monospace;
     font-size: 10px; letter-spacing: 0.08em;
-    color: var(--text-dim); margin-top: 1px;
+    color: var(--text-dim); margin-top: 1px; text-transform: uppercase;
   }
-  .sig-time {
+  .sig-date {
     font-family: 'Roboto Mono', monospace;
-    font-size: 11px; color: var(--text-muted); margin-top: 2px;
+    font-size: 11px; color: var(--text-dim); margin-top: 2px;
   }
+
+  /* Midnight theme: signatures are stored as dark strokes on transparent
+     PNG/SVG. On the dark paper-bg they vanish — invert flips the strokes
+     to light. Slate stays normal: its paper-bg is light, so dark strokes
+     remain legible. */
+  [data-theme="midnight"] .signature-image { filter: invert(1) hue-rotate(180deg); }
 
   /* ============ Responsive ============ */
   @media (max-width: 1100px) {

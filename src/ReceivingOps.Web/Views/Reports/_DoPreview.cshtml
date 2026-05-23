@@ -98,34 +98,37 @@
             </table>
         </section>
 
+        @{
+            var sig = (Model.Pull.SignatureSvg ?? "").Trim();
+            var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
+            var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
+            var closedStr    = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
+        }
         <footer class="do-footer">
-            <div class="sig-block">
-                <div class="sig-line"></div>
+            <div class="sig-block sig-block-text-only">
+                @* Invisible spacer matches the right block's signature-image
+                   height so both dividers land on the same Y. *@
+                <div class="signature-spacer"></div>
+                <div class="sig-divider"></div>
                 <div class="sig-label">RECEIVED BY</div>
                 <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
                 @if (Model.Pull.ClosedAt.HasValue)
                 {
-                    <div class="sig-time">@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</div>
+                    <div class="sig-date">@closedStr</div>
                 }
             </div>
-            <div class="sig-block">
-                @{
-                    var sig = (Model.Pull.SignatureSvg ?? "").Trim();
-                    var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
-                    var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
-                }
-                @if (hasInlineSvg)
-                {
-                    <div class="sig-signature">@Html.Raw(sig)</div>
-                }
-                else if (hasDataUrl)
-                {
-                    <div class="sig-signature"><img src="@sig" alt="Supervisor signature" /></div>
-                }
-                else
-                {
-                    <div class="sig-line"></div>
-                }
+            <div class="sig-block sig-block-with-image">
+                <div class="signature-image">
+                    @if (hasInlineSvg)
+                    {
+                        @Html.Raw(sig)
+                    }
+                    else if (hasDataUrl)
+                    {
+                        <img src="@sig" alt="Supervisor signature" />
+                    }
+                </div>
+                <div class="sig-divider"></div>
                 <div class="sig-label">AUTHORIZED BY</div>
                 <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
                 @if (!string.IsNullOrEmpty(Model.Pull.ClosedByRole))
@@ -134,7 +137,7 @@
                 }
                 @if (Model.Pull.ClosedAt.HasValue)
                 {
-                    <div class="sig-time">@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</div>
+                    <div class="sig-date">@closedStr</div>
                 }
             </div>
         </footer>
