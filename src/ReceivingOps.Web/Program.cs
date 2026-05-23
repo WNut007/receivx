@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using ReceivingOps.Web.Data;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Json;
 using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
@@ -17,6 +18,11 @@ builder.Services.AddControllersWithViews()
     {
         o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        // All DB timestamps are UTC (DATETIME2 fed by SYSUTCDATETIME()); without
+        // these converters the JSON drops the tz marker and the browser parses
+        // them as local time, off by the user's offset. See UtcDateTimeConverter.
+        o.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter());
+        o.JsonSerializerOptions.Converters.Add(new NullableUtcDateTimeConverter());
     });
 
 // ---- HttpContext access for AuthService + AuditService ----
