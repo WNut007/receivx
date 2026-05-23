@@ -367,7 +367,12 @@
     document.getElementById('m-expected').textContent = expected.toLocaleString();
     document.getElementById('m-prev').textContent = prev.toLocaleString();
     document.getElementById('m-out').textContent = outstanding.toLocaleString();
-    document.getElementById('cap-hint-max').textContent = outstanding.toLocaleString();
+    // Defensive: cap-hint-max can be missing if a downstream handler rewrote
+    // its parent's innerHTML. The qty-input handler is the main culprit but
+    // others may follow — null-guard so a destroyed element doesn't block
+    // the whole openModal flow.
+    const capMaxEl = document.getElementById('cap-hint-max');
+    if (capMaxEl) capMaxEl.textContent = outstanding.toLocaleString();
 
     const input = document.getElementById('m-input');
     input.max = outstanding;
@@ -633,12 +638,17 @@
     const text = document.getElementById('cap-hint-text');
     if (v < 0) { e.target.value = 0; }
     if (text) {
+      // IMPORTANT: keep <b id="cap-hint-max"> alive across rewrites — openModal
+      // (line ~370) and the cancel flow (line ~1578) both grab it by id to
+      // update the displayed cap. Without the `<b id="cap-hint-max">` wrapper
+      // these rewrites would destroy the element and the next openModal()
+      // crashes with "Cannot set properties of null".
       if (v > activeMax) {
         hint?.classList.add('warn');
-        text.innerHTML = `Over per-hour plan (${activeMax.toLocaleString()} pcs). Allowed if PO has capacity.`;
+        text.innerHTML = `Over per-hour plan (<b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs). Allowed if PO has capacity.`;
       } else {
         hint?.classList.remove('warn');
-        text.innerHTML = `Per-hour plan: <b>${activeMax.toLocaleString()}</b> pcs. PO capacity is the hard cap.`;
+        text.innerHTML = `Per-hour plan: <b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs. PO capacity is the hard cap.`;
       }
     }
 

@@ -2710,11 +2710,12 @@
       e.target.value = activeMax;
       e.target.classList.add('is-error');
       hint.classList.add('error');
-      document.getElementById('cap-hint-text').innerHTML = `Capped at <b>${activeMax.toLocaleString()}</b> pcs · cannot receive over expected`;
+      // Keep <b id="cap-hint-max"> alive across rewrites — openModal updates it by id.
+      document.getElementById('cap-hint-text').innerHTML = `Capped at <b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs · cannot receive over expected`;
       setTimeout(() => {
         e.target.classList.remove('is-error');
         hint.classList.remove('error');
-        document.getElementById('cap-hint-text').innerHTML = `Maximum allowed: <b>${activeMax.toLocaleString()}</b> pcs. Cannot receive over expected.`;
+        document.getElementById('cap-hint-text').innerHTML = `Maximum allowed: <b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs. Cannot receive over expected.`;
       }, 1800);
     } else if (v < 0) {
       e.target.value = 0;
