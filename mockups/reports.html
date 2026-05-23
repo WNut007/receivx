@@ -91,15 +91,17 @@
   }
   .app { position: relative; z-index: 1; }
 
-  /* Bootstrap overrides — keep form-control consistent with other pages */
+  /* Bootstrap overrides — background-color (not shorthand) so .form-select
+     keeps its chevron background-image; padding-right makes room. */
   .form-select, .form-control {
-    background: var(--surface); border-color: var(--border); color: var(--text);
+    background-color: var(--surface); border-color: var(--border); color: var(--text);
     font-size: 14px; border-radius: 8px;
   }
   .form-select:focus, .form-control:focus {
-    background: var(--surface); color: var(--text); border-color: var(--accent);
+    background-color: var(--surface); color: var(--text); border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
   }
+  .form-select { padding: 8px 36px 8px 12px; }
   .form-control::placeholder { color: var(--text-muted); }
 
   /* Page */
