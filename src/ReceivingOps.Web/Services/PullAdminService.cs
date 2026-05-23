@@ -42,18 +42,23 @@ public class PullAdminService : IPullAdminService
 
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.Pulls (Id, PullNumber, WarehouseId, PullDate, Status,
-                                       Eta, Notes, CreatedBy, CreatedAt, LockPoByPull)
+                                       Eta, Notes, CreatedBy, CreatedAt, LockPoByPull, LockHourCap)
                 OUTPUT INSERTED.Id
                 VALUES (NEWID(), @PullNumber, @WarehouseId, @PullDate, 'pending',
-                        @Eta, @Notes, @CreatedBy, SYSUTCDATETIME(), @LockPoByPull);",
+                        @Eta, @Notes, @CreatedBy, SYSUTCDATETIME(), @LockPoByPull, @LockHourCap);",
                 new
                 {
                     req.PullNumber, req.WarehouseId, req.PullDate,
-                    req.Eta, req.Notes, req.LockPoByPull,
+                    req.Eta, req.Notes, req.LockPoByPull, req.LockHourCap,
                     CreatedBy = actorId,
                 }, transaction: tx, cancellationToken: ct));
 
-            var lockSuffix = req.LockPoByPull ? " (LockPoByPull=true)" : "";
+            // Audit suffix calls out both lock flags so the create event surfaces both
+            // strict-mode choices in /Masters audit search.
+            var lockParts = new List<string>();
+            if (req.LockPoByPull) lockParts.Add("LockPoByPull=true");
+            if (!req.LockHourCap) lockParts.Add("LockHourCap=false");  // default true is the "normal" case
+            var lockSuffix = lockParts.Count > 0 ? $" ({string.Join(", ", lockParts)})" : "";
             await _audit.WriteAsync(conn, tx, "create", "Pull", newId.ToString(),
                 $"Created pull {req.PullNumber} for warehouse {req.WarehouseId}{lockSuffix}", ct);
 

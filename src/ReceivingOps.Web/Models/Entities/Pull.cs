@@ -22,4 +22,10 @@ public class Pull
     // §3.5 — when true, FIFO scope is restricted to POs linked to this pull (PO.PullId = this.Id).
     // Default false = warehouse-wide FIFO (backward compat). Immutable after pull creation.
     public bool LockPoByPull { get; set; }
+
+    // v2.1 Phase 6 — when true, ReceiveAsync rejects qty > (window.ExpectedQty -
+    // window.ReceivedQty) with 409. When false, per-hour ExpectedQty is a planning
+    // hint and the PO is the only hard cap (legacy §7.1 v2 behavior).
+    // Default true = strict. Immutable after pull creation.
+    public bool LockHourCap { get; set; }
 }

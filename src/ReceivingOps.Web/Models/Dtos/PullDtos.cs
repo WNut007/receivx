@@ -30,6 +30,12 @@ public class PullSummary
     // §3.5 — per-pull strict-mode flag. Default false = warehouse-wide FIFO.
     // Set at create-time; immutable thereafter (PUT refuses any change).
     public bool LockPoByPull { get; set; }
+
+    // v2.1 Phase 6 — per-pull strict hour-cap flag. Default true = receive rejected
+    // (409) when qty would push window.ReceivedQty past window.ExpectedQty. When
+    // false, the legacy §7.1 v2 behavior holds — per-hour ExpectedQty is a planning
+    // hint and only the PO capacity is a hard cap. Immutable after create (PUT 409).
+    public bool LockHourCap { get; set; }
 }
 
 public class PullDetail : PullSummary
@@ -121,6 +127,7 @@ public class PullCreateRequest
     public string? Eta { get; set; }
     public string? Notes { get; set; }
     public bool LockPoByPull { get; set; } = false;    // §3.5 immutable after create
+    public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — strict by default; immutable after create
 }
 
 /// <summary>
