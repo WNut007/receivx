@@ -714,6 +714,14 @@
     font-weight: 600;
   }
 
+  /* v2.1 Phase 6.3 — widen the drawer so the 7-column items table breathes.
+     Bootstrap's offcanvas default is 400px (sidebar-nav width); the items
+     table needs ~720px minimum. Cap at 900px so it doesn't dominate the
+     viewport, and scale down via min(...,95vw) so mobile/narrow screens
+     still get a usable drawer (Bootstrap's own offcanvas-end handles full-
+     width below the breakpoint as a fallback). */
+  #detailDrawer.offcanvas { width: min(900px, 95vw); }
+
   /* v2.1 Phase 6.3 — items grid + add/edit/windows modals */
   .items-table-wrap { overflow-x: auto; }
   .items-table { font-size: 13px; }
