@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using FastReport.Export.PdfSimple;
-using FastReport.Web;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
@@ -35,15 +34,17 @@ public class ReportsController : Controller
         return View(rows);
     }
 
-    // GET /Reports/Do/{id} — embedded WebReport viewer (HTML preview).
-    // The WebReport instance is the view model; the Razor view renders it
-    // via @Html.Raw(Model.Render()).
+    // GET /Reports/Do/{id} — page chrome that embeds the PDF in an iframe.
+    // FastReport.OpenSource.Web does not ship the interactive JS viewer
+    // assets, so we lean on the browser's built-in PDF viewer. BuildAsync
+    // still runs as the eligibility gate (open pull or no-receipt pull →
+    // 400 before the iframe even loads).
     [HttpGet("/Reports/Do/{id:guid}")]
     public async Task<IActionResult> Do(Guid id, CancellationToken ct)
     {
         try
         {
-            var report = await _doService.BuildAsync(id, ct);
+            using var report = await _doService.BuildAsync(id, ct);
             // Scope-check: same pattern as PullsApiController.ResolveAsync.
             // Non-admin → 403 if the pull is not on their session warehouse.
             if (!User.IsInRole("admin"))
@@ -53,10 +54,9 @@ public class ReportsController : Controller
                 if (pull is null || pull.WarehouseId != sessionWh)
                     return Forbid();
             }
-            var webReport = new WebReport { Report = report };
             ViewData["PageId"] = "reports";
             ViewData["PullId"] = id;
-            return View(webReport);
+            return View();
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(ex.Message); }

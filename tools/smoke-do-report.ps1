@@ -110,19 +110,14 @@ OK "List page renders + smoke pull present"
 Step "GET /Reports/Do/{id} → 200 + FastReport viewer scaffolding"
 $do = Invoke-WebRequest -Uri "$base/Reports/Do/$($pull.id)" -Method GET -WebSession $sv -UseBasicParsing
 if ($do.StatusCode -ne 200) { Fail "DO preview returned $($do.StatusCode)" }
-# The WebReport viewer scaffolds its container + a bundled JS that AJAX-
-# fetches the actual report from /_fr. Smoke checks ensure:
-#   (1) Render() was awaited (no Task ToString leak — caught a real bug)
-#   (2) The FR viewer container is present
-#   (3) The FR webreport bundle script is wired in
-# Report-payload content (pull number, reference, etc.) is validated end-
-# to-end via the PDF endpoint below — no need to spin up a headless JS
-# runtime here.
-if ($do.Content -match 'System\.Threading\.Tasks\.Task') { Fail "View printed Task.ToString — Render() not awaited" }
-if ($do.Content -notmatch 'fr-webreport') { Fail "FastReport viewer container missing" }
-if ($do.Content -notmatch 'webreport-script\.bundle') { Fail "FastReport webreport bundle script missing" }
+# Preview page embeds the PDF in an iframe (FR OpenSource.Web ships no
+# viewer JS — the browser's built-in PDF viewer renders the report). The
+# iframe src must point at the PDF endpoint for the same pull.
+$expectedSrc = "/Reports/Do/$($pull.id)/pdf"
+if ($do.Content -notmatch '<iframe[^>]+src="') { Fail "DO preview missing iframe element" }
+if ($do.Content -notmatch [regex]::Escape($expectedSrc)) { Fail "iframe src not pointing at PDF endpoint for this pull" }
 if ($do.Content -notmatch 'Download PDF') { Fail "DO page chrome missing Download PDF button" }
-OK "Preview renders the FR viewer scaffolding + page chrome"
+OK "Preview embeds PDF iframe + page chrome wired"
 
 # ----------------------------------------------------------------------------
 # 3. /Reports/Do/{id}/pdf — non-empty application/pdf

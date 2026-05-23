@@ -1,8 +1,8 @@
-@model FastReport.Web.WebReport
 @{
     ViewData["Title"] = "Delivery Order";
     ViewData["PageId"] = "reports";
     Layout = null;
+    var pullId = ViewData["PullId"];
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -23,14 +23,24 @@
         .page-eyebrow { font-family: 'Roboto Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: #5a626c; margin-bottom: 6px; }
         .page-title { font-size: 24px; font-weight: 500; margin: 0; }
         .page-actions a, .page-actions button { margin-left: 8px; }
-        /* The WebReport viewer renders its own scaffolding — wrap in a card so
-           it sits inside the page chrome consistently with /Reports list. */
+        /* Embed the PDF directly — the browser's built-in PDF viewer
+           handles zoom/scroll/print. FastReport.OpenSource.Web does not
+           ship the JS viewer assets (only the commercial FastReport.Web
+           package does), so the PDF iframe is the simplest reliable
+           preview path. */
         .report-host {
             background: #fff;
             border: 0.5px solid #e6e3dc;
             border-radius: 10px;
-            padding: 16px;
-            overflow-x: auto;
+            padding: 0;
+            overflow: hidden;
+        }
+        .report-host iframe {
+            display: block;
+            width: 100%;
+            height: calc(100vh - 180px);
+            min-height: 600px;
+            border: 0;
         }
     </style>
 </head>
@@ -53,9 +63,8 @@
             </div>
         </div>
         <div class="report-host">
-            @* FastReport's WebReport.Render() is async in OpenSource.Web —
-               returns Task<IHtmlContent>. Await it directly into the page. *@
-            @(await Model.Render())
+            <iframe src="/Reports/Do/@pullId/pdf#toolbar=1&navpanes=0&zoom=page-fit"
+                    title="Delivery Order PDF preview"></iframe>
         </div>
     </div>
 </div>
