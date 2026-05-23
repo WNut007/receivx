@@ -20,4 +20,12 @@ public interface IPullRepository
     // optional — null returns all warehouses the caller has access to;
     // the controller does the role-based scoping.
     Task<IReadOnlyList<PullSummary>> GetClosedWithReceiptsAsync(Guid? warehouseId, CancellationToken ct = default);
+
+    // v2.x Phase 7.4 — flat aggregated rows for the DO report. One row per
+    // (PO × PoLineNumber × ItemCode) with SUM(QtyReceived) over all receipts
+    // (originals + reversals net out — voided originals excluded, reversal
+    // negatives included so a fully-reversed line nets to zero and is
+    // dropped by HAVING). Ordered by (PoNumber, PoLineNumber, ItemCode) so
+    // the service can group sequentially.
+    Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default);
 }

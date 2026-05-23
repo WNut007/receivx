@@ -268,6 +268,40 @@ public class PullRepository : IPullRepository
         return rows.AsList();
     }
 
+    // v2.x Phase 7.4 — DO report aggregation. Filter notes:
+    //   ReversedById IS NULL excludes voided originals but keeps the reversal
+    //   rows (which carry the negative qty per the §6 CHECK constraint). The
+    //   reversal negatives cancel the originals at SUM time, and HAVING
+    //   SUM > 0 drops (PO × Line × Item) tuples that net to zero.
+    public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default)
+    {
+        const string sql = @"
+            SELECT  po.Id           AS PoId,
+                    po.PoNumber,
+                    po.OrderDate,
+                    po.VendorCode,
+                    po.VendorName,
+                    pol.LineNumber  AS PoLineNumber,
+                    pol.ItemCode,
+                    pol.Description,
+                    SUM(r.QtyReceived) AS TotalQty
+            FROM    dbo.Receipts r
+            INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId
+            INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
+            WHERE   pi.PullId = @PullId
+              AND   r.ReversedById IS NULL
+            GROUP BY po.Id, po.PoNumber, po.OrderDate, po.VendorCode, po.VendorName,
+                     pol.LineNumber, pol.ItemCode, pol.Description
+            HAVING  SUM(r.QtyReceived) > 0
+            ORDER BY po.PoNumber, pol.LineNumber, pol.ItemCode;";
+
+        using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<DoReportRow>(
+            new CommandDefinition(sql, new { PullId = pullId }, cancellationToken: ct));
+        return rows.AsList();
+    }
+
     // v2.1 — item-grained reads for /api/pulls/{id}/items[/{itemId}].
     public async Task<IReadOnlyList<PullItemDto>> GetItemsAsync(Guid pullId, CancellationToken ct = default)
     {

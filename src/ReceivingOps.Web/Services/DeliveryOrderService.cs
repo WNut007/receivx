@@ -43,6 +43,72 @@ public class DeliveryOrderService : IDeliveryOrderService
         _company = company.Value;
     }
 
+    // v2.x Phase 7.4 — single source of truth for both the HTML preview
+    // partial AND the FastReport PDF builder. Eligibility checks happen
+    // here so neither downstream caller has to duplicate them.
+    public async Task<DoReportData> GetReportDataAsync(Guid pullId, CancellationToken ct = default)
+    {
+        var pull = await _pulls.GetByIdAsync(pullId, ct)
+            ?? throw new NotFoundException("Pull not found");
+
+        if (!string.Equals(pull.Status, "closed", StringComparison.Ordinal))
+            throw new BusinessException(
+                "Delivery Order can only be rendered for closed pulls. " +
+                "Close the pull first (it must be fully received and signed off).");
+
+        var rows = await _pulls.GetDoReportRowsAsync(pullId, ct);
+        if (rows.Count == 0)
+            throw new BusinessException(
+                "This pull has no delivered receipts. A Delivery Order requires at least one " +
+                "non-cancelled receipt to render.");
+
+        var orders = rows
+            .GroupBy(r => r.PoId)
+            .Select(g =>
+            {
+                var head = g.First();
+                var lines = g.Select(r => new DoLine
+                {
+                    ItemCode     = r.ItemCode,
+                    Description  = r.Description,
+                    PoLineNumber = r.PoLineNumber,
+                    PoLineRef    = $"{head.PoNumber}·L{r.PoLineNumber}",
+                    TotalQty     = r.TotalQty,
+                }).ToList();
+                return new DoOrder
+                {
+                    PoId       = head.PoId,
+                    PoNumber   = head.PoNumber,
+                    OrderDate  = head.OrderDate,
+                    VendorCode = head.VendorCode,
+                    VendorName = head.VendorName,
+                    Lines      = lines,
+                    TotalQty   = lines.Sum(l => l.TotalQty),
+                };
+            })
+            .OrderBy(o => o.PoNumber)
+            .ToList();
+
+        return new DoReportData
+        {
+            Pull = new DoPullHeader
+            {
+                Id              = pull.Id,
+                PullNumber      = pull.PullNumber,
+                PullDate        = pull.PullDate,
+                ReferenceNumber = pull.ReferenceNumber,
+                WarehouseCode   = pull.WarehouseCode,
+                WarehouseName   = pull.WarehouseName,
+                ClosedAt        = pull.ClosedAt,
+                ClosedByName    = pull.ClosedByName,
+                ClosedByRole    = pull.ClosedByRole,
+                TotalQty        = orders.Sum(o => o.TotalQty),
+            },
+            Orders  = orders,
+            Company = _company,
+        };
+    }
+
     public async Task<Report> BuildAsync(Guid pullId, CancellationToken ct = default)
     {
         var pull = await _pulls.GetByIdAsync(pullId, ct)
@@ -56,6 +122,8 @@ public class DeliveryOrderService : IDeliveryOrderService
         var journal = await _receipts.GetJournalForPullAsync(pullId, ct);
         // DO = proof of delivery. Skip reversal rows + voided originals so the
         // report shows the net actual delivery (positive rows that survived).
+        // NOTE: commit 4 refactors this to consume GetReportDataAsync so the
+        // PDF builder produces the same aggregated shape as the HTML preview.
         var lines = journal
             .Where(r => r.Kind == "receive" && r.QtyReceived > 0)
             .OrderBy(r => r.PoNumber)

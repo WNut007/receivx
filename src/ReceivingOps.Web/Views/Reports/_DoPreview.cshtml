@@ -1,0 +1,116 @@
+@model ReceivingOps.Web.Models.Dtos.DoReportData
+@*
+   v2.x Phase 7.4 — Delivery Order HTML preview partial.
+
+   Rendered as an HTML fragment by /api/reports/do/{id}/preview and
+   injected into the .preview-body on the Reports page. One <article>
+   per DoOrder (one PO that the pull touched); lines are pre-aggregated
+   by (ItemCode × PoLineNumber) in the service so the table has no
+   duplicates and no hour column.
+
+   Vendor fallback: VendorName, else VendorCode, else em-dash. Reference
+   number falls back the same way.
+
+   All colors via CSS variables so theme switches (light / midnight /
+   slate) reflow correctly without re-rendering.
+*@
+@foreach (var order in Model.Orders)
+{
+    <article class="do-document">
+        <header class="do-header">
+            <div>
+                <div class="do-label">DELIVERY ORDER</div>
+                <div class="do-number">@order.PoNumber</div>
+                <div class="do-context">
+                    delivered against pull <b>@Model.Pull.PullNumber</b>
+                </div>
+            </div>
+            <div class="company-block">
+                <div class="company-name">@Model.Company.Name</div>
+                @if (!string.IsNullOrWhiteSpace(Model.Company.Address))
+                {
+                    <div class="company-address">@Model.Company.Address</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.Company.TaxId))
+                {
+                    <div class="company-tax">Tax ID: @Model.Company.TaxId</div>
+                }
+            </div>
+        </header>
+
+        <section class="do-metadata">
+            <dl>
+                <dt>Vendor</dt>
+                <dd>
+                    <div class="vendor-name">
+                        @(order.VendorName ?? order.VendorCode ?? "—")
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(order.VendorCode) && !string.IsNullOrWhiteSpace(order.VendorName))
+                    {
+                        <div class="vendor-code">@order.VendorCode</div>
+                    }
+                </dd>
+
+                <dt>Reference</dt>
+                <dd>@(string.IsNullOrWhiteSpace(Model.Pull.ReferenceNumber) ? "—" : Model.Pull.ReferenceNumber)</dd>
+
+                <dt>Warehouse</dt>
+                <dd>@Model.Pull.WarehouseCode · @Model.Pull.WarehouseName</dd>
+
+                <dt>Order date</dt>
+                <dd>@order.OrderDate.ToString("dd MMM yyyy")</dd>
+
+                @if (Model.Pull.ClosedAt.HasValue)
+                {
+                    <dt>Closed</dt>
+                    <dd>@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</dd>
+                }
+            </dl>
+        </section>
+
+        <section class="do-lines">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Description</th>
+                        <th>PO · Line</th>
+                        <th class="num">Qty</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var line in order.Lines)
+                    {
+                        <tr>
+                            <td class="mono">@line.ItemCode</td>
+                            <td>@line.Description</td>
+                            <td class="mono">@line.PoLineRef</td>
+                            <td class="num">@line.TotalQty.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3">Total delivered</td>
+                        <td class="num"><b>@order.TotalQty.ToString("N0") pcs</b></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </section>
+
+        <footer class="do-footer">
+            <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">Received by</div>
+                @if (!string.IsNullOrWhiteSpace(Model.Pull.ClosedByName))
+                {
+                    <div class="sig-name">@Model.Pull.ClosedByName</div>
+                }
+            </div>
+            <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">Vendor signature / Date</div>
+            </div>
+        </footer>
+    </article>
+}

@@ -1,9 +1,12 @@
-// v2.x Phase 7.4 — Reports page (two-pane layout) row selection + preview wiring.
+// v2.x Phase 7.4 — Reports page (two-pane) wiring.
 //
-// Commit 1 skeleton: row click → highlight, toolbar buttons stay disabled until
-// the preview fetch lands. The preview fetch + Export PDF + Print handlers
-// arrive in commit 2 (HTML preview endpoint); for now the click is a no-op
-// past the visual selection so the chrome can be browser-verified standalone.
+// Row click → fetch /api/reports/do/{id}/preview, inject HTML into the
+// preview body, enable Export PDF + Print. Print opens a stand-alone
+// window with just the .preview-body contents so the chrome/nav/list
+// pane don't bleed into the printed paper.
+//
+// PDF endpoint stays at /Reports/Do/{id}/pdf?dl=1 until commit 4
+// canonicalizes it under /api/reports.
 
 (() => {
     'use strict';
@@ -16,6 +19,7 @@
     const countEl   = document.getElementById('result-count');
 
     let selectedPullId = null;
+    let selectedPullNumber = null;
 
     // ----- Row selection ---------------------------------------------------
     rowsEl.addEventListener('click', (e) => {
@@ -24,24 +28,93 @@
         selectRow(row);
     });
 
-    function selectRow(row) {
+    async function selectRow(row) {
         selectedPullId = row.dataset.pullId;
-        const pullNumber = row.dataset.pullNumber;
+        selectedPullNumber = row.dataset.pullNumber;
         rowsEl.querySelectorAll('.pull-row').forEach(r =>
             r.classList.toggle('selected', r === row));
-        // Placeholder until the preview endpoint lands in commit 2 — keep
-        // the chrome behavior visible (title + buttons enable) so the
-        // layout can be eyeballed.
-        titleEl.textContent = pullNumber + ' · preview pending';
-        bodyEl.innerHTML = '<div class="preview-loading">Preview render coming in commit 2…</div>';
-        btnPdf.disabled = false;
-        btnPrint.disabled = false;
+
+        titleEl.textContent = `${selectedPullNumber} · loading…`;
+        bodyEl.innerHTML = '<div class="preview-loading">Loading delivery orders…</div>';
+        btnPdf.disabled = true;
+        btnPrint.disabled = true;
+
+        try {
+            const resp = await fetch(`/api/reports/do/${encodeURIComponent(selectedPullId)}/preview`, {
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) {
+                let msg = `Preview failed (HTTP ${resp.status})`;
+                try {
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('application/json')) {
+                        const j = await resp.json();
+                        if (j && j.error) msg = j.error;
+                    } else {
+                        const t = await resp.text();
+                        if (t) msg = t;
+                    }
+                } catch { /* keep default msg */ }
+                bodyEl.innerHTML = `<div class="preview-error">${escapeHtml(msg)}</div>`;
+                titleEl.textContent = `${selectedPullNumber} · error`;
+                return;
+            }
+            const html = await resp.text();
+            bodyEl.innerHTML = html;
+            const doCount = bodyEl.querySelectorAll('.do-document').length;
+            titleEl.textContent =
+                `${selectedPullNumber} · ${doCount} delivery order${doCount === 1 ? '' : 's'}`;
+            btnPdf.disabled = false;
+            btnPrint.disabled = false;
+        } catch (err) {
+            bodyEl.innerHTML =
+                `<div class="preview-error">Network error: ${escapeHtml(err.message || String(err))}</div>`;
+            titleEl.textContent = `${selectedPullNumber} · error`;
+        }
     }
 
+    // ----- Export PDF -----------------------------------------------------
+    // Opens the existing PDF endpoint with ?dl=1 so the browser triggers
+    // an attachment download (inline disposition is the iframe-friendly
+    // default; ?dl=1 forces the Save As dialog).
+    btnPdf.addEventListener('click', () => {
+        if (!selectedPullId || btnPdf.disabled) return;
+        window.location.href = `/Reports/Do/${encodeURIComponent(selectedPullId)}/pdf?dl=1`;
+    });
+
+    // ----- Print ----------------------------------------------------------
+    // Open a stand-alone window with just the preview HTML + reports.css
+    // (theme tokens, .do-document, .do-header, etc.). The print stylesheet
+    // in reports.css strips toolbars + lists; the new window has none of
+    // those anyway, so the print preview is the bare DO documents.
+    btnPrint.addEventListener('click', () => {
+        if (!selectedPullId || btnPrint.disabled) return;
+        const html = bodyEl.innerHTML;
+        const theme = document.documentElement.getAttribute('data-theme') || 'light';
+        const w = window.open('', '_blank', 'width=820,height=900');
+        if (!w) return; // popup blocked
+        w.document.write(`<!DOCTYPE html>
+<html lang="en" data-theme="${theme}">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(selectedPullNumber)} · Delivery Order</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/reports.css">
+<style>
+  body { background: #fff; padding: 24px; }
+  body::before, body::after { display: none !important; }
+  .do-document { box-shadow: none; border: 0; max-width: 100%; margin-bottom: 32px; }
+  .do-document + .do-document { page-break-before: always; }
+</style>
+</head>
+<body>${html}</body>
+</html>`);
+        w.document.close();
+        // Give fonts + stylesheet a moment, then print.
+        setTimeout(() => { w.focus(); w.print(); }, 250);
+    });
+
     // ----- Filter bar (client-side filter over server-rendered rows) -------
-    // All rows are rendered server-side; filters narrow visibility client-
-    // side. Cheap, no extra round trip. Q matches pull number + warehouse
-    // code; pull-number filter is a separate convenience field.
     const filterQ    = document.querySelector('.filter-q');
     const filterPull = document.querySelector('.filter-pull');
     const filterFrom = document.querySelector('.filter-from');
@@ -78,9 +151,6 @@
     }
 
     // ----- Warehouse filter options ----------------------------------------
-    // Populated from the warehouseId data attribute on rendered rows — no
-    // extra API needed, the universe is exactly the warehouses that have
-    // closed pulls.
     function populateWarehouseFilter() {
         const seen = new Map();
         rowsEl.querySelectorAll('.pull-row[data-pull-id]').forEach(row => {
@@ -96,4 +166,11 @@
         }
     }
     populateWarehouseFilter();
+
+    // ----- Helpers ---------------------------------------------------------
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
 })();
