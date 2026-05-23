@@ -193,10 +193,33 @@
               <option value="delete">Delete</option>
               <option value="assign">Assignment</option>
             </select>
+            <select class="form-select" id="filter-audit-date" style="width: 170px;" title="Filter by audit timestamp">
+              <option value="all">All dates</option>
+              <option value="today">Today</option>
+              <option value="last_2_days" selected>Last 2 days</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="this_week">This week</option>
+              <option value="last_week">Last week</option>
+              <option value="custom">Custom range…</option>
+            </select>
             <button class="btn btn-danger" id="btn-clear-audit">
               <i class="bi bi-trash"></i> Clear log
             </button>
           </div>
+        </div>
+        <!-- Custom range row — revealed only when Date Range = "Custom range…" -->
+        <div class="custom-date-row" id="audit-custom-date-row">
+          <div class="field-group">
+            <span class="field-label">From</span>
+            <input type="date" class="form-control" id="audit-date-from">
+          </div>
+          <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+          <div class="field-group">
+            <span class="field-label">To</span>
+            <input type="date" class="form-control" id="audit-date-to">
+          </div>
+          <button type="button" class="btn" id="audit-date-apply"><i class="bi bi-funnel me-1"></i> Apply</button>
+          <button type="button" class="btn" id="audit-date-clear"><i class="bi bi-x me-1"></i> Clear</button>
         </div>
         <div id="audit-list"></div>
       </div>

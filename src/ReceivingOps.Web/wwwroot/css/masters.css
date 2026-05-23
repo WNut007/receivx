@@ -220,6 +220,29 @@
     flex: 1;
     justify-content: flex-end;
   }
+
+  /* Custom range row — revealed only when Date Range = "Custom range…".
+     Same pattern Dashboard/Transactions/Pos use; filters audit timestamps
+     client-side (auditLog rows already in memory, no server roundtrip). */
+  .custom-date-row {
+    display: none;
+    padding: 12px 20px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    gap: 12px; align-items: flex-end; flex-wrap: wrap;
+  }
+  .custom-date-row.visible { display: flex; }
+  .custom-date-row .form-control { width: 160px; font-family: 'Roboto Mono', monospace; }
+  .custom-date-row .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .custom-date-row .field-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--text-muted); font-weight: 600;
+  }
+  .date-arrow {
+    align-self: flex-end; margin-bottom: 10px;
+    color: var(--text-muted); font-size: 18px;
+  }
   .search-input {
     position: relative;
   }

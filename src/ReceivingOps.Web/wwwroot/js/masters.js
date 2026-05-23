@@ -650,16 +650,54 @@ function deleteWarehouse(id) {
 /* =============================================================================
  * AUDIT LOG
  * =========================================================================== */
+// Calendar-day buckets, matching Dashboard/Transactions/Reports/Pos naming.
+// Audit rows are already in memory so the filter is purely client-side.
+function auditDateRange(label) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const offset = n => { const d = new Date(today); d.setDate(d.getDate() + n); return d; };
+  const endOfDay = d => { const e = new Date(d); e.setDate(e.getDate() + 1); return e; };
+  if (label === 'today')        return { from: today,            to: endOfDay(today) };
+  if (label === 'last_2_days')  return { from: offset(-1),       to: endOfDay(today) };
+  if (label === 'yesterday')    return { from: offset(-1),       to: today };
+  if (label === 'this_week') {
+    const day = today.getDay() || 7;
+    return { from: offset(-(day - 1)), to: endOfDay(today) };
+  }
+  if (label === 'last_week') {
+    const day = today.getDay() || 7;
+    const thisMonday = offset(-(day - 1));
+    const lastMonday = new Date(thisMonday); lastMonday.setDate(lastMonday.getDate() - 7);
+    return { from: lastMonday, to: thisMonday };
+  }
+  if (label === 'custom') {
+    const f = document.getElementById('audit-date-from')?.value;
+    const t = document.getElementById('audit-date-to')?.value;
+    return {
+      from: f ? new Date(f + 'T00:00:00') : null,
+      to:   t ? new Date(new Date(t + 'T00:00:00').getTime() + 86400000) : null,
+    };
+  }
+  return { from: null, to: null };
+}
+
 function filteredAudit() {
-  // Server already applies q+action filters via syncAudit(); we re-filter
-  // client-side for instant feedback while typing.
-  const q = document.getElementById('search-audit').value.trim().toLowerCase();
+  // Server applies q+action filters via syncAudit(); we re-filter client-
+  // side for instant feedback. Date Range is purely client-side — audit
+  // rows are already in the auditLog array.
+  const q   = document.getElementById('search-audit').value.trim().toLowerCase();
   const act = document.getElementById('filter-audit-action').value;
+  const dr  = document.getElementById('filter-audit-date')?.value || 'all';
+  const range = dr === 'all' ? null : auditDateRange(dr);
   return auditLog.filter(a => {
     if (act !== 'all' && a.action !== act) return false;
     if (q) {
       const h = `${a.action} ${a.message} ${a.actor}`.toLowerCase();
       if (!h.includes(q)) return false;
+    }
+    if (range) {
+      const t = new Date(a.at);
+      if (range.from && t < range.from) return false;
+      if (range.to   && t >= range.to)  return false;
     }
     return true;
   });
@@ -756,6 +794,24 @@ document.getElementById('search-audit').addEventListener('input', () => {
 });
 document.getElementById('filter-audit-action').addEventListener('change', () => {
   syncAudit().then(renderAudit).catch(() => {});
+});
+document.getElementById('filter-audit-date').addEventListener('change', (e) => {
+  const isCustom = e.target.value === 'custom';
+  document.getElementById('audit-custom-date-row').classList.toggle('visible', isCustom);
+  // Date filter is client-side over auditLog — no server roundtrip needed.
+  renderAudit();
+});
+document.getElementById('audit-date-apply').addEventListener('click', () => {
+  const from = document.getElementById('audit-date-from').value;
+  const to   = document.getElementById('audit-date-to').value;
+  if (!from || !to) { showToast('Pick both dates', 'From and To required', 'danger'); return; }
+  if (from > to)    { showToast('Invalid range', '"From" must be earlier than "To"', 'danger'); return; }
+  renderAudit();
+});
+document.getElementById('audit-date-clear').addEventListener('click', () => {
+  document.getElementById('audit-date-from').value = '';
+  document.getElementById('audit-date-to').value = '';
+  renderAudit();
 });
 document.getElementById('btn-clear-audit').addEventListener('click', () => {
   showToast('Audit log cannot be cleared', 'Audit entries are permanent', 'danger');
