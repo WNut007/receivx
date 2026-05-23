@@ -124,8 +124,29 @@ hardcoded SQL login.
   intentionally different from pulls because procurement *authors* POs
   in-house, while pulls *arrive* from planning.
 
-## v2.1 backlog
-- **PullItem admin** — DONE (Phases 6.1/6.2/6.3/6.4 on `v2.1-migration`).
+## v2.x backlog
+- **PullItem admin** — DONE in v2.1 (tag `v2.1`, commits `b577aa5`/
+  `1301df5`/`e598fbb`/`00b3409`).
+- **Pull close note** — **deferred from v2.x close-display work** (commit
+  `2241737`). The dashboard drawer now shows signer + role + timestamp
+  + signature, but the "Note" field in the approved mockup was Scenario
+  D (no schema). To ship it:
+  - `db/018_pulls_close_note.sql` — `ALTER TABLE dbo.Pulls ADD CloseNote
+    NVARCHAR(500) NULL` (additive, idempotent)
+  - `CloseRequest` DTO gains optional `Note`; `CloseService.CloseAsync`
+    persists + audits it (suffix the existing "Closed pull X" audit
+    message with the note when present)
+  - Receiving page close modal (where the operator signs) gets a note
+    input above the signature pad — already-implemented modal lives in
+    `wwwroot/js/receiving.js` and `Views/Receiving/Index.cshtml`
+  - Dashboard drawer's close-auth section adds the conditional note row
+    (the markup hook is already there — see `renderCloseAuth` in
+    `dashboard.js` for where it would slot in)
+  - Estimated scope: 150-200 LOC across 4-5 files; mirror the Hour Cap
+    Phase 6.1-6.4 sub-phase rhythm. Use case: supervisor records context
+    like "verified against PO-2401-018" or "partial receive due to
+    vendor short-ship". Audit value is medium — signer + role +
+    timestamp already cover ~80% of the "who authorized this" story.
 - **Profile editor + Help page** — dropdown entries were trimmed in 5f
   pre-merge (commit `e69667a`); restore when there's a real destination.
 - **Item-search typeahead in Add-Line modal** — same pattern as the
