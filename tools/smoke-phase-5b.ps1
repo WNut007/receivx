@@ -56,10 +56,13 @@ foreach ($needle in @(
 OK "receiving.js drawer + modal renderers carry the §5b PO token"
 
 Step "5b-5: transactions.js implements PO sort with LineNumber + ReceivedAt tiebreaks"
+# NOTE: the f-po dropdown + refreshPoFilter helper were removed (user request,
+# commit ca88635+1). The col-po sortable column + the server-side ?poNumber
+# query string filter both stay — sort is exercised via the column header,
+# server filter is exercised below via direct URL params.
 $txJs = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\transactions.js' -Raw
 foreach ($needle in @(
     'sortRowsByPo',
-    'refreshPoFilter',
     'col-po',
     'dataset.sort',
     'th.sortable'
@@ -69,18 +72,17 @@ foreach ($needle in @(
 # Confirm the tiebreak ordering is encoded: LineNumber → ReceivedAt DESC
 if ($txJs -notmatch 'poLineNumber') { Fail "transactions.js sort tiebreak doesn't reference poLineNumber" }
 if ($txJs -notmatch 'receivedAt')   { Fail "transactions.js sort tiebreak doesn't reference receivedAt" }
-OK "transactions.js sort + filter helpers present"
+OK "transactions.js sort helpers present"
 
-Step "5b-6: Transactions Razor view has f-po dropdown + sortable PO column header"
+Step "5b-6: Transactions Razor view has sortable PO column header"
 $razor = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\Views\Transactions\Index.cshtml' -Raw
 foreach ($needle in @(
-    'id="f-po"',
     'class="col-po sortable"',
     'data-sort="po"'
 )) {
     if ($razor -notmatch [regex]::Escape($needle)) { Fail "Transactions view missing '$needle'" }
 }
-OK "Transactions view has f-po + sortable header"
+OK "Transactions view has sortable PO header"
 
 Step "5b CSS: transactions.css has .col-po, .sortable; receiving.css has .po-lock"
 $txCss   = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\css\transactions.css' -Raw
@@ -131,13 +133,13 @@ if ($reversals.Count -lt 1) {
     OK "$($reversals.Count) reversal rows all carry original PoNumber"
 }
 
-Step "Standalone /Transactions page renders 200 with col-po + f-po"
+Step "Standalone /Transactions page renders 200 with col-po sortable header"
 $pageHtml = Invoke-WebRequest -Uri "$base/Transactions" -WebSession $session
 if ($pageHtml.StatusCode -ne 200) { Fail "Expected 200, got $($pageHtml.StatusCode)" }
-foreach ($needle in @('id="f-po"', 'class="col-po sortable"', 'data-sort="po"')) {
+foreach ($needle in @('class="col-po sortable"', 'data-sort="po"')) {
     if ($pageHtml.Content -notmatch [regex]::Escape($needle)) { Fail "Live page HTML missing '$needle'" }
 }
-OK "Transactions page renders the new column + dropdown"
+OK "Transactions page renders the PO column"
 
 Write-Host "`nPhase 5b smoke PASSED." -ForegroundColor Green
 exit 0

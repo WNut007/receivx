@@ -208,12 +208,32 @@
   /* Filter bar */
   .filter-bar {
     display: grid;
-    grid-template-columns: 1fr 170px 170px 170px 150px auto auto;
+    grid-template-columns: 1fr 170px 170px 170px 150px auto;
     gap: 10px;
     padding: 14px 20px;
     background: var(--surface-2);
     border-bottom: 1px solid var(--border);
     align-items: end;
+  }
+
+  /* Custom range row — revealed only when Date Range = "Custom…".
+     Mirrors Dashboard's pattern; filters by ReceivedAt. */
+  .custom-date-row {
+    display: none;
+    padding: 12px 20px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .custom-date-row.visible { display: flex; }
+  .custom-date-row .form-control { width: 160px; font-family: 'Roboto Mono', monospace; }
+  .date-arrow {
+    align-self: flex-end;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: 18px;
   }
   .field-group { display: flex; flex-direction: column; gap: 4px; }
   .field-label {

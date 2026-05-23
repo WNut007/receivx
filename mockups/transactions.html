@@ -221,12 +221,31 @@
   /* Filter bar */
   .filter-bar {
     display: grid;
-    grid-template-columns: 1fr 170px 170px 170px 150px auto auto;
+    grid-template-columns: 1fr 170px 170px 170px 150px auto;
     gap: 10px;
     padding: 14px 20px;
     background: var(--surface-2);
     border-bottom: 1px solid var(--border);
     align-items: end;
+  }
+
+  /* Custom range row — revealed only when Date Range = "Custom…". */
+  .custom-date-row {
+    display: none;
+    padding: 12px 20px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .custom-date-row.visible { display: flex; }
+  .custom-date-row .form-control { width: 160px; font-family: 'Roboto Mono', monospace; }
+  .date-arrow {
+    align-self: flex-end;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    font-size: 18px;
   }
   .field-group { display: flex; flex-direction: column; gap: 4px; }
   .field-label {
@@ -705,11 +724,13 @@
         </div>
         <div class="field-group">
           <span class="field-label">Date Range</span>
-          <select class="form-select" id="f-date">
+          <select class="form-select" id="f-date" title="Filter by ReceivedAt">
             <option value="all">All time</option>
-            <option value="today" selected>Today</option>
+            <option value="today">Today</option>
+            <option value="last_2_days" selected>Last 2 days</option>
             <option value="yesterday">Yesterday</option>
-            <option value="week">This week</option>
+            <option value="this_week">This week</option>
+            <option value="last_week">Last week</option>
             <option value="custom">Custom…</option>
           </select>
         </div>
@@ -719,15 +740,24 @@
             <option value="all">All operators</option>
           </select>
         </div>
-        <div class="field-group">
-          <span class="field-label">PO</span>
-          <select class="form-select" id="f-po">
-            <option value="all">All POs</option>
-          </select>
-        </div>
         <button class="btn" id="btn-clear-filters" title="Clear filters">
           <i class="bi bi-x-circle"></i> Clear
         </button>
+      </div>
+
+      <!-- Custom range row — revealed only when Date Range = "Custom…" -->
+      <div class="custom-date-row" id="custom-date-row">
+        <div class="field-group">
+          <span class="field-label">From</span>
+          <input type="date" class="form-control" id="date-from">
+        </div>
+        <span class="date-arrow"><i class="bi bi-arrow-right"></i></span>
+        <div class="field-group">
+          <span class="field-label">To</span>
+          <input type="date" class="form-control" id="date-to">
+        </div>
+        <button type="button" class="btn" id="date-apply"><i class="bi bi-funnel me-1"></i> Apply</button>
+        <button type="button" class="btn" id="date-clear"><i class="bi bi-x me-1"></i> Clear</button>
       </div>
 
       <!-- Table -->

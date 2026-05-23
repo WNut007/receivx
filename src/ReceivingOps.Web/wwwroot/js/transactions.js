@@ -42,9 +42,21 @@ function applyUrlFiltersToUi() {
   if (params.get('item')) searchTerms.push(params.get('item'));
   if (searchTerms.length > 0) {
     document.getElementById('f-search').value = searchTerms.join(' ');
-    // When linked from another page, default to "all time" so the user actually sees the rows.
+    // When linked from another page, default to "all time" so the user actually
+    // sees the rows (the 2-day default would hide older pulls that the link
+    // explicitly targeted).
     document.getElementById('f-date').value = 'all';
   }
+  // ?dateRange=... overrides whatever value the HTML <option selected> set.
+  // Wins over the "linked-from-elsewhere → all" fallback above when present.
+  const dr = params.get('dateRange');
+  const dateSel = document.getElementById('f-date');
+  if (dr && dateSel && [...dateSel.options].some(o => o.value === dr)) {
+    dateSel.value = dr;
+  }
+  // Reveal the custom-range row if the selected option is "custom".
+  document.getElementById('custom-date-row')?.classList.toggle('visible',
+    dateSel?.value === 'custom');
   if (params.get('warehouse')) {
     const wh = params.get('warehouse');
     const sel = document.getElementById('f-warehouse');
@@ -100,9 +112,6 @@ function buildQueryString() {
   const op = document.getElementById('f-operator').value;
   if (op && op !== 'all') params.set('receivedByName', op);
 
-  const po = document.getElementById('f-po')?.value;
-  if (po && po !== 'all') params.set('poNumber', po);
-
   if (hourFilter !== null) params.set('hour', String(hourFilter));
 
   params.set('take', String(PAGE_SIZE));
@@ -110,22 +119,45 @@ function buildQueryString() {
   return params.toString();
 }
 
+// Calendar-day buckets, matching Dashboard/Reports naming. Filter source =
+// Receipts.ReceivedAt (handled server-side via dateFrom/dateTo). The "to"
+// end is exclusive day-boundary (next day's 00:00), which the server's
+// `r.ReceivedAt < @DateTo` comparison handles natively.
 function computeDateRange(label) {
   const now = new Date();
+  const startOfDay = (offset = 0) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
   if (label === 'today') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return { from: start, to: null };
+    return { from: startOfDay(0), to: null };
+  }
+  if (label === 'last_2_days') {
+    // Today + Yesterday — calendar days, NOT rolling 48h.
+    return { from: startOfDay(-1), to: null };
   }
   if (label === 'yesterday') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return { from: start, to: end };
+    return { from: startOfDay(-1), to: startOfDay(0) };
   }
-  if (label === 'week') {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const day = d.getDay() || 7;
+  if (label === 'this_week') {
+    const d = startOfDay(0);
+    const day = d.getDay() || 7;       // Mon=1..Sun=7
     d.setDate(d.getDate() - (day - 1));
     return { from: d, to: null };
+  }
+  if (label === 'last_week') {
+    const thisMonday = startOfDay(0);
+    const day = thisMonday.getDay() || 7;
+    thisMonday.setDate(thisMonday.getDate() - (day - 1));
+    const lastMonday = new Date(thisMonday); lastMonday.setDate(lastMonday.getDate() - 7);
+    return { from: lastMonday, to: thisMonday };
+  }
+  if (label === 'custom') {
+    // Both inputs are <input type="date"> → YYYY-MM-DD strings.
+    const fromStr = document.getElementById('date-from')?.value;
+    const toStr   = document.getElementById('date-to')?.value;
+    const from = fromStr ? new Date(fromStr + 'T00:00:00') : null;
+    // Exclusive end-of-day for "to": +1 day so the picked date is fully included.
+    const to   = toStr   ? new Date(new Date(toStr + 'T00:00:00').getTime() + 86400000) : null;
+    return { from, to };
   }
   return { from: null, to: null };
 }
@@ -150,7 +182,6 @@ async function loadData() {
     currentRows = page.rows || [];
     currentTotal = page.total | 0;
     refreshOperators();
-    refreshPoFilter();
     render();
   } catch (e) {
     console.error('loadData failed', e);
@@ -270,20 +301,6 @@ function refreshOperators() {
   const cur = sel.value;
   sel.innerHTML = `<option value="all">All operators</option>` + ops.map(o => `<option value="${escHtml(o)}">${escHtml(o)}</option>`).join('');
   sel.value = ops.includes(cur) || cur === 'all' ? cur : 'all';
-}
-
-// §5b — populate the PO dropdown from distinct PoNumbers in the current page
-// of results. No extra API call: the server-side filter is `poNumber=` and a
-// single change-event triggers loadData() which rebuilds this list.
-function refreshPoFilter() {
-  const sel = document.getElementById('f-po');
-  if (!sel) return;
-  const pos = [...new Set(currentRows.map(r => r.poNumber).filter(Boolean))].sort();
-  const cur = sel.value;
-  sel.innerHTML = `<option value="all">All POs</option>` +
-    pos.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
-  // Preserve selection if still valid; else fall back to "all".
-  sel.value = (pos.includes(cur) || cur === 'all') ? cur : 'all';
 }
 
 // §5b — client-side sort. Tiebreak: LineNumber asc, then ReceivedAt DESC
@@ -446,19 +463,43 @@ function onFilterChange() {
 }
 
 document.getElementById('f-search').addEventListener('input', onFilterChange);
-['f-warehouse','f-action','f-date','f-operator','f-po'].forEach(id => {
+['f-warehouse','f-action','f-operator'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', loadData);
+});
+
+// Date Range gets its own handler — toggles the custom-range row + reloads.
+document.getElementById('f-date').addEventListener('change', (e) => {
+  const isCustom = e.target.value === 'custom';
+  document.getElementById('custom-date-row').classList.toggle('visible', isCustom);
+  // For preset ranges, fetch immediately. For custom, wait for Apply so the
+  // operator picks both dates before firing.
+  if (!isCustom) loadData();
+});
+
+document.getElementById('date-apply').addEventListener('click', () => {
+  const from = document.getElementById('date-from').value;
+  const to   = document.getElementById('date-to').value;
+  if (!from || !to) { showToast('Pick both dates', 'From and To required', 'danger'); return; }
+  if (from > to)    { showToast('Invalid range', '"From" must be earlier than "To"', 'danger'); return; }
+  loadData();
+});
+
+document.getElementById('date-clear').addEventListener('click', () => {
+  document.getElementById('date-from').value = '';
+  document.getElementById('date-to').value = '';
+  loadData();
 });
 
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.getElementById('f-search').value = '';
   document.getElementById('f-warehouse').value = 'all';
   document.getElementById('f-action').value = 'all';
-  document.getElementById('f-date').value = 'all';
+  document.getElementById('f-date').value = 'last_2_days';
   document.getElementById('f-operator').value = 'all';
-  const poSel = document.getElementById('f-po');
-  if (poSel) poSel.value = 'all';
+  document.getElementById('date-from').value = '';
+  document.getElementById('date-to').value = '';
+  document.getElementById('custom-date-row').classList.remove('visible');
   // Also clear sort + hour banner — both are part of the filter set even though they're not dropdowns.
   sortBy = null; sortDir = 'asc';
   document.querySelectorAll('.data-table th.sortable').forEach(th => th.classList.remove('sort-asc','sort-desc'));
