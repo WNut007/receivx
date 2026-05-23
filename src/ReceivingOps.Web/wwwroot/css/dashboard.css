@@ -1111,3 +1111,66 @@
     color: var(--text-dim);
     line-height: 1.4;
   }
+
+  /* ---- v2.x — close authorization section (drawer, closed pulls only) ---- */
+  .close-auth-grid {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 10px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .close-auth-grid dt { color: var(--text-muted); margin: 0; font-weight: 400; }
+  .close-auth-grid dd { margin: 0; color: var(--text); }
+  .closer-name { font-weight: 500; }
+  .closer-role {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 1px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .signature-card {
+    background: var(--surface-2);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .signature-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .signature-canvas {
+    background: #ffffff;                /* white-card regardless of theme — signatures are dark-on-white */
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    min-height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+    overflow: hidden;
+  }
+  .signature-canvas svg { max-width: 100%; height: auto; display: block; }
+  .signature-canvas img { max-width: 100%; height: auto; display: block; }   /* if signature is stored as data: URL */
+  .signature-canvas .muted { color: var(--text-muted); font-style: italic; font-size: 12px; }
+
+  .signature-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .download-sig {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 4px;
+  }
+  .download-sig:hover:not(:disabled) { background: var(--accent-bg); text-decoration: none; }
+  .download-sig:disabled { color: var(--text-dim); cursor: not-allowed; }

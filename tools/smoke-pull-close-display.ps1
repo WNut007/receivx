@@ -115,6 +115,56 @@ if ($d2.closedByRole -ne 'admin')   { Fail "closedByRole dropped on reopen (shou
 OK "Reopen preserves close trio (signature + closer name + role)"
 
 SqlCleanup
+
+# ----------------------------------------------------------------------------
+# 6. UI source-level — Razor + CSS + JS carry the close-auth wiring.
+#    Catches stale Razor compiles + missed mockup-vs-served drift.
+# ----------------------------------------------------------------------------
+Step "Razor view carries close-auth section + every id"
+$razor = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\Views\Dashboard\Index.cshtml' -Raw
+foreach ($id in @(
+    'id="d-close-auth"',
+    'id="d-closer-name"',
+    'id="d-closer-role"',
+    'id="d-close-time"',
+    'id="d-signature-canvas"',
+    'id="d-download-sig"'
+)) {
+    if ($razor -notmatch [regex]::Escape($id)) { Fail "Index.cshtml missing $id" }
+}
+if ($razor -notmatch 'Close authorization') { Fail "Index.cshtml missing 'Close authorization' label" }
+OK "Razor view has every close-auth id"
+
+Step "dashboard.js carries renderCloseAuth + downloadSignaturePng + adapt() forwarding"
+$js = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\dashboard.js' -Raw
+foreach ($needle in @(
+    'function renderCloseAuth',
+    'function downloadSignaturePng',
+    'renderCloseAuth(p)',
+    'signatureSvg:  s.signatureSvg',
+    'closedByRole:  s.closedByRole'
+)) {
+    if ($js -notmatch [regex]::Escape($needle)) { Fail "dashboard.js missing $needle" }
+}
+OK "dashboard.js carries render + download + adapt() forwarding"
+
+Step "dashboard.css carries close-auth rules"
+$css = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\wwwroot\css\dashboard.css' -Raw
+foreach ($rule in @('.close-auth-grid', '.signature-card', '.signature-canvas', '.download-sig')) {
+    if ($css -notmatch [regex]::Escape($rule)) { Fail "dashboard.css missing $rule" }
+}
+OK "dashboard.css has every close-auth rule"
+
+Step "Served /Dashboard HTML carries the new ids (Razor compile fresh)"
+$bodyLog = @{ username = 'sadmin'; password = 'admin'; warehouseId = $WH_01; remember = $false } | ConvertTo-Json
+$sv2 = $null
+Invoke-RestMethod -Uri "$base/api/auth/login" -Method POST -Body $bodyLog -ContentType 'application/json' -SessionVariable sv2 | Out-Null
+$page = Invoke-WebRequest -Uri "$base/Dashboard" -Method GET -WebSession $sv2 -UseBasicParsing
+foreach ($id in @('id="d-close-auth"', 'id="d-signature-canvas"', 'id="d-download-sig"')) {
+    if ($page.Content -notmatch [regex]::Escape($id)) { Fail "Served Dashboard HTML missing $id" }
+}
+OK "Served Dashboard HTML carries close-auth section"
+
 Write-Host ""
-Write-Host "ALL PASS — PullSummary exposes signatureSvg + closedByRole for the drawer close-auth section." -ForegroundColor Green
+Write-Host "ALL PASS — backend exposes the fields + UI source carries the wiring." -ForegroundColor Green
 exit 0

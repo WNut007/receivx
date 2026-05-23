@@ -121,6 +121,10 @@
       lockPoByPull:  !!s.lockPoByPull,
       // v2.1 Hour Cap — surfaces in drawer badge + modal echo + filter (default true).
       lockHourCap:   s.lockHourCap === undefined ? true : !!s.lockHourCap,
+      // v2.x — close authorization (used by renderCloseAuth on closed pulls only).
+      closedByName:  s.closedByName || null,
+      closedByRole:  s.closedByRole || null,
+      signatureSvg:  s.signatureSvg || null,
     };
   }
 
@@ -382,6 +386,101 @@
     } else {
       launchBtn.innerHTML = `<i class="bi bi-box-arrow-up-right me-1"></i> Open in Receiving v3.2`;
     }
+
+    // v2.x — close authorization section (rendered only when status === 'closed').
+    renderCloseAuth(p);
+  }
+
+  // Renders the drawer's CLOSE AUTHORIZATION section from the pull's
+  // signature + closer name/role/timestamp. Hidden entirely on open pulls so
+  // the active workflow drawer stays uncluttered. Reopened pulls (status !==
+  // 'closed' but signatureSvg still set per §7.5) also hide the section —
+  // the badge is past tense; if the pull is back in motion the close-auth
+  // history is no longer the load-bearing signal.
+  function renderCloseAuth(p) {
+    const section = document.getElementById('d-close-auth');
+    if (!section) return;
+    if (p.status !== 'closed') {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+
+    document.getElementById('d-closer-name').textContent = p.closedByName || '(unknown)';
+    document.getElementById('d-closer-role').textContent = p.closedByRole || '';
+
+    // p.firstReceipt comes pre-formatted by adapt(); for closed-at, use the raw
+    // server timestamp through the same fmtTimestamp helper if available, else
+    // fall back to lastActivity (which adapt() sets to "Closed by X · DATE"
+    // for closed pulls — that's already the right shape for the line).
+    document.getElementById('d-close-time').textContent =
+      p.lastActivity && p.status === 'closed' ? p.lastActivity : '—';
+
+    const canvas = document.getElementById('d-signature-canvas');
+    const btnDownload = document.getElementById('d-download-sig');
+    canvas.innerHTML = '';
+    const sig = (p.signatureSvg || '').trim();
+    if (sig) {
+      // Two storage shapes are tolerated:
+      //   1. Inline <svg>...</svg> markup (what new closes write)
+      //   2. data:image/* URL (legacy / canvas-toDataURL closes)
+      // Anything else falls into the invalid bucket so a corrupt row doesn't
+      // crash the drawer.
+      if (sig.startsWith('<svg')) {
+        canvas.innerHTML = sig;
+      } else if (sig.startsWith('data:image/')) {
+        const img = new Image();
+        img.alt = 'Close signature';
+        img.src = sig;
+        canvas.appendChild(img);
+      } else {
+        canvas.innerHTML = '<span class="muted">Invalid signature data</span>';
+      }
+      btnDownload.disabled = false;
+      btnDownload.onclick = () => downloadSignaturePng(sig, p.id);
+    } else {
+      canvas.innerHTML = '<span class="muted">No signature on file</span>';
+      btnDownload.disabled = true;
+      btnDownload.onclick = null;
+    }
+  }
+
+  // SVG / data-URL → PNG via off-screen canvas. White background filled
+  // before drawImage so transparency renders correctly when the operator
+  // opens the file in a generic viewer. Uses object URLs so memory is
+  // released as soon as the click finishes.
+  async function downloadSignaturePng(sigSource, pullNumber) {
+    const isData = sigSource.startsWith('data:image/');
+    const blob = isData ? null : new Blob([sigSource], { type: 'image/svg+xml' });
+    const url = isData ? sigSource : URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const w = img.width || 400;
+      const h = img.height || 120;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((png) => {
+        const link = document.createElement('a');
+        const href = URL.createObjectURL(png);
+        link.href = href;
+        link.download = `${pullNumber || 'pull'}-signature.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(href);
+      }, 'image/png');
+      if (!isData) URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      showToast('Download failed', 'Could not rasterize signature', 'error');
+      if (!isData) URL.revokeObjectURL(url);
+    };
+    img.src = url;
   }
 
   function openDrawer(pullGuid) {

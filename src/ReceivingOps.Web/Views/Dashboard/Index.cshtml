@@ -278,6 +278,33 @@
                 </div>
             </div>
         </div>
+
+        <!-- v2.x — close authorization (signature + signer + timestamp).
+             Shown only when pull.status === 'closed'; JS hides the section
+             otherwise. closeNote is deferred (see CLAUDE.md v2.x backlog). -->
+        <section class="close-auth-section drawer-section" id="d-close-auth" style="display: none;">
+            <div class="drawer-section-title">
+                <i class="bi bi-shield-check me-1"></i> Close authorization
+            </div>
+            <dl class="close-auth-grid">
+                <dt>Closed by</dt>
+                <dd>
+                    <div class="closer-name" id="d-closer-name">—</div>
+                    <div class="closer-role" id="d-closer-role"></div>
+                </dd>
+                <dt>Closed at</dt>
+                <dd id="d-close-time">—</dd>
+            </dl>
+            <div class="signature-card">
+                <div class="signature-label">Signature</div>
+                <div class="signature-canvas" id="d-signature-canvas"></div>
+                <div class="signature-actions">
+                    <button type="button" class="download-sig" id="d-download-sig">
+                        <i class="bi bi-download me-1"></i> Download PNG
+                    </button>
+                </div>
+            </div>
+        </section>
     </div>
 
     <div class="offcanvas-footer">
