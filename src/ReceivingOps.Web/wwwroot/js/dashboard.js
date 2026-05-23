@@ -292,15 +292,12 @@
   const drawerEl = document.getElementById('detailDrawer');
   const drawer = new bootstrap.Offcanvas(drawerEl);
 
-  function openDrawer(pullGuid) {
-    const p = pulls.find(x => x.pullId === pullGuid);
+  // Paints the drawer header / progress / Item Summary / Timeline / strict-mode
+  // pills / launch button from a pull object (the adapted in-memory shape, not
+  // the raw API response). Factored out of openDrawer so refreshPullDetailDrawer
+  // can re-render the same surface after a mutation without re-running drawer.show().
+  function renderDrawerSections(p) {
     if (!p) return;
-    selectedPullId = pullGuid;
-
-    document.querySelectorAll('.card-pull').forEach(c => {
-      c.classList.toggle('selected', c.dataset.id === pullGuid);
-    });
-
     const pct = p.expected > 0 ? Math.round((p.received / p.expected) * 100) : 0;
     const outstanding = Math.max(0, p.expected - p.received);
 
@@ -385,7 +382,18 @@
     } else {
       launchBtn.innerHTML = `<i class="bi bi-box-arrow-up-right me-1"></i> Open in Receiving v3.2`;
     }
+  }
 
+  function openDrawer(pullGuid) {
+    const p = pulls.find(x => x.pullId === pullGuid);
+    if (!p) return;
+    selectedPullId = pullGuid;
+
+    document.querySelectorAll('.card-pull').forEach(c => {
+      c.classList.toggle('selected', c.dataset.id === pullGuid);
+    });
+
+    renderDrawerSections(p);
     drawer.show();
 
     // v2.1 Phase 6.3 — lazy-load the items grid. Fire-and-forget; render
@@ -399,6 +407,37 @@
         empty.classList.remove('d-none');
       }
     });
+  }
+
+  // Post-mutation refresh — fetches the full PullDetail (header summary +
+  // items in one round-trip), updates the in-memory pulls[] cache so a later
+  // close+reopen of the drawer also shows fresh totals, then re-renders both
+  // the drawer sections and the items table. Called from every mutation
+  // success handler (saveAddItem / saveEditItem / deleteItem /
+  // refreshWindowsModal) so the operator never sees stale summary cards
+  // after a CRUD action.
+  async function refreshPullDetailDrawer(pullGuid) {
+    if (!pullGuid) return;
+    try {
+      const r = await fetch('/api/pulls/' + encodeURIComponent(pullGuid));
+      if (!r.ok) {
+        // Best-effort fall back to items-only refresh so the table at least
+        // reflects the mutation even if the summary call failed.
+        await loadItemsForDrawer(pullGuid);
+        return;
+      }
+      const detail = await r.json();
+      const fresh = adapt(detail);
+      const idx = pulls.findIndex(x => x.pullId === fresh.pullId);
+      if (idx >= 0) pulls[idx] = fresh; else pulls.push(fresh);
+      renderDrawerSections(fresh);
+      drawerItems = detail.items || [];
+      drawerPullIdForItems = pullGuid;
+      renderItemsTable();
+    } catch (e) {
+      console.error('refreshPullDetailDrawer failed', e);
+      try { await loadItemsForDrawer(pullGuid); } catch {}
+    }
   }
 
   drawerEl.addEventListener('hidden.bs.offcanvas', () => {
@@ -763,7 +802,7 @@
       }
       itemAddModal.hide();
       showToast('Item added', itemCode);
-      await loadItemsForDrawer(drawerPullIdForItems);
+      await refreshPullDetailDrawer(drawerPullIdForItems);
     } finally {
       btn.disabled = false;
     }
@@ -822,7 +861,7 @@
       }
       itemEditModal.hide();
       showToast('Item updated', '');
-      await loadItemsForDrawer(drawerPullIdForItems);
+      await refreshPullDetailDrawer(drawerPullIdForItems);
     } finally {
       btn.disabled = false;
     }
@@ -855,7 +894,7 @@
       return;
     }
     showToast('Item deleted', it.itemCode);
-    await loadItemsForDrawer(drawerPullIdForItems);
+    await refreshPullDetailDrawer(drawerPullIdForItems);
   }
 
   // ---- Windows modal -----------------------------------------------------
@@ -962,11 +1001,13 @@
     await refreshWindowsModal();
   });
 
-  // Re-fetch items, find the one open in the modal, re-render its windows.
-  // Also refreshes the drawer table so the windows count + totals stay accurate.
+  // Re-fetch the full pull detail (header + summary + items), re-render the
+  // drawer + items table, then re-render the windows modal table from the
+  // freshly-loaded item. refreshPullDetailDrawer already populates drawerItems
+  // and re-renders the items table, so we just pick up the open item from there.
   async function refreshWindowsModal() {
     if (!drawerPullIdForItems || !editingItemId) return;
-    await loadItemsForDrawer(drawerPullIdForItems);
+    await refreshPullDetailDrawer(drawerPullIdForItems);
     const it = drawerItems.find(x => x.id === editingItemId);
     if (it) renderWindowsTable(it.windows || []);
   }
