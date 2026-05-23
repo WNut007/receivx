@@ -21,6 +21,8 @@ public class PullRepository : IPullRepository
                 p.LastActivityAt,
                 p.ClosedAt,
                 cb.Name AS ClosedByName,
+                cb.Role AS ClosedByRole,           -- v2.x: closer global role for the drawer close-auth section
+                p.SignatureSvg,                    -- v2.x: rendered in the same section; NULL on open pulls
                 CAST(CASE WHEN p.ReopenedAt IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS IsReopened,
                 p.LockPoByPull,
                 p.LockHourCap,
@@ -220,6 +222,8 @@ public class PullRepository : IPullRepository
             LastActivityAt = summary.LastActivityAt,
             ClosedAt = summary.ClosedAt,
             ClosedByName = summary.ClosedByName,
+            ClosedByRole = summary.ClosedByRole,
+            SignatureSvg = summary.SignatureSvg,
             IsReopened = summary.IsReopened,
             LockPoByPull = summary.LockPoByPull,
             LockHourCap = summary.LockHourCap,

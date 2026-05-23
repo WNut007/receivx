@@ -54,6 +54,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-hourcap-6.4.ps1'
         'smoke-hourcap-6.5.ps1'
         'smoke-pull-detail-refresh.ps1'
+        'smoke-pull-close-display.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'

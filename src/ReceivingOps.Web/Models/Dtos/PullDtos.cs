@@ -17,6 +17,12 @@ public class PullSummary
     public DateTime? LastActivityAt { get; set; }
     public DateTime? ClosedAt { get; set; }
     public string? ClosedByName { get; set; }
+    // v2.x — global Role (admin/supervisor/operator) of the user who closed.
+    // Null on open pulls + on closed pulls where the closer record was deleted.
+    public string? ClosedByRole { get; set; }
+    // v2.x — base64 PNG / inline SVG / canvas-encoded signature captured at close
+    // time. NVARCHAR(MAX) in DB; only populated when status === 'closed'.
+    public string? SignatureSvg { get; set; }
     public bool IsReopened { get; set; }
 
     public int TotalExpected { get; set; }
