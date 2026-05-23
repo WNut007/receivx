@@ -892,6 +892,29 @@
     width: 3px;
     background: var(--complete);
   }
+  /* Over-receive state — mirror of wwwroot/css/receiving.css */
+  .hour-btn.over { background: var(--over-bg); }
+  .hour-btn.over .recv { color: var(--over); font-weight: 600; }
+  .hour-btn.over .hour-meter span { background: var(--over); }
+  .hour-btn.over .hour-status { color: var(--over); font-weight: 600; }
+  .hour-btn.over::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--over);
+  }
+  .hour-btn.over .over-tail {
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--over);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: 1px;
+  }
   .hour-btn.empty { color: var(--text-muted); }
   .hour-btn.empty .hour-nums { color: var(--text-muted); font-size: 14px; }
   .hour-btn.empty .hour-nums::before {
@@ -2327,7 +2350,8 @@
     const slot = item.schedule[hour];
     if (!slot) return { r: 0, e: 0, s: 'empty' };
     const s = (slot.e === 0) ? 'empty'
-            : (slot.r >= slot.e) ? 'complete'
+            : (slot.r >  slot.e) ? 'over'
+            : (slot.r === slot.e) ? 'complete'
             : 'pending';
     return { r: slot.r, e: slot.e, s };
   }
@@ -2429,19 +2453,26 @@
         btn.dataset.row = ri;
         btn.dataset.col = ci;
 
-        const pct = c.e > 0 ? Math.min(100, Math.round((c.r / c.e) * 100)) : 0;
+        const pct = c.e > 0 ? Math.round((c.r / c.e) * 100) : 0;
+        const barPct = Math.min(100, pct);
 
         if (c.s === 'empty') {
           btn.innerHTML = `<div class="hour-nums"><span class="label">add</span></div>`;
         } else {
-          const statusText = c.s === 'complete' ? `✓ ${pct}%` : `${pct}%`;
+          const statusText = c.s === 'over'     ? `↑ ${pct}%`
+                           : c.s === 'complete' ? `✓ ${pct}%`
+                           : `${pct}%`;
+          const overTail = c.s === 'over'
+            ? `<span class="over-tail">+${(c.r - c.e).toLocaleString()}</span>`
+            : '';
           btn.innerHTML = `
             <div class="hour-nums">
               <span class="recv">${c.r.toLocaleString()}</span>
               <span class="sep">/</span>
               <span class="exp">${c.e.toLocaleString()}</span>
+              ${overTail}
             </div>
-            <div class="hour-meter"><span style="width:${Math.min(100,pct)}%"></span></div>
+            <div class="hour-meter"><span style="width:${barPct}%"></span></div>
             <div class="hour-status">${statusText}</div>
           `;
         }

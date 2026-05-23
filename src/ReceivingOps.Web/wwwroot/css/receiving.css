@@ -905,6 +905,31 @@
     width: 3px;
     background: var(--complete);
   }
+  /* §7.1 — over-receive (slot.r > slot.e). Distinct from 'complete' so the
+     cell never lies "✓ 100% done" when an extra 300 pcs landed. Token family
+     --over* is already defined for all 3 themes. */
+  .hour-btn.over { background: var(--over-bg); }
+  .hour-btn.over .recv { color: var(--over); font-weight: 600; }
+  .hour-btn.over .hour-meter span { background: var(--over); }
+  .hour-btn.over .hour-status { color: var(--over); font-weight: 600; }
+  .hour-btn.over::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--over);
+  }
+  .hour-btn.over .over-tail {
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--over);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: 1px;
+  }
   .hour-btn.empty { color: var(--text-muted); }
   .hour-btn.empty .hour-nums { color: var(--text-muted); font-size: 14px; }
   .hour-btn.empty .hour-nums::before {

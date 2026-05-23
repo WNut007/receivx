@@ -50,8 +50,12 @@
   function getCell(item, hour) {
     const slot = item.schedule[hour];
     if (!slot) return { r: 0, e: 0, s: 'empty' };
+    // 'over' is its own state so the visual treatment can flag the overage
+    // distinctly from 'complete' (per §7.1 v2, over-receive is allowed when
+    // the PO has capacity — but it shouldn't look identical to exactly-done).
     const s = (slot.e === 0) ? 'empty'
-            : (slot.r >= slot.e) ? 'complete'
+            : (slot.r >  slot.e) ? 'over'
+            : (slot.r === slot.e) ? 'complete'
             : 'pending';
     return { r: slot.r, e: slot.e, s };
   }
@@ -153,19 +157,32 @@
         btn.dataset.row = ri;
         btn.dataset.col = ci;
 
-        const pct = c.e > 0 ? Math.min(100, Math.round((c.r / c.e) * 100)) : 0;
+        // Keep the RAW percentage so over-receive reads as e.g. "130%" — the
+        // status text never gets clamped. The progress-bar fill is the only
+        // value that caps at 100% (a bar can't physically be > 100% wide).
+        const pct = c.e > 0 ? Math.round((c.r / c.e) * 100) : 0;
+        const barPct = Math.min(100, pct);
 
         if (c.s === 'empty') {
           btn.innerHTML = `<div class="hour-nums"><span class="label">add</span></div>`;
         } else {
-          const statusText = c.s === 'complete' ? `✓ ${pct}%` : `${pct}%`;
+          // 'over' = up-arrow + raw pct (e.g. "↑ 130%"); 'complete' = checkmark.
+          const statusText = c.s === 'over'     ? `↑ ${pct}%`
+                           : c.s === 'complete' ? `✓ ${pct}%`
+                           : `${pct}%`;
+          // Numerals get an extra "+N over" tail when over-received so the
+          // cell tells one consistent story (number + status both flag overage).
+          const overTail = c.s === 'over'
+            ? `<span class="over-tail">+${(c.r - c.e).toLocaleString()}</span>`
+            : '';
           btn.innerHTML = `
             <div class="hour-nums">
               <span class="recv">${c.r.toLocaleString()}</span>
               <span class="sep">/</span>
               <span class="exp">${c.e.toLocaleString()}</span>
+              ${overTail}
             </div>
-            <div class="hour-meter"><span style="width:${Math.min(100,pct)}%"></span></div>
+            <div class="hour-meter"><span style="width:${barPct}%"></span></div>
             <div class="hour-status">${statusText}</div>
           `;
         }
