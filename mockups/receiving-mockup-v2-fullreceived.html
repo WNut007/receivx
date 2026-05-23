@@ -379,6 +379,45 @@
   .select:hover { border-color: var(--border-bright); background-color: var(--surface-2); }
   .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.1); }
 
+  /* Period stepper — mirror of wwwroot/css/receiving.css */
+  .period-stepper { display: inline-flex; align-items: stretch; gap: 6px; }
+  .period-arrow {
+    width: 30px; height: 30px; padding: 0;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--text-dim);
+    box-shadow: var(--shadow-sm); align-self: center;
+    transition: border-color .15s, color .15s, background-color .15s, transform .18s;
+  }
+  .period-arrow:hover { border-color: var(--border-bright); color: var(--text); background: var(--surface-2); }
+  .period-arrow:active { transform: scale(0.96); }
+  .period-arrow i { font-size: 12px; line-height: 1; }
+  .period-select-wrap { position: relative; display: inline-block; }
+  .period-now-badge {
+    display: none;
+    position: absolute; top: -6px; right: -6px;
+    background: var(--accent); color: #fff;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 9px; font-weight: 700;
+    padding: 2px 5px; border-radius: 4px;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    box-shadow: var(--shadow-sm);
+  }
+  .period-now-badge.show { display: inline-block; }
+  .jump-to-now {
+    display: none;
+    margin-top: 4px;
+    font-size: 11px; color: var(--accent);
+    text-decoration: none;
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .jump-to-now:hover { text-decoration: underline; }
+  .jump-to-now.show { display: inline-block; }
+
   .toolbar-divider {
     width: 1px;
     height: 36px;
@@ -1731,14 +1770,26 @@
     </div>
     <div class="field-group">
       <span class="field-label">Period</span>
-      <select class="select" id="period-select">
-        <option value="07">07:00 — 10:00 · Morning</option>
-        <option value="11" selected>11:00 — 14:00 · Midday</option>
-        <option value="15">15:00 — 18:00 · Afternoon</option>
-        <option value="19">19:00 — 22:00 · Evening</option>
-        <option value="23">23:00 — 02:00 · Night</option>
-        <option value="03">03:00 — 06:00 · Pre-dawn</option>
-      </select>
+      <div class="period-stepper">
+        <button type="button" class="period-arrow" id="period-prev" title="Previous period" aria-label="Previous period">
+          <i class="bi bi-chevron-left"></i>
+        </button>
+        <div class="period-select-wrap">
+          <select class="select" id="period-select">
+            <option value="07">07:00 — 10:00 · Morning</option>
+            <option value="11" selected>11:00 — 14:00 · Midday</option>
+            <option value="15">15:00 — 18:00 · Afternoon</option>
+            <option value="19">19:00 — 22:00 · Evening</option>
+            <option value="23">23:00 — 02:00 · Night</option>
+            <option value="03">03:00 — 06:00 · Pre-dawn</option>
+          </select>
+          <span class="period-now-badge" id="period-now-badge">NOW</span>
+        </div>
+        <button type="button" class="period-arrow" id="period-next" title="Next period" aria-label="Next period">
+          <i class="bi bi-chevron-right"></i>
+        </button>
+      </div>
+      <a href="#" class="jump-to-now" id="period-jump-now">Jump to now ↺</a>
     </div>
     <div class="field-group">
       <span class="field-label">Warehouse</span>
@@ -2929,7 +2980,46 @@
     // Update footer indicator
     document.getElementById('footer-period').textContent = sel.options[sel.selectedIndex].text;
     render();
+    updatePeriodNowAffordances();
   });
+
+  // Period stepper — mirror of wwwroot/js/receiving.js
+  function periodStartContainingNow() {
+    const h = new Date().getHours();
+    const opts = Array.from(document.getElementById('period-select').options).map(o => parseInt(o.value, 10));
+    for (const s of opts) {
+      const end = (s + 4) % 24;
+      const inWindow = end > s ? (h >= s && h < end) : (h >= s || h < end);
+      if (inWindow) return s;
+    }
+    return opts[0];
+  }
+  function updatePeriodNowAffordances() {
+    const sel = document.getElementById('period-select');
+    if (!sel) return;
+    const isOnNow = parseInt(sel.value, 10) === periodStartContainingNow();
+    document.getElementById('period-now-badge')?.classList.toggle('show', isOnNow);
+    document.getElementById('period-jump-now')?.classList.toggle('show', !isOnNow);
+  }
+  function stepPeriod(delta) {
+    const sel = document.getElementById('period-select');
+    const opts = Array.from(sel.options);
+    const cur = opts.findIndex(o => o.value === sel.value);
+    sel.value = opts[(cur + delta + opts.length) % opts.length].value;
+    sel.dispatchEvent(new Event('change'));
+  }
+  function jumpPeriodToNow() {
+    const sel = document.getElementById('period-select');
+    const target = String(periodStartContainingNow()).padStart(2, '0');
+    if (sel.value === target) return;
+    sel.value = target;
+    sel.dispatchEvent(new Event('change'));
+  }
+  document.getElementById('period-prev')?.addEventListener('click', () => stepPeriod(-1));
+  document.getElementById('period-next')?.addEventListener('click', () => stepPeriod(+1));
+  document.getElementById('period-jump-now')?.addEventListener('click', (e) => { e.preventDefault(); jumpPeriodToNow(); });
+  jumpPeriodToNow();
+  updatePeriodNowAffordances();
 
   // ============ EXPORT TO EXCEL ============
   function buildExportRows() {

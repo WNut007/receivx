@@ -365,6 +365,69 @@
   .select:hover { border-color: var(--border-bright); background-color: var(--surface-2); }
   .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.1); }
 
+  /* ---- Period stepper (prev / dropdown+NOW badge / next + Jump to now link) ---- */
+  /* Same visual language as the hamburger split button: 0.5px border, 8px radius,
+     compact 30x30 arrows that flank the dropdown. */
+  .period-stepper {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .period-arrow {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    box-shadow: var(--shadow-sm);
+    align-self: center;
+    transition: border-color .15s ease, color .15s ease, background-color .15s ease, transform .18s ease;
+  }
+  .period-arrow:hover {
+    border-color: var(--border-bright);
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .period-arrow:active { transform: scale(0.96); }
+  .period-arrow i { font-size: 12px; line-height: 1; }
+
+  .period-select-wrap { position: relative; display: inline-block; }
+  .period-now-badge {
+    display: none;
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: var(--accent);
+    color: #fff;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    box-shadow: var(--shadow-sm);
+  }
+  .period-now-badge.show { display: inline-block; }
+
+  .jump-to-now {
+    display: none;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--accent);
+    text-decoration: none;
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .jump-to-now:hover { text-decoration: underline; }
+  .jump-to-now.show { display: inline-block; }
+
   .toolbar-divider {
     width: 1px;
     height: 36px;

@@ -963,7 +963,68 @@
     // Update footer indicator
     document.getElementById('footer-period').textContent = sel.options[sel.selectedIndex].text;
     render();
+    updatePeriodNowAffordances();
   });
+
+  // ============ PERIOD STEPPER (prev / next / NOW badge / Jump to now) ============
+  // Walks the period-select options as a cyclic list. "Now" = the period whose
+  // 4-hour window contains the current wall-clock hour. Auto-select on load so
+  // the receiver lands on the right period without having to choose.
+  function periodStartContainingNow() {
+    const h = new Date().getHours();
+    const opts = Array.from(document.getElementById('period-select').options)
+      .map(o => parseInt(o.value, 10));
+    // Each option's window is [start, start+4) wrapped at 24. Find the first
+    // option whose window contains h.
+    for (const s of opts) {
+      const end = (s + 4) % 24;
+      const inWindow = end > s ? (h >= s && h < end) : (h >= s || h < end);
+      if (inWindow) return s;
+    }
+    return opts[0];  // shouldn't happen — the 6 periods tile 24h
+  }
+
+  function updatePeriodNowAffordances() {
+    const sel = document.getElementById('period-select');
+    if (!sel) return;
+    const now = periodStartContainingNow();
+    const cur = parseInt(sel.value, 10);
+    const isOnNow = cur === now;
+    document.getElementById('period-now-badge')?.classList.toggle('show', isOnNow);
+    document.getElementById('period-jump-now')?.classList.toggle('show', !isOnNow);
+  }
+
+  function stepPeriod(delta) {
+    const sel = document.getElementById('period-select');
+    const opts = Array.from(sel.options);
+    const cur = opts.findIndex(o => o.value === sel.value);
+    const next = (cur + delta + opts.length) % opts.length;
+    sel.value = opts[next].value;
+    sel.dispatchEvent(new Event('change'));
+  }
+
+  function jumpPeriodToNow() {
+    const sel = document.getElementById('period-select');
+    const now = periodStartContainingNow();
+    const target = String(now).padStart(2, '0');
+    if (sel.value === target) return;
+    sel.value = target;
+    sel.dispatchEvent(new Event('change'));
+  }
+
+  document.getElementById('period-prev')?.addEventListener('click', () => stepPeriod(-1));
+  document.getElementById('period-next')?.addEventListener('click', () => stepPeriod(+1));
+  document.getElementById('period-jump-now')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    jumpPeriodToNow();
+  });
+
+  // Auto-select the current period on load (overrides the hardcoded `selected`
+  // in the Razor markup). Fires the existing change handler so the grid header
+  // + footer + body all update together. Safe to call before items load —
+  // render() handles the empty state.
+  jumpPeriodToNow();
+  updatePeriodNowAffordances();
 
   // ============ EXPORT TO EXCEL ============
   function buildExportRows() {
