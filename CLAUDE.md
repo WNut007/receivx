@@ -134,8 +134,9 @@ hardcoded SQL login.
   `2241737`). The dashboard drawer now shows signer + role + timestamp
   + signature, but the "Note" field in the approved mockup was Scenario
   D (no schema). To ship it:
-  - `db/018_pulls_close_note.sql` — `ALTER TABLE dbo.Pulls ADD CloseNote
-    NVARCHAR(500) NULL` (additive, idempotent)
+  - `db/019_pulls_close_note.sql` — `ALTER TABLE dbo.Pulls ADD CloseNote
+    NVARCHAR(500) NULL` (additive, idempotent). **Re-slotted from db/018
+    after Phase 7.1 took 018 for ReferenceNumber.**
   - `CloseRequest` DTO gains optional `Note`; `CloseService.CloseAsync`
     persists + audits it (suffix the existing "Closed pull X" audit
     message with the note when present)

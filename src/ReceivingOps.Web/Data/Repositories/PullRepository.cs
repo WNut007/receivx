@@ -26,6 +26,7 @@ public class PullRepository : IPullRepository
                 CAST(CASE WHEN p.ReopenedAt IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS IsReopened,
                 p.LockPoByPull,
                 p.LockHourCap,
+                p.ReferenceNumber,                 -- v2.x Phase 7.1: per-pull reference (vendor invoice)
                 ISNULL(vp.TotalExpected,  0) AS TotalExpected,
                 ISNULL(vp.TotalReceived,  0) AS TotalReceived,
                 ISNULL(vp.ActiveItemCount, 0) +
@@ -227,6 +228,7 @@ public class PullRepository : IPullRepository
             IsReopened = summary.IsReopened,
             LockPoByPull = summary.LockPoByPull,
             LockHourCap = summary.LockHourCap,
+            ReferenceNumber = summary.ReferenceNumber,
             TotalExpected = summary.TotalExpected,
             TotalReceived = summary.TotalReceived,
             ItemCount = summary.ItemCount,

@@ -23,6 +23,9 @@ public class PullSummary
     // v2.x — base64 PNG / inline SVG / canvas-encoded signature captured at close
     // time. NVARCHAR(MAX) in DB; only populated when status === 'closed'.
     public string? SignatureSvg { get; set; }
+    // v2.x Phase 7.1 — free-text reference (vendor invoice / delivery batch ID).
+    // Pull-level; editable post-create. Surfaces on the DO render + Reports list.
+    public string? ReferenceNumber { get; set; }
     public bool IsReopened { get; set; }
 
     public int TotalExpected { get; set; }
@@ -134,6 +137,7 @@ public class PullCreateRequest
     public string? Notes { get; set; }
     public bool LockPoByPull { get; set; } = true;     // v2.1 — strict by default; immutable after create (§7.15)
     public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — strict by default; immutable after create
+    public string? ReferenceNumber { get; set; }       // v2.x Phase 7.1 — optional vendor invoice / delivery batch ID
 }
 
 /// <summary>
@@ -148,4 +152,5 @@ public class PullUpdateRequest
     public string? Notes { get; set; }
     public bool LockPoByPull { get; set; }             // §3.5 — must echo; mismatch → 409
     public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — must echo current value; mismatch → 409
+    public string? ReferenceNumber { get; set; }       // v2.x Phase 7.1 — editable post-create; vendors revise invoices
 }

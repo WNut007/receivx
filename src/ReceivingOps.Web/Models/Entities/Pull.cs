@@ -28,4 +28,9 @@ public class Pull
     // hint and the PO is the only hard cap (legacy §7.1 v2 behavior).
     // Default true = strict. Immutable after pull creation.
     public bool LockHourCap { get; set; }
+
+    // v2.x Phase 7.1 — free-text reference identifier (vendor invoice, delivery-
+    // batch ID). Pull-level — one reference per delivery batch, covers all POs
+    // that land in this pull. Editable post-create (unlike the lock flags).
+    public string? ReferenceNumber { get; set; }
 }

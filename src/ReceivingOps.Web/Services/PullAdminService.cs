@@ -42,14 +42,17 @@ public class PullAdminService : IPullAdminService
 
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.Pulls (Id, PullNumber, WarehouseId, PullDate, Status,
-                                       Eta, Notes, CreatedBy, CreatedAt, LockPoByPull, LockHourCap)
+                                       Eta, Notes, CreatedBy, CreatedAt, LockPoByPull, LockHourCap,
+                                       ReferenceNumber)
                 OUTPUT INSERTED.Id
                 VALUES (NEWID(), @PullNumber, @WarehouseId, @PullDate, 'pending',
-                        @Eta, @Notes, @CreatedBy, SYSUTCDATETIME(), @LockPoByPull, @LockHourCap);",
+                        @Eta, @Notes, @CreatedBy, SYSUTCDATETIME(), @LockPoByPull, @LockHourCap,
+                        @ReferenceNumber);",
                 new
                 {
                     req.PullNumber, req.WarehouseId, req.PullDate,
                     req.Eta, req.Notes, req.LockPoByPull, req.LockHourCap,
+                    ReferenceNumber = string.IsNullOrWhiteSpace(req.ReferenceNumber) ? null : req.ReferenceNumber.Trim(),
                     CreatedBy = actorId,
                 }, transaction: tx, cancellationToken: ct));
 
@@ -114,13 +117,15 @@ public class PullAdminService : IPullAdminService
 
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.Pulls
-                   SET PullDate = @PullDate,
-                       Eta      = @Eta,
-                       Notes    = @Notes
+                   SET PullDate        = @PullDate,
+                       Eta             = @Eta,
+                       Notes           = @Notes,
+                       ReferenceNumber = @ReferenceNumber
                  WHERE Id = @Id;",
                 new
                 {
                     Id = id, req.PullDate, req.Eta, req.Notes,
+                    ReferenceNumber = string.IsNullOrWhiteSpace(req.ReferenceNumber) ? null : req.ReferenceNumber.Trim(),
                 }, transaction: tx, cancellationToken: ct));
 
             await _audit.WriteAsync(conn, tx, "update", "Pull", id.ToString(),
