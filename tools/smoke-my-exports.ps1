@@ -62,9 +62,12 @@ if ($ourRow.effectiveStatus -ne 'succeeded')         { Fail "EffectiveStatus not
 if (-not $ourRow.downloadUrl)                        { Fail "downloadUrl missing for succeeded job" }
 if ($ourRow.downloadUrl -notmatch 'token=')          { Fail "downloadUrl missing HMAC token: $($ourRow.downloadUrl)" }
 if ($ourRow.rowsExported -lt 1)                      { Fail "rowsExported not populated" }
-# Requester fields NOT populated on default (per-user) view
-if ($ourRow.requesterEmail)                          { Fail "Per-user view should not leak requester fields, got '$($ourRow.requesterEmail)'" }
-OK "Per-user view returns row with downloadUrl + no requester leak"
+# Requester fields ARE now populated even on per-user view (Phase 8.5+ —
+# operator self-confirmation). Privacy is enforced by the DB scope, not
+# field omission — covered by the operator ?all=true regression test below.
+if (-not $ourRow.requesterEmail)                     { Fail "requesterEmail should be present (own name on own row)" }
+if (-not $ourRow.requesterName)                      { Fail "requesterName should be present" }
+OK "Per-user view returns row with downloadUrl + requester self-id ($($ourRow.requesterName))"
 
 # Confirm the HMAC URL actually downloads
 $dl = Invoke-WebRequest -Uri ("$base" + $ourRow.downloadUrl) -WebSession $admin -UseBasicParsing

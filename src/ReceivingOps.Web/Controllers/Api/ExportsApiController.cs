@@ -201,11 +201,12 @@ public class ExportsApiController : ControllerBase
             RowsExported = r.RowsExported,
             ErrorMessage = r.ErrorMessage,
             DownloadUrl = BuildDownloadUrl(r, presentIds, expiresAt),
-            // Only populate requester fields on the admin "see all" view —
-            // saves a few bytes per row and signals to the UI which mode
-            // it's looking at.
-            RequesterEmail = all ? r.RequesterEmail : null,
-            RequesterName  = all ? r.RequesterName  : null,
+            // Always populate requester fields — useful for self-identification
+            // on the per-user view ("yes that's mine") and required for the
+            // admin see-all view. Privacy is enforced by the WHERE scope above
+            // (non-admin only sees their own rows), not by field omission.
+            RequesterEmail = r.RequesterEmail,
+            RequesterName  = r.RequesterName,
         }).ToList();
 
         return Ok(new PaginatedResponse<ExportJobView>

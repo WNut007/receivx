@@ -66,9 +66,9 @@
         } else {
             tbody.innerHTML = currentRows.map(r => {
                 const status = r.effectiveStatus || r.status;
-                const requesterCell = seeAll
-                    ? `<td class="requester-cell"><b>${escHtml(r.requesterName || '—')}</b><br>${escHtml(r.requesterEmail || '')}</td>`
-                    : '';
+                // Requester column is always visible — useful self-confirmation
+                // on the per-user view + identifies who ran what in admin see-all.
+                const requesterCell = `<td class="requester-cell"><b>${escHtml(r.requesterName || '—')}</b><br>${escHtml(r.requesterEmail || '')}</td>`;
                 const fileOrError =
                     status === 'failed'
                         ? `<span class="error-text" title="${escHtml(r.errorMessage || '')}">${escHtml(r.errorMessage || 'Unknown error')}</span>`
