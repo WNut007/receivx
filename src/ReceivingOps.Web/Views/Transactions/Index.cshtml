@@ -84,6 +84,18 @@
         <div class="meta-line" id="result-count">0 of 0 records</div>
       </div>
 
+      <!-- Phase 8.1 — data-limit notice. Surfaces only when the server total
+           exceeds the current page slice so the operator knows the visible
+           rows are a window, not the whole dataset. JS toggles `hidden` in
+           renderStats based on currentTotal vs page slice. -->
+      <div id="data-limit-notice" class="data-limit-notice" hidden>
+        <i class="bi bi-info-circle"></i>
+        <span>
+          Showing <b id="dln-shown">0</b> of <b id="dln-total">0</b> records.
+          Use <a href="#" id="dln-export">Export</a> to download the full filtered dataset.
+        </span>
+      </div>
+
       <!-- Hour filter banner (only when arrived from a specific cell with ?hour=) -->
       <div id="hour-filter-banner" style="display: none; padding: 10px 20px; background: var(--accent-bg); border-bottom: 1px solid var(--border); align-items: center; gap: 10px;">
         <span style="font-family: 'Roboto Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 600;">Filtered to slot:</span>

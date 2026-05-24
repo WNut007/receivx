@@ -205,6 +205,23 @@
   }
   .section-title i { color: var(--accent); }
 
+  /* Phase 8.1 — data limit notice. Hidden until the page slice doesn't
+     cover the server total; uses theme info-bg so it reads as advisory
+     not an error. */
+  .data-limit-notice {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 20px;
+    background: var(--info-bg);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .data-limit-notice[hidden] { display: none; }
+  .data-limit-notice i { color: var(--info); font-size: 14px; }
+  .data-limit-notice b { color: var(--text); font-family: 'Roboto Mono', monospace; }
+  .data-limit-notice a { color: var(--info); text-decoration: underline; cursor: pointer; }
+  .data-limit-notice a:hover { color: var(--accent); }
+
   /* Filter bar */
   .filter-bar {
     display: grid;

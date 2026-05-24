@@ -291,6 +291,19 @@ function renderStats(list) {
   document.getElementById('footer-summary').textContent =
     list.length === 0 ? '—' :
     `${list.length} transactions · ${positives.length} receipts (+${positives.reduce((a,r) => a+r.qtyReceived, 0).toLocaleString()}) · ${negatives.length} reversals (${negatives.reduce((a,r) => a+r.qtyReceived, 0).toLocaleString()}) · net ${net.toLocaleString()}`;
+
+  // Phase 8.1 — data-limit notice. Show only when the page slice doesn't
+  // cover the server total (i.e., more rows exist beyond what the user
+  // sees). Avoids nagging when the dataset is small.
+  const notice = document.getElementById('data-limit-notice');
+  if (notice) {
+    const overflow = currentTotal > list.length;
+    notice.hidden = !overflow;
+    if (overflow) {
+      document.getElementById('dln-shown').textContent = list.length.toLocaleString();
+      document.getElementById('dln-total').textContent = currentTotal.toLocaleString();
+    }
+  }
 }
 
 function refreshOperators() {
@@ -530,6 +543,13 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
 });
 
 document.getElementById('btn-export').addEventListener('click', exportToExcel);
+// Phase 8.1 — the "Export" link inside the data-limit notice routes to the
+// same handler so the user has a one-click path to grab the full filtered
+// dataset when they're staring at the warning.
+document.getElementById('dln-export')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  exportToExcel();
+});
 document.getElementById('btn-confirm-cancel').addEventListener('click', confirmCancel);
 
 document.addEventListener('click', (e) => {

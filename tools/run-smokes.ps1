@@ -59,6 +59,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-fastreport-bootstrap.ps1'
         'smoke-do-report.ps1'
         'smoke-pos-date-filter.ps1'
+        'smoke-phase-8.1-pagination.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
