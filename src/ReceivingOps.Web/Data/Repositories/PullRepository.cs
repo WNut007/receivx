@@ -243,9 +243,12 @@ public class PullRepository : IPullRepository
     // v2.x Phase 7.3 — list view feeder for the Reports / DO page.
     // Closed pulls with at least one net-positive receipt (a DO needs proof
     // of delivery; pulls closed with everything cancelled produce nothing).
-    public async Task<IReadOnlyList<PullSummary>> GetClosedWithReceiptsAsync(Guid? warehouseId, CancellationToken ct = default)
+    // Phase 8.1: paged + total. ClosedAt covered by IX_Pulls_ClosedAt
+    // (filtered Status='closed' INCLUDE WarehouseId+PullDate+PullNumber).
+    public async Task<(IReadOnlyList<PullSummary> Items, int Total)> GetClosedWithReceiptsAsync(
+        Guid? warehouseId, int skip, int take, CancellationToken ct = default)
     {
-        var sql = SummarySelect + @"
+        const string whereSql = @"
             WHERE p.Status = 'closed'
               AND (@WarehouseId IS NULL OR p.WarehouseId = @WarehouseId)
               AND EXISTS (
@@ -259,13 +262,24 @@ public class PullRepository : IPullRepository
                   FROM dbo.Receipts r
                   INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
                   WHERE pi.PullId = p.Id
-              ) > 0
-            ORDER BY p.ClosedAt DESC, p.PullDate DESC;";
+              ) > 0";
+        var pageSql = SummarySelect + whereSql + @"
+            ORDER BY p.ClosedAt DESC, p.PullDate DESC, p.Id DESC
+            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
+            SELECT COUNT(*) FROM dbo.Pulls p " + whereSql + ";";
 
+        var p = new
+        {
+            WarehouseId = warehouseId,
+            Skip = Math.Max(0, skip),
+            Take = Math.Clamp(take, 1, 500),
+        };
         using var conn = _factory.Create();
-        var rows = await conn.QueryAsync<PullSummary>(new CommandDefinition(
-            sql, new { WarehouseId = warehouseId }, cancellationToken: ct));
-        return rows.AsList();
+        using var multi = await conn.QueryMultipleAsync(
+            new CommandDefinition(pageSql, p, cancellationToken: ct));
+        var items = (await multi.ReadAsync<PullSummary>()).AsList();
+        var total = await multi.ReadSingleAsync<int>();
+        return (items, total);
     }
 
     // v2.x Phase 7.4 — DO report aggregation. Filter notes:

@@ -15,11 +15,14 @@ public interface IPullRepository
     Task<IReadOnlyList<PullItemDto>> GetItemsAsync(Guid pullId, CancellationToken ct = default);
     Task<PullItemDto?> GetItemByIdAsync(Guid pullId, Guid itemId, CancellationToken ct = default);
 
-    // v2.x Phase 7.3 — DO-eligible pulls. Closed status AND net-positive
-    // received qty (excludes fully-cancelled cycles). warehouseId is
-    // optional — null returns all warehouses the caller has access to;
-    // the controller does the role-based scoping.
-    Task<IReadOnlyList<PullSummary>> GetClosedWithReceiptsAsync(Guid? warehouseId, CancellationToken ct = default);
+    // v2.x Phase 7.3 / 8.1 — DO-eligible pulls. Closed status AND
+    // net-positive received qty (excludes fully-cancelled cycles).
+    // warehouseId is optional — null returns all warehouses the caller
+    // has access to; the controller does the role-based scoping.
+    // Paged: returns the page slice + the unfiltered-by-paging total
+    // so the Reports view can render "X of N" + (eventually) page nav.
+    Task<(IReadOnlyList<PullSummary> Items, int Total)> GetClosedWithReceiptsAsync(
+        Guid? warehouseId, int skip, int take, CancellationToken ct = default);
 
     // v2.x Phase 7.4 — flat aggregated rows for the DO report. One row per
     // (PO × PoLineNumber × ItemCode) with SUM(QtyReceived) over all receipts
