@@ -65,6 +65,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-8.4-exports.ps1'
         'smoke-email-test.ps1'
         'smoke-export-extensions.ps1'
+        'smoke-my-exports.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
