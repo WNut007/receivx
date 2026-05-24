@@ -19,6 +19,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@@0.18.5/dist/xlsx.full.min.js"></script>
 
     <link rel="stylesheet" href="~/css/transactions.css" asp-append-version="true">
+    <link rel="stylesheet" href="~/css/components/pagination.css" asp-append-version="true">
 </head>
 <body data-app-page="transactions">
 <!-- ===== BODY:main (from transactions.html) ===== -->
@@ -193,6 +194,8 @@
         </table>
       </div>
 
+      <div id="tx-pagination" class="pagination" hidden></div>
+
       <div class="footer">
         <span id="footer-summary">—</span>
         <span>Click any row's <b>cancel</b> action to create a reversal entry</span>
@@ -299,6 +302,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="~/js/components/pagination.js" asp-append-version="true"></script>
 <script src="~/js/transactions.js" asp-append-version="true"></script>
 
 </body>

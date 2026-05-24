@@ -5,11 +5,15 @@
  * from whatever rows came back (there's no /api/users yet — §15 #11).
  * =========================================================================== */
 
-const PAGE_SIZE = 500;            // generous enough for the dashboard view; will
-                                  // need real paging UI when datasets get bigger.
+// Phase 8.3 — flipped from 500 to 50 to match the rest of the app + the
+// PaginatedRequest default. Real paging UI (mountPagination) wired below
+// so the operator can navigate beyond page 1.
+const PAGE_SIZE = 50;
 
 let currentRows = [];             // last server response (camelCase journal rows)
 let currentTotal = 0;
+let currentPage = 1;              // Phase 8.3 — 1-based, reset to 1 on filter changes
+let paginationCtrl = null;        // mountPagination() handle, initialized in events block
 let hourFilter = null;            // set by ?hour= URL param; cleared via banner X
 let sortBy = null;                // §5b — null = server order; 'po' = client sort by PoNumber·LineNumber·ReceivedAt
 let sortDir = 'asc';              // 'asc' | 'desc'
@@ -114,8 +118,10 @@ function buildQueryString() {
 
   if (hourFilter !== null) params.set('hour', String(hourFilter));
 
+  // Phase 8.3 — paginate. Filter-change handlers below reset currentPage
+  // to 1 so a narrower result doesn't strand the user on an empty page.
   params.set('take', String(PAGE_SIZE));
-  params.set('skip', '0');
+  params.set('skip', String((Math.max(1, currentPage) - 1) * PAGE_SIZE));
   return params.toString();
 }
 
@@ -183,12 +189,21 @@ async function loadData() {
     currentTotal = page.total | 0;
     refreshOperators();
     render();
+    paginationCtrl?.update({ page: currentPage, total: currentTotal, pageSize: PAGE_SIZE });
   } catch (e) {
     console.error('loadData failed', e);
     showToast('Network error', 'Could not reach server', 'danger');
     currentRows = []; currentTotal = 0;
     render();
+    paginationCtrl?.update({ page: 1, total: 0, pageSize: PAGE_SIZE });
   }
+}
+
+// Filter changes invalidate page N — operator who narrows on page 5 of 20
+// doesn't expect to land on a 0-row page 5 of the narrower result set.
+function resetPageAndLoad() {
+  currentPage = 1;
+  loadData();
 }
 
 function actionPillHtml(r) {
@@ -469,16 +484,18 @@ function showToast(msg, sub, kind) {
 
 /* ---------- Events ---------- */
 // Debounce the search input so we don't spam the server on every keystroke.
+// Phase 8.3 — filter changes reset to page 1 via resetPageAndLoad so a
+// narrower result doesn't strand the operator on an empty deep page.
 let searchDebounce = null;
 function onFilterChange() {
   clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(loadData, 200);
+  searchDebounce = setTimeout(resetPageAndLoad, 200);
 }
 
 document.getElementById('f-search').addEventListener('input', onFilterChange);
 ['f-warehouse','f-action','f-operator'].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('change', loadData);
+  if (el) el.addEventListener('change', resetPageAndLoad);
 });
 
 // Date Range gets its own handler — toggles the custom-range row + reloads.
@@ -487,7 +504,7 @@ document.getElementById('f-date').addEventListener('change', (e) => {
   document.getElementById('custom-date-row').classList.toggle('visible', isCustom);
   // For preset ranges, fetch immediately. For custom, wait for Apply so the
   // operator picks both dates before firing.
-  if (!isCustom) loadData();
+  if (!isCustom) resetPageAndLoad();
 });
 
 document.getElementById('date-apply').addEventListener('click', () => {
@@ -495,13 +512,13 @@ document.getElementById('date-apply').addEventListener('click', () => {
   const to   = document.getElementById('date-to').value;
   if (!from || !to) { showToast('Pick both dates', 'From and To required', 'danger'); return; }
   if (from > to)    { showToast('Invalid range', '"From" must be earlier than "To"', 'danger'); return; }
-  loadData();
+  resetPageAndLoad();
 });
 
 document.getElementById('date-clear').addEventListener('click', () => {
   document.getElementById('date-from').value = '';
   document.getElementById('date-to').value = '';
-  loadData();
+  resetPageAndLoad();
 });
 
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
@@ -518,7 +535,22 @@ document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.querySelectorAll('.data-table th.sortable').forEach(th => th.classList.remove('sort-asc','sort-desc'));
   hourFilter = null;
   document.getElementById('hour-filter-banner').style.display = 'none';
-  loadData();
+  resetPageAndLoad();
+});
+
+// Phase 8.3 — mount pagination control. onChange triggers loadData with
+// the new currentPage; the loadData → render → paginationCtrl.update()
+// cycle closes the loop with the server-returned total.
+paginationCtrl = mountPagination(document.getElementById('tx-pagination'), {
+  page: currentPage,
+  pageSize: PAGE_SIZE,
+  total: 0,
+  label: 'transactions',
+  ariaLabel: 'Transactions pagination',
+  onChange: (newPage) => {
+    currentPage = newPage;
+    loadData();
+  },
 });
 
 // §5b — PO column sort. Client-side on the currently rendered page; no refetch.

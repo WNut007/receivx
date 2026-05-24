@@ -23,6 +23,9 @@
 let warehouses = [];        // /api/warehouses?status=active
 let currentRows = [];       // current /api/pos page (Items only — Total in currentTotal)
 let currentTotal = 0;       // unfiltered-by-paging row count from PaginatedResponse
+let currentPage = 1;        // Phase 8.3 — 1-based, reset to 1 on filter changes
+const PAGE_SIZE = 50;       // matches PaginatedRequest default; max 500 server-side
+let paginationCtrl = null;  // mountPagination() handle, initialized in startup
 let currentDetail = null;   // PoDetail being edited
 let currentRole = null;     // 'admin' | 'supervisor' | etc — from /api/auth/me
 let newPoPullAc = null;     // autocomplete controller for the New-PO linked-pull picker
@@ -120,6 +123,10 @@ function buildListQuery() {
   const range = computeDateRange(document.getElementById('f-date').value);
   if (range.from) params.set('orderDateFrom', range.from);
   if (range.to)   params.set('orderDateTo',   range.to);
+  // Phase 8.3 — paginate. Filter changes reset currentPage to 1 in their
+  // handlers (resetPageAndReload) so this just reads the current value.
+  params.set('page', currentPage);
+  params.set('pageSize', PAGE_SIZE);
   return params.toString();
 }
 
@@ -160,13 +167,27 @@ async function loadList() {
     const resp = await jsonFetch('/api/pos?' + buildListQuery());
     currentRows  = resp.items || [];
     currentTotal = resp.total | 0;
+    // Server echoes the effective page (clamped). If the operator deep-
+    // linked past the last page, the server clamps to last page; mirror
+    // that in our state so the pagination control highlights correctly.
+    currentPage  = resp.page | 0 || 1;
     renderList();
+    paginationCtrl?.update({ page: currentPage, total: currentTotal, pageSize: PAGE_SIZE });
   } catch (e) {
     console.error('loadList failed', e);
     showToast('Could not load purchase orders', e.message, 'danger');
     currentRows = []; currentTotal = 0;
     renderList();
+    paginationCtrl?.update({ page: 1, total: 0, pageSize: PAGE_SIZE });
   }
+}
+
+// Filter changes invalidate page N — operator who narrows to "WH-01 +
+// Status=Open" on page 5 of 20 doesn't expect to land on a 0-row page 5
+// of the narrower result set. Reset to page 1 before fetching.
+function resetPageAndReload() {
+  currentPage = 1;
+  loadList();
 }
 
 function renderList() {
@@ -633,13 +654,15 @@ async function confirmClose() {
 }
 
 /* ---------- Events ---------- */
+// Phase 8.3 — filter changes reset to page 1 (resetPageAndReload) so a
+// narrower result doesn't strand the operator on an empty deep page.
 let searchDebounce = null;
 document.getElementById('f-search').addEventListener('input', () => {
   clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(loadList, 200);
+  searchDebounce = setTimeout(resetPageAndReload, 200);
 });
 ['f-warehouse','f-status'].forEach(id => {
-  document.getElementById(id).addEventListener('change', loadList);
+  document.getElementById(id).addEventListener('change', resetPageAndReload);
 });
 document.getElementById('f-linkage').addEventListener('change', renderList);   // client-side cut
 
@@ -648,19 +671,19 @@ document.getElementById('f-linkage').addEventListener('change', renderList);   /
 document.getElementById('f-date').addEventListener('change', (e) => {
   const isCustom = e.target.value === 'custom';
   document.getElementById('custom-date-row').classList.toggle('visible', isCustom);
-  if (!isCustom) loadList();
+  if (!isCustom) resetPageAndReload();
 });
 document.getElementById('date-apply').addEventListener('click', () => {
   const from = document.getElementById('date-from').value;
   const to   = document.getElementById('date-to').value;
   if (!from || !to) { showToast('Pick both dates', 'From and To required', 'danger'); return; }
   if (from > to)    { showToast('Invalid range', '"From" must be earlier than "To"', 'danger'); return; }
-  loadList();
+  resetPageAndReload();
 });
 document.getElementById('date-clear').addEventListener('click', () => {
   document.getElementById('date-from').value = '';
   document.getElementById('date-to').value = '';
-  loadList();
+  resetPageAndReload();
 });
 
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
@@ -672,7 +695,7 @@ document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.getElementById('date-from').value = '';
   document.getElementById('date-to').value = '';
   document.getElementById('custom-date-row').classList.remove('visible');
-  loadList();
+  resetPageAndReload();
 });
 document.getElementById('btn-refresh').addEventListener('click', () => {
   if (currentDetail) openDetail(currentDetail.id);
@@ -719,6 +742,21 @@ document.addEventListener('click', (e) => {
     document.getElementById('custom-date-row')?.classList.toggle('visible', want === 'custom');
   }
 })();
+
+// Phase 8.3 — mount the shared pagination control. onChange triggers
+// loadList with the new currentPage; loadList → renderList →
+// paginationCtrl.update() closes the loop with the server-echoed page.
+paginationCtrl = mountPagination(document.getElementById('pos-pagination'), {
+  page: currentPage,
+  pageSize: PAGE_SIZE,
+  total: 0,
+  label: 'purchase orders',
+  ariaLabel: 'Purchase orders pagination',
+  onChange: (newPage) => {
+    currentPage = newPage;
+    loadList();
+  },
+});
 
 (async () => {
   await Promise.all([loadCurrentUser(), loadWarehouses()]);
