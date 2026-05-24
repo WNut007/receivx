@@ -49,13 +49,9 @@ public class ExportsApiController : ControllerBase
 
     [HttpPost("transactions")]
     [Authorize]
-    public IActionResult QueueTransactions([FromBody] TransactionsExportRequest req)
+    public async Task<IActionResult> QueueTransactions([FromBody] TransactionsExportRequest req, CancellationToken ct)
     {
-        // Email is the requester's account email (from the auth cookie's
-        // email claim). The non-admin warehouse scoping mirrors the
-        // /api/transactions endpoint — admins can pass any warehouse, non-
-        // admins are pinned to their session warehouse.
-        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
+        if (!TryGetRequester(out var userId, out var email, out var name, out var err)) return err!;
 
         var isAdmin = User.IsInRole("admin");
         if (!isAdmin)
@@ -65,7 +61,7 @@ public class ExportsApiController : ControllerBase
             req.WarehouseCode = null;
         }
 
-        var jobId = _exports.EnqueueTransactionsExport(req, email, name);
+        var jobId = await _exports.EnqueueTransactionsExportAsync(req, userId, email, name, ct);
         _log.LogInformation("Queued transactions export job {JobId} for {Email}", jobId, email);
         return Accepted(new EnqueueResponse
         {
@@ -77,19 +73,17 @@ public class ExportsApiController : ControllerBase
 
     [HttpPost("pos")]
     [Authorize(Roles = "admin,supervisor")]
-    public IActionResult QueuePos([FromBody] PosExportRequest req)
+    public async Task<IActionResult> QueuePos([FromBody] PosExportRequest req, CancellationToken ct)
     {
-        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
+        if (!TryGetRequester(out var userId, out var email, out var name, out var err)) return err!;
 
-        // Supervisors are pinned to their session warehouse — admins can
-        // pass any warehouse or none (cross-warehouse view).
         if (!User.IsInRole("admin"))
         {
             var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var wh) ? wh : (Guid?)null;
             req.WarehouseId = sessionWh;
         }
 
-        var jobId = _exports.EnqueuePosExport(req, email, name);
+        var jobId = await _exports.EnqueuePosExportAsync(req, userId, email, name, ct);
         _log.LogInformation("Queued POs export job {JobId} for {Email}", jobId, email);
         return Accepted(new EnqueueResponse
         {
@@ -101,14 +95,11 @@ public class ExportsApiController : ControllerBase
 
     [HttpPost("audit-log")]
     [Authorize(Roles = "admin")]
-    public IActionResult QueueAuditLog([FromBody] AuditLogExportRequest req)
+    public async Task<IActionResult> QueueAuditLog([FromBody] AuditLogExportRequest req, CancellationToken ct)
     {
-        // Audit data is sensitive (operator names, IPs, entity ids) —
-        // admin-only at this layer matches the spec. No warehouse
-        // scoping: AuditLog rows aren't warehouse-bound.
-        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
+        if (!TryGetRequester(out var userId, out var email, out var name, out var err)) return err!;
 
-        var jobId = _exports.EnqueueAuditLogExport(req, email, name);
+        var jobId = await _exports.EnqueueAuditLogExportAsync(req, userId, email, name, ct);
         _log.LogInformation("Queued audit-log export job {JobId} for {Email}", jobId, email);
         return Accepted(new EnqueueResponse
         {
@@ -156,11 +147,17 @@ public class ExportsApiController : ControllerBase
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", _opts.StorageRoot));
     }
 
-    /// <summary>Pulls the requester's email + display name from the auth cookie. Returns 400 when email is missing.</summary>
-    private bool TryGetRequester(out string email, out string name, out IActionResult? error)
+    /// <summary>Pulls the requester's userId + email + display name from the auth cookie. Returns 400 when email or userId missing.</summary>
+    private bool TryGetRequester(out Guid userId, out string email, out string name, out IActionResult? error)
     {
-        email = User.FindFirstValue("email") ?? "";
-        name  = User.FindFirstValue("displayName") ?? User.Identity?.Name ?? "Operator";
+        userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : Guid.Empty;
+        email  = User.FindFirstValue("email") ?? "";
+        name   = User.FindFirstValue("displayName") ?? User.Identity?.Name ?? "Operator";
+        if (userId == Guid.Empty)
+        {
+            error = Problem(title: "Could not identify the requesting user.", statusCode: 401);
+            return false;
+        }
         if (string.IsNullOrWhiteSpace(email))
         {
             error = Problem(title: "Your account has no email on file — ask an admin to set one.", statusCode: 400);

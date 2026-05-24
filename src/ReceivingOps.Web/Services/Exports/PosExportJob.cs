@@ -21,6 +21,7 @@ public class PosExportJob
     private readonly IPurchaseOrderRepository _pos;
     private readonly IEmailService _email;
     private readonly ExportTokenService _tokens;
+    private readonly IExportJobLogRepository _logRepo;
     private readonly ExportOptions _opts;
     private readonly ILogger<PosExportJob> _log;
 
@@ -28,12 +29,14 @@ public class PosExportJob
         IPurchaseOrderRepository pos,
         IEmailService email,
         ExportTokenService tokens,
+        IExportJobLogRepository logRepo,
         IOptions<ExportOptions> opts,
         ILogger<PosExportJob> log)
     {
         _pos = pos;
         _email = email;
         _tokens = tokens;
+        _logRepo = logRepo;
         _opts = opts.Value;
         _log = log;
     }
@@ -43,27 +46,36 @@ public class PosExportJob
     public async Task RunAsync(Guid jobId, PosExportRequest request, string requesterEmail, string requesterName)
     {
         _log.LogInformation("Pos export job {JobId} starting for {Email}", jobId, requesterEmail);
+        await _logRepo.UpdateRunningAsync(jobId);
+        try
+        {
+            var (items, total) = await _pos.QueryAsync(
+                request.WarehouseId, request.Status, null, request.Q,
+                request.OrderDateFrom, request.OrderDateTo,
+                skip: 0, take: Math.Max(1, request.MaxRows));
+            _log.LogInformation("Pos export job {JobId} fetched {Count} of {Total} rows", jobId, items.Count, total);
 
-        var (items, total) = await _pos.QueryAsync(
-            request.WarehouseId, request.Status, null, request.Q,
-            request.OrderDateFrom, request.OrderDateTo,
-            skip: 0, take: Math.Max(1, request.MaxRows));
-        _log.LogInformation("Pos export job {JobId} fetched {Count} of {Total} rows", jobId, items.Count, total);
+            var (filePath, fileName) = ResolveFilePath(jobId);
+            WriteWorkbook(filePath, items, total, request);
 
-        var (filePath, fileName) = ResolveFilePath(jobId);
-        WriteWorkbook(filePath, items, total, request);
+            var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
+            var token = _tokens.Issue(jobId, expiresAt);
+            var baseUrl = _opts.BaseUrl.TrimEnd('/');
+            var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
 
-        var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
-        var token = _tokens.Issue(jobId, expiresAt);
-        var baseUrl = _opts.BaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
+            var subject = $"Your purchase orders export is ready ({total:N0} rows)";
+            var html = BuildEmailBody(requesterName, total, items.Count, expiresAt, url);
+            await _email.SendAsync(requesterEmail, subject, html);
 
-        var subject = $"Your purchase orders export is ready ({total:N0} rows)";
-        var html = BuildEmailBody(requesterName, total, items.Count, expiresAt, url);
-        await _email.SendAsync(requesterEmail, subject, html);
-
-        _log.LogInformation("Pos export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
-            jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+            await _logRepo.UpdateSucceededAsync(jobId, fileName, items.Count);
+            _log.LogInformation("Pos export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
+                jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+        }
+        catch (Exception ex)
+        {
+            await _logRepo.UpdateFailedAsync(jobId, ex.ToString());
+            throw;
+        }
     }
 
     /// <summary>Resolves <c>{StorageRoot}/pos-{jobId}.xlsx</c>; same dir scheme as TransactionsExportJob.</summary>

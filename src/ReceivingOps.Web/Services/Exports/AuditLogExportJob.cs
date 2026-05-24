@@ -19,6 +19,7 @@ public class AuditLogExportJob
     private readonly IAuditRepository _audit;
     private readonly IEmailService _email;
     private readonly ExportTokenService _tokens;
+    private readonly IExportJobLogRepository _logRepo;
     private readonly ExportOptions _opts;
     private readonly ILogger<AuditLogExportJob> _log;
 
@@ -26,12 +27,14 @@ public class AuditLogExportJob
         IAuditRepository audit,
         IEmailService email,
         ExportTokenService tokens,
+        IExportJobLogRepository logRepo,
         IOptions<ExportOptions> opts,
         ILogger<AuditLogExportJob> log)
     {
         _audit = audit;
         _email = email;
         _tokens = tokens;
+        _logRepo = logRepo;
         _opts = opts.Value;
         _log = log;
     }
@@ -41,24 +44,33 @@ public class AuditLogExportJob
     public async Task RunAsync(Guid jobId, AuditLogExportRequest request, string requesterEmail, string requesterName)
     {
         _log.LogInformation("Audit export job {JobId} starting for {Email}", jobId, requesterEmail);
+        await _logRepo.UpdateRunningAsync(jobId);
+        try
+        {
+            var rows = await _audit.QueryForExportAsync(request.ToQuery());
+            _log.LogInformation("Audit export job {JobId} fetched {Count} rows", jobId, rows.Count);
 
-        var rows = await _audit.QueryForExportAsync(request.ToQuery());
-        _log.LogInformation("Audit export job {JobId} fetched {Count} rows", jobId, rows.Count);
+            var (filePath, fileName) = ResolveFilePath(jobId);
+            WriteWorkbook(filePath, rows, request);
 
-        var (filePath, fileName) = ResolveFilePath(jobId);
-        WriteWorkbook(filePath, rows, request);
+            var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
+            var token = _tokens.Issue(jobId, expiresAt);
+            var baseUrl = _opts.BaseUrl.TrimEnd('/');
+            var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
 
-        var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
-        var token = _tokens.Issue(jobId, expiresAt);
-        var baseUrl = _opts.BaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
+            var subject = $"Your audit log export is ready ({rows.Count:N0} rows)";
+            var html = BuildEmailBody(requesterName, rows.Count, expiresAt, url);
+            await _email.SendAsync(requesterEmail, subject, html);
 
-        var subject = $"Your audit log export is ready ({rows.Count:N0} rows)";
-        var html = BuildEmailBody(requesterName, rows.Count, expiresAt, url);
-        await _email.SendAsync(requesterEmail, subject, html);
-
-        _log.LogInformation("Audit export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
-            jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+            await _logRepo.UpdateSucceededAsync(jobId, fileName, rows.Count);
+            _log.LogInformation("Audit export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
+                jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+        }
+        catch (Exception ex)
+        {
+            await _logRepo.UpdateFailedAsync(jobId, ex.ToString());
+            throw;
+        }
     }
 
     /// <summary>Resolves <c>{StorageRoot}/audit-log-{jobId}.xlsx</c>.</summary>

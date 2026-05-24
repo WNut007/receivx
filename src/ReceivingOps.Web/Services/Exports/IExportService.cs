@@ -8,11 +8,11 @@ namespace ReceivingOps.Web.Services.Exports;
 public interface IExportService
 {
     /// <summary>Queues a transactions export. Returns the assigned jobId.</summary>
-    Guid EnqueueTransactionsExport(TransactionsExportRequest request, string requesterEmail, string requesterName);
+    Task<Guid> EnqueueTransactionsExportAsync(TransactionsExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
 
     /// <summary>Queues a /Pos (Purchase Orders) export. Returns the assigned jobId.</summary>
-    Guid EnqueuePosExport(PosExportRequest request, string requesterEmail, string requesterName);
+    Task<Guid> EnqueuePosExportAsync(PosExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
 
     /// <summary>Queues an Audit Log export (admin-only at controller layer). Returns the assigned jobId.</summary>
-    Guid EnqueueAuditLogExport(AuditLogExportRequest request, string requesterEmail, string requesterName);
+    Task<Guid> EnqueueAuditLogExportAsync(AuditLogExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
 }

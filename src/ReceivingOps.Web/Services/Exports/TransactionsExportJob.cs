@@ -2,6 +2,7 @@ using ClosedXML.Excel;
 using Hangfire;
 using Microsoft.Extensions.Options;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services.Email;
 
 namespace ReceivingOps.Web.Services.Exports;
@@ -24,6 +25,7 @@ public class TransactionsExportJob
     private readonly IReceiptRepository _receipts;
     private readonly IEmailService _email;
     private readonly ExportTokenService _tokens;
+    private readonly IExportJobLogRepository _logRepo;
     private readonly ExportOptions _opts;
     private readonly ILogger<TransactionsExportJob> _log;
 
@@ -31,12 +33,14 @@ public class TransactionsExportJob
         IReceiptRepository receipts,
         IEmailService email,
         ExportTokenService tokens,
+        IExportJobLogRepository logRepo,
         IOptions<ExportOptions> opts,
         ILogger<TransactionsExportJob> log)
     {
         _receipts = receipts;
         _email = email;
         _tokens = tokens;
+        _logRepo = logRepo;
         _opts = opts.Value;
         _log = log;
     }
@@ -46,28 +50,36 @@ public class TransactionsExportJob
     public async Task RunAsync(Guid jobId, TransactionsExportRequest request, string requesterEmail, string requesterName)
     {
         _log.LogInformation("Export job {JobId} starting for {Email}", jobId, requesterEmail);
+        await _logRepo.UpdateRunningAsync(jobId);
+        try
+        {
+            var paged = await _receipts.QueryAsync(request.ToQuery());
+            _log.LogInformation("Export job {JobId} fetched {Count} of {Total} rows", jobId, paged.Rows.Count, paged.Total);
 
-        // ---- 1. Query the full filtered slice ----
-        var paged = await _receipts.QueryAsync(request.ToQuery());
-        _log.LogInformation("Export job {JobId} fetched {Count} of {Total} rows", jobId, paged.Rows.Count, paged.Total);
+            var (filePath, fileName) = ResolveFilePath(jobId);
+            WriteWorkbook(filePath, paged.Rows, paged.Total, request);
 
-        // ---- 2-3. Build workbook + write to disk ----
-        var (filePath, fileName) = ResolveFilePath(jobId);
-        WriteWorkbook(filePath, paged.Rows, paged.Total, request);
+            var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
+            var token = _tokens.Issue(jobId, expiresAt);
+            var baseUrl = _opts.BaseUrl.TrimEnd('/');
+            var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
 
-        // ---- 4. Sign download URL ----
-        var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
-        var token = _tokens.Issue(jobId, expiresAt);
-        var baseUrl = _opts.BaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/api/exports/{jobId:D}/download?token={token}";
+            var subject = $"Your transactions export is ready ({paged.Total:N0} rows)";
+            var html = BuildEmailBody(requesterName, paged.Total, paged.Rows.Count, expiresAt, url);
+            await _email.SendAsync(requesterEmail, subject, html);
 
-        // ---- 5. Notify requester ----
-        var subject = $"Your transactions export is ready ({paged.Total:N0} rows)";
-        var html = BuildEmailBody(requesterName, paged.Total, paged.Rows.Count, expiresAt, url);
-        await _email.SendAsync(requesterEmail, subject, html);
-
-        _log.LogInformation("Export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
-            jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+            await _logRepo.UpdateSucceededAsync(jobId, fileName, paged.Rows.Count);
+            _log.LogInformation("Export job {JobId} complete: {File} ({Bytes} bytes), email queued to {Email}",
+                jobId, filePath, new FileInfo(filePath).Length, requesterEmail);
+        }
+        catch (Exception ex)
+        {
+            // Mark the log row failed BEFORE rethrowing — Hangfire's
+            // [AutomaticRetry] will rerun us; UpdateRunningAsync at the
+            // top of the next attempt overwrites Status back to 'running'.
+            await _logRepo.UpdateFailedAsync(jobId, ex.ToString());
+            throw;
+        }
     }
 
     /// <summary>Resolves <c>{StorageRoot}/{jobId}.xlsx</c>, creating the dir if needed.</summary>
