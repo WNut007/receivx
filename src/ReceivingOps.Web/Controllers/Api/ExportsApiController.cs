@@ -2,6 +2,9 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services.Exports;
 
 namespace ReceivingOps.Web.Controllers.Api;
@@ -25,17 +28,20 @@ public class ExportsApiController : ControllerBase
 {
     private readonly IExportService _exports;
     private readonly ExportTokenService _tokens;
+    private readonly IExportJobLogRepository _jobsLog;
     private readonly ExportOptions _opts;
     private readonly ILogger<ExportsApiController> _log;
 
     public ExportsApiController(
         IExportService exports,
         ExportTokenService tokens,
+        IExportJobLogRepository jobsLog,
         IOptions<ExportOptions> opts,
         ILogger<ExportsApiController> log)
     {
         _exports = exports;
         _tokens = tokens;
+        _jobsLog = jobsLog;
         _opts = opts.Value;
         _log = log;
     }
@@ -137,6 +143,96 @@ public class ExportsApiController : ControllerBase
         Response.Headers["X-Token-Expires-At"] = expiresAt.ToString("O");
         var bytes = System.IO.File.ReadAllBytes(path);
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    // GET /api/exports/jobs — list the requester's recent export jobs.
+    // ?all=true (admin only) widens to everyone's exports. Paginated.
+    //
+    // EffectiveStatus is derived: a Status='succeeded' job whose file has
+    // been swept off disk past Exports:FileLifetime is "expired" (the row
+    // stays so the operator can see "yes I asked for that 3 days ago").
+    // Download URLs are only emitted for actually-downloadable rows.
+    [HttpGet("jobs")]
+    [Authorize]
+    public async Task<ActionResult<PaginatedResponse<ExportJobView>>> ListJobs(
+        [FromQuery] bool all = false,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
+        if (userId == Guid.Empty)
+            return Problem(title: "Could not identify the requesting user.", statusCode: 401);
+
+        var isAdmin = User.IsInRole("admin");
+        Guid? scope = (all && isAdmin) ? null : userId;
+
+        var req = new PaginatedRequest { Page = page, PageSize = pageSize };
+        var (rows, total) = await _jobsLog.QueryPagedAsync(scope, req.Skip, req.Take, ct);
+
+        // File existence check per row — used to flip succeeded→expired.
+        // One Directory.GetFiles call per request, then HashSet lookups
+        // (fast enough for the 50-row page; if this becomes a hot path
+        // we can move to a dedicated FileExists per id).
+        var dir = ResolveExportDir();
+        var presentIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (Directory.Exists(dir))
+        {
+            foreach (var path in Directory.EnumerateFiles(dir, "*.xlsx"))
+            {
+                // Extract any 32-hex sequence in the filename (jobId in N form).
+                var name = Path.GetFileNameWithoutExtension(path);
+                var match = System.Text.RegularExpressions.Regex.Match(name, "[0-9a-fA-F]{32}");
+                if (match.Success) presentIds.Add(match.Value);
+            }
+        }
+
+        var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
+        var items = rows.Select(r => new ExportJobView
+        {
+            Id = r.Id,
+            JobType = r.JobType,
+            Status = r.Status,
+            EffectiveStatus = DeriveEffectiveStatus(r, presentIds),
+            EnqueuedAt = r.EnqueuedAt,
+            StartedAt = r.StartedAt,
+            CompletedAt = r.CompletedAt,
+            FileName = r.FileName,
+            RowsExported = r.RowsExported,
+            ErrorMessage = r.ErrorMessage,
+            DownloadUrl = BuildDownloadUrl(r, presentIds, expiresAt),
+            // Only populate requester fields on the admin "see all" view —
+            // saves a few bytes per row and signals to the UI which mode
+            // it's looking at.
+            RequesterEmail = all ? r.RequesterEmail : null,
+            RequesterName  = all ? r.RequesterName  : null,
+        }).ToList();
+
+        return Ok(new PaginatedResponse<ExportJobView>
+        {
+            Items = items,
+            Page = Math.Max(1, page),
+            PageSize = req.Take,
+            Total = total,
+        });
+    }
+
+    private static string DeriveEffectiveStatus(ExportJobLogRow row, HashSet<string> presentIds)
+    {
+        if (row.Status != "succeeded") return row.Status;
+        return presentIds.Contains(row.Id.ToString("N")) ? "succeeded" : "expired";
+    }
+
+    private string? BuildDownloadUrl(ExportJobLogRow row, HashSet<string> presentIds, DateTime expiresAt)
+    {
+        if (row.Status != "succeeded") return null;
+        if (!presentIds.Contains(row.Id.ToString("N"))) return null;
+        // Same HMAC pattern the email path uses. The browser session is
+        // already authenticated so the URL is consumed in the same tab;
+        // still HMAC-gated to keep the surface uniform with the email-
+        // delivered links.
+        var token = _tokens.Issue(row.Id, expiresAt);
+        return $"/api/exports/{row.Id:D}/download?token={token}";
     }
 
     /// <summary>Same path-resolution logic the job classes use — kept local so the controller doesn't take a job dependency just for one helper.</summary>

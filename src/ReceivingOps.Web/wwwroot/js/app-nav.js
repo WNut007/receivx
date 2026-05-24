@@ -101,6 +101,9 @@
     // (admin + supervisor) since the same operators who close pulls also
     // print the paperwork. Operators (warehouse staff) don't see the entry.
     { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '/Reports', roles: ['admin', 'supervisor'] },
+    // Phase 8.5 — My Exports. Every authenticated user sees their own
+    // exports; admin's see-all toggle lives in the page itself.
+    { id: 'exports',      label: 'My Exports',      icon: 'bi-cloud-download',       href: '/Exports' },
     { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',        href: '/Masters' },
     { id: 'config',       label: 'Settings',        icon: 'bi-sliders',              href: '/Config' },
   ];
