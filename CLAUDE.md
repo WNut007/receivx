@@ -2,9 +2,28 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.7 shipped on `main` (2026-05-24, tag `v2.1.7` at
-`2414edc`, pushed to origin). v2.1.7 is Phase 8.2 + 8.3 — shared
-pagination component + wiring. `wwwroot/js/components/pagination.js`
+**Status:** v2.1.8 shipped on `main` (2026-05-24, tag `v2.1.8`, pushed
+to origin). v2.1.8 is Phase 8.4 — decoupled export pipeline.
+**Stack added:** Hangfire.AspNetCore + Hangfire.SqlServer 1.8.x
+(background jobs persisted in the existing DB under `[HangFire]`
+schema, in-process worker with 2 threads on the "exports" queue);
+MailKit 4.x (Gmail SMTP via STARTTLS:587); ClosedXML 0.105 (server-
+side XLSX writer). **Flow:** Transactions Export button POSTs to
+`/api/exports/transactions` with the current filter; controller forces
+non-admin's `WarehouseId` to session-WH; `ExportService` enqueues a
+Hangfire job with the pre-generated jobId; `TransactionsExportJob`
+fetches up to MaxRows (100K), writes XLSX to
+`src/ReceivingOps.Web/exports/{jobId}.xlsx`, issues an HMAC-SHA256-
+signed token (24h expiry), emails the requester via MailKit. Download
+endpoint at `/api/exports/{id}/download?token=...` is NOT
+`[Authorize]` — the HMAC IS the authn (recipient may open from a
+different browser session). Hangfire dashboard at `/hangfire`
+admin-only. SMTP unconfigured in dev falls back to log line
+(`MailKitEmailService.SendAsync` no-ops gracefully + logs the email).
+Production must set `Exports:SigningKey` + `Smtp:*` via user-secrets.
+Battery: 35/35 PASS.
+
+v2.1.7 lineage: Phase 8.2 + 8.3 — shared pagination component + wiring. `wwwroot/js/components/pagination.js`
 exposes `mountPagination({page, pageSize, total, onChange})` with
 page-aware ellipsis windowing (always shows first + last + cur±1);
 `Views/Shared/_Pagination.cshtml` is the Razor partial with the same
