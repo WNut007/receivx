@@ -2,8 +2,28 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.5 shipped on `main` (2026-05-24, tag `v2.1.5` at
-`6008fa6`, pushed to origin). v2.1.5 is Phase 7.4 — Reports DO refactor:
+**Status:** v2.1.6 shipped on `main` (2026-05-24, tag `v2.1.6` at
+`d1c16f8`, pushed to origin). v2.1.6 is Phase 8.1 — pagination
+foundation. `db/019_pagination_indexes.sql` adds `IX_Pulls_ClosedAt`
+(filtered `Status='closed'`, INCLUDE WH/PullDate/PullNumber) +
+`IX_PO_OrderDate` (status-agnostic). New `Models/Pagination.cs` carries
+shared `PaginatedRequest`/`PaginatedResponse<T>` (1-based page, hard cap
+500). `/api/pos` returns `PaginatedResponse<PoListRow>` via Dapper
+`QueryMultiple` (page slice + count in one round trip); `pos.js` reads
+`.items` + surfaces total in the list-count badge. `/Reports`
+server-renders `PaginatedResponse<PullSummary>` driven by
+`?page=N&pageSize=M`; result count shows "X of Total". Transactions
+endpoint was already paginated since Phase 5/6; v2.1.6 adds the
+`data-limit-notice` banner that surfaces "Showing X of Total. Use
+Export…" only when the page slice doesn't cover the server total.
+Smoke `smoke-phase-8.1-pagination.ps1` covers all 4 surfaces. Page nav
+UI (prev/next) deferred to Phase 8.3 — for now `?page=N` is the URL
+knob. Phase 8.0 plan also called for `IX_Receipts_WhWhen` but Receipts
+has no WarehouseId column (lives on Pulls via the join chain);
+deferred until Phase 8.5 load test reveals if the join-chain filter
+actually needs help. Battery: 32/32 PASS.
+
+v2.1.5 lineage: Phase 7.4 — Reports DO refactor:
 two-pane layout (closed-pull list on left, inline HTML preview on right)
 + aggregated lines (one row per Item × PO·Line, hour column gone) +
 canonicalized URLs. `/Reports` is now a single page rendering the
@@ -35,6 +55,7 @@ iframe-to-PDF). v2.1.3 (`e0e3820`) added FastReport.OpenSource
 bootstrap (Phase 7.2). v2.1.2 (`59bcf37`) added
 `Pulls.ReferenceNumber` (Phase 7.1).
 
+Lineage: v2.1.5 (`6008fa6`) shipped Phase 7.4 Reports DO refactor.
 v2.1.1 (`5d88b86`) added the drawer's close-auth section (signer +
 role + signature SVG + PNG download). v2.1 (`3b6ed06`) bundled PullItem
 admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
