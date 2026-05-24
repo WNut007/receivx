@@ -119,4 +119,39 @@ public class ExportJobLogRepository : IExportJobLogRepository
         return await conn.QuerySingleOrDefaultAsync<ExportJobLogRow>(
             new CommandDefinition(sql, new { Id = id }, cancellationToken: ct));
     }
+
+    public async Task<int> CountUnreadSucceededAsync(Guid userId, ISet<string> presentIdHexes, CancellationToken ct = default)
+    {
+        // Two-stage filter: SQL narrows to (this user × succeeded × unread),
+        // then C# intersects with the on-disk file set so expired files
+        // don't inflate the badge. For the operational page size (<= a
+        // few hundred unread tops) this is cheap; if it ever bloats, we
+        // can flip to a TVP-based JOIN.
+        const string sql = @"
+            SELECT Id
+            FROM   dbo.ExportJobsLog
+            WHERE  RequesterUserId = @UserId
+              AND  Status = 'succeeded'
+              AND  ReadAt IS NULL;";
+        using var conn = _factory.Create();
+        var ids = (await conn.QueryAsync<Guid>(new CommandDefinition(sql, new { UserId = userId }, cancellationToken: ct))).ToList();
+        var count = 0;
+        foreach (var id in ids)
+        {
+            if (presentIdHexes.Contains(id.ToString("N"))) count++;
+        }
+        return count;
+    }
+
+    public async Task<int> MarkAllUnreadAsReadAsync(Guid userId, CancellationToken ct = default)
+    {
+        const string sql = @"
+            UPDATE dbo.ExportJobsLog
+            SET    ReadAt = SYSUTCDATETIME()
+            WHERE  RequesterUserId = @UserId
+              AND  Status = 'succeeded'
+              AND  ReadAt IS NULL;";
+        using var conn = _factory.Create();
+        return await conn.ExecuteAsync(new CommandDefinition(sql, new { UserId = userId }, cancellationToken: ct));
+    }
 }

@@ -236,6 +236,50 @@ public class ExportsApiController : ControllerBase
         return $"/api/exports/{row.Id:D}/download?token={token}";
     }
 
+    // GET /api/exports/unread-count — drives the nav-bar badge. Counts
+    // succeeded jobs whose file is still on disk (operator can act on
+    // them). Per-user only — non-admin "see all" mode doesn't widen the
+    // badge because the badge represents "things I haven't downloaded yet."
+    [HttpGet("unread-count")]
+    [Authorize]
+    public async Task<IActionResult> UnreadCount(CancellationToken ct)
+    {
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
+        if (userId == Guid.Empty) return Ok(new { count = 0 });
+
+        var present = SnapshotPresentIds();
+        var count = await _jobsLog.CountUnreadSucceededAsync(userId, present, ct);
+        return Ok(new { count });
+    }
+
+    // POST /api/exports/mark-all-read — fired by the My Exports page on
+    // visit (auto-dismiss). Returns the affected row count for the smoke.
+    [HttpPost("mark-all-read")]
+    [Authorize]
+    public async Task<IActionResult> MarkAllRead(CancellationToken ct)
+    {
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
+        if (userId == Guid.Empty) return Ok(new { marked = 0 });
+
+        var marked = await _jobsLog.MarkAllUnreadAsReadAsync(userId, ct);
+        return Ok(new { marked });
+    }
+
+    /// <summary>One disk scan → HashSet of jobId hex strings for the present XLSX files. Same pattern as ListJobs.</summary>
+    private HashSet<string> SnapshotPresentIds()
+    {
+        var dir = ResolveExportDir();
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!Directory.Exists(dir)) return set;
+        foreach (var path in Directory.EnumerateFiles(dir, "*.xlsx"))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            var match = System.Text.RegularExpressions.Regex.Match(name, "[0-9a-fA-F]{32}");
+            if (match.Success) set.Add(match.Value);
+        }
+        return set;
+    }
+
     /// <summary>Same path-resolution logic the job classes use — kept local so the controller doesn't take a job dependency just for one helper.</summary>
     private string ResolveExportDir()
     {

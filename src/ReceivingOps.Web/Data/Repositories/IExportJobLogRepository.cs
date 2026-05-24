@@ -35,4 +35,20 @@ public interface IExportJobLogRepository
 
     /// <summary>Single-row lookup — used by the download endpoint if it ever wants to verify the log row exists.</summary>
     Task<ExportJobLogRow?> GetByIdAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Phase 8.5+ badge — count this user's succeeded export jobs that
+    /// haven't been read yet AND whose file is still on disk. Files that
+    /// have expired don't count (operator can't do anything with them).
+    /// File existence is checked at the caller (controller does the disk
+    /// scan once and passes the present-id set in).
+    /// </summary>
+    Task<int> CountUnreadSucceededAsync(Guid userId, ISet<string> presentIdHexes, CancellationToken ct = default);
+
+    /// <summary>
+    /// Marks all of the user's currently-unread succeeded jobs as read.
+    /// Returns the affected row count. Idempotent (re-runs no-op once
+    /// nothing's unread).
+    /// </summary>
+    Task<int> MarkAllUnreadAsReadAsync(Guid userId, CancellationToken ct = default);
 }
