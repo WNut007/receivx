@@ -13,6 +13,7 @@ using ReceivingOps.Web.Json;
 using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
+using ReceivingOps.Web.Services.Email;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -110,6 +111,13 @@ builder.Services.AddScoped<IPullItemAdminService, PullItemAdminService>();
 builder.Services.AddScoped<IDeliveryOrderService, DeliveryOrderService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
+
+// ---- v2.x Phase 8.4 — email transport (Gmail SMTP via MailKit) ----
+// SmtpOptions binds from the "Smtp" section — typically user-secrets in
+// dev, env vars in prod. Empty Host disables real sending (the service
+// logs the would-be email instead) so dev without SMTP doesn't crash.
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.AddSingleton<IEmailService, MailKitEmailService>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
