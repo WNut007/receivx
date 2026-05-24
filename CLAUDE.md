@@ -2,9 +2,30 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.10 shipped on `main` (2026-05-25, tag `v2.1.10`,
-pushed to origin). v2.1.10 extends the Phase 8.4 export pipeline to
-**/Pos + /Masters Audit Log**. Three jobs now produce XLSX via the
+**Status:** v2.1.11 shipped on `main` (2026-05-25, tag `v2.1.11`,
+pushed to origin). v2.1.11 adds the **My Exports page** — visibility
+UI for export job status. New `dbo.ExportJobsLog` table (migration
+`db/020`) persists every Hangfire export job's lifecycle (queued →
+running → succeeded/failed). `ExportService.Enqueue*Async` writes the
+queued row BEFORE handing to Hangfire; each `*ExportJob.RunAsync`
+updates running on entry + succeeded/failed on exit (failure path
+rethrows so Hangfire's `[AutomaticRetry]` still triggers). New
+`/api/exports/jobs` endpoint returns `PaginatedResponse<ExportJobView>`
+— per-user by default, admin can pass `?all=true` for the see-all
+view which fills in RequesterEmail/Name. `EffectiveStatus` is derived
+per-row: a Status='succeeded' row whose file has been swept off disk
+past `Exports:FileLifetime` flips to 'expired'. `/Exports` page reuses
+the shared `mountPagination()` component; auto-refreshes every 5 s
+while any row is in flight (queued or running), goes quiet otherwise.
+Status badges (queued/running/succeeded/failed/expired) themed via
+existing CSS vars. Nav: 'My Exports' entry between Reports and Master
+Data (every authenticated user sees their own; admin's see-all toggle
+on the page itself). Smoke `smoke-my-exports` covers 7 paths incl.
+non-admin `?all=true` privacy boundary (regression guard: admin's job
+must not leak into supervisor's response). Battery: 38/38 PASS.
+
+v2.1.10 lineage: Phase 8.4 export pipeline extended to /Pos +
+/Masters Audit Log — Three jobs now produce XLSX via the
 same path (TransactionsExportJob + PosExportJob + AuditLogExportJob,
 all on Hangfire "exports" queue, all using ClosedXML +
 MailKitEmailService). New endpoints: POST `/api/exports/pos` (admin OR
@@ -296,3 +317,91 @@ hardcoded SQL login.
 
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
+
+# Session handoff — 2026-05-25
+
+Latest tag: v2.1.10 (Hangfire export wired to Transactions + Pos + Audit Log)
+Battery: 37/37 PASS · main = origin/main · all clean
+
+## Phase 8 — Remaining (to ship v2.2 milestone)
+
+- **My Exports page** — visibility UI for export job status (~5 hr)
+  - User clicks Export → currently silent until email arrives
+  - Need: /Exports page with status badges + auto-refresh polling
+  - Spec: per-user view + admin sees all + privacy enforced
+  - Data: new table ExportJobsLog (migration db/020)
+  
+- **Phase 8.5 load test** — validate at scale (~2 hr)
+  - Seed 100K receipts
+  - Measure pagination P95 < 500ms
+  - Measure export job timing (100K rows)
+  - Verify indexes (IX_Pulls_ClosedAt, IX_Receipts_WhWhen, IX_PO_OrderDate) hit
+  
+- **Phase 8.6 docs + deployment guide** — production readiness (~1 hr)
+  - docs/deployment.md (user-secrets setup, migrations, Hangfire startup)
+  - docs/api-pagination.md (contract reference)
+  - docs/exports.md (feature documentation)
+  - CHANGELOG.md v2.2 entry
+  
+- **Tag v2.2** — Phase 8 milestone close
+
+## Phase 9 — Designed, ready to implement (~5 hr)
+
+Spec confirmed:
+- Add 20 ERP-sourced fields to PurchaseOrderLines (migration db/021)
+- Field list (renamed/sized):
+  InvoiceNo, Location, PalletId, VmiPalletId, ProductionLine, Building,
+  KanbanNo, AsnNo, OrderRound (renamed from Round), SubInventory, ToLocation,
+  PCCNo, ManufacturingControlNo, BatchNo, ExportDeclarationNo,
+  CustomerReferenceNo, ManufacturingReferenceNo, VendorItem, DeliveryDate (DATE),
+  Note (NVARCHAR(500))
+- SKIP: OrderDate, CreatedAt, ReceivedDate (duplicates)
+- NO indexes (defer to Phase 10)
+- NO edit form (data from ERP)
+- NO search (defer to Phase 10)
+
+UI display:
+- PO Detail line table adds 5 visible columns:
+  Invoice, SubInventory, ToLocation, PalletId, VmiPalletId
+- Other 15 fields: API + Excel export only
+
+Excel export: all 20 fields included
+
+Tag: v2.3
+
+## Phase 10 — Final phase, spec doc only
+
+ERP integration (POST /api/erp/pos):
+- Vendor system pushes PO data → Receivx ingests
+- Auth: API key (or OAuth client credentials)
+- Upsert by PoNumber (idempotent)
+- Preserve Receivx-managed fields (PullId, lock states, ReceivedQty)
+- Add search indexes after observing usage patterns
+
+Tag: v3.0 (major release — external integration)
+
+## Production blockers (before deploy)
+
+Run before any non-local deployment:
+
+```powershell
+dotnet user-secrets set Exports:BaseUrl https://your.public.host --project src/ReceivingOps.Web
+dotnet user-secrets set Exports:SigningKey <random-32-char-string> --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:Host smtp.gmail.com --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:Port 587 --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:UseStartTls true --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:Username <gmail> --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:Password <16-char-gmail-app-password> --project src/ReceivingOps.Web
+dotnet user-secrets set Smtp:FromAddress <gmail> --project src/ReceivingOps.Web
+```
+
+Currently configured: dev placeholder values
+
+## v2.x backlog (defer)
+
+- closeNote vertical slice (~150-200 LOC) — drawer hook ready in renderCloseAuth
+- Profile editor + Help page (restore dropdown when destinations exist)
+- Item-search typeahead in Add-Line modal (when catalog grows)
+- Operator-dropdown source for /Transactions (janitorial)
+- Audit retention policy (design decision needed)
+- CHANGELOG.md consolidation (retroactive v2.0 → v2.1.10)
