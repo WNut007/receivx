@@ -2,25 +2,45 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.12 shipped on `main` (2026-05-25, tag `v2.1.12`,
-pushed to origin). v2.1.12 adds the **nav-bar badge** for unread
-completed exports so operators don't have to keep checking /Exports
-or their inbox. Migration `db/022` adds `ExportJobsLog.ReadAt`
-(nullable) + backfills existing succeeded rows as read so day-1
-operators don't face a flood. New endpoints
-`GET /api/exports/unread-count` and `POST /api/exports/mark-all-read`
-are per-user (admin's see-all toggle does NOT widen the badge — it
-represents "things I haven't downloaded yet"). Count uses the
-existing on-disk file scan so expired files don't inflate it.
-`app-nav.js` renders `#exports-badge` inside the Exports menu entry
-(pill-shaped + subtle pulse on count-increase + compact-dot variant
-for collapsed vertical nav) and auto-injects
-`wwwroot/js/components/exports-badge.js` so individual pages don't
-need a script include. Badge polls every 10s, silent on network
-errors. `/Exports` page calls mark-all-read after initial render +
-manually refreshes the badge for instant clear. Smoke
-`smoke-exports-badge` covers all 5 paths incl. cross-user privacy
-guard. Battery: 39/39 PASS.
+**Status:** v2.1.13 shipped on `main` (2026-05-24, tag `v2.1.13`,
+pushed to origin). v2.1.13 splits **/Exports into Pending /
+Downloaded tabs**. Migration `db/023` adds
+`ExportJobsLog.DownloadedAt` (nullable) + filtered index
+`IX_ExportJobsLog_UserPending` (WHERE Status='succeeded' AND
+DownloadedAt IS NULL — narrow predicate keeps the index tiny because
+rows graduate out as soon as the operator clicks Download).
+Repository gains `GetTabCountsAsync` (Pending = queued+running+failed
+PLUS succeeded-undownloaded × on-disk file set intersection;
+Downloaded = succeeded + DownloadedAt set) and `MarkDownloadedAsync`
+(WHERE RequesterUserId = @UserId privacy guard, idempotent — second
+call returns 0 rows = controller 404). New endpoints `GET
+/api/exports/tab-counts` and `POST /api/exports/{id}/mark-downloaded`
++ `/jobs` accepts optional `?tab=pending|downloaded` filter (purely
+additive). `/Exports` page: tabs above the section card, Pending
+default, empty-state copy adapts per tab, Download click → fire-and-
+forget mark-downloaded → 800ms later list+counts refresh → row drifts
+to Downloaded. Re-click in Downloaded tab still grabs the file but
+skips the mark call. Asymmetry preserved on purpose: tab-counts
+filter out expired-undownloaded rows (badge = actionable) while the
+Pending list keeps them visible with "Expired" pill (list = bucket
+contents). Smoke `smoke-exports-2tab` covers all 9 paths incl.
+idempotency + cross-user privacy + DB-level DownloadedAt verify.
+Battery: 40/40 PASS.
+
+v2.1.12 lineage: nav-bar badge for unread completed exports so
+operators don't have to keep checking /Exports or their inbox.
+Migration `db/022` adds `ExportJobsLog.ReadAt` (nullable) +
+backfills existing succeeded rows as read so day-1 operators don't
+face a flood. Endpoints `GET /api/exports/unread-count` and
+`POST /api/exports/mark-all-read` are per-user (admin's see-all
+toggle does NOT widen the badge). Count uses the on-disk file scan
+so expired files don't inflate it. `app-nav.js` renders
+`#exports-badge` inside the Exports menu entry (pill-shaped + subtle
+pulse on count-increase + compact-dot variant for collapsed vertical
+nav) and auto-injects `wwwroot/js/components/exports-badge.js`.
+Badge polls every 10s, silent on network errors. `/Exports` page
+calls mark-all-read after initial render + manually refreshes the
+badge for instant clear.
 
 v2.1.11 lineage: My Exports page — visibility UI for export job status. New `dbo.ExportJobsLog` table (migration
 `db/020`) persists every Hangfire export job's lifecycle (queued →
