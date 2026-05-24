@@ -2,9 +2,24 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.6 shipped on `main` (2026-05-24, tag `v2.1.6` at
-`d1c16f8`, pushed to origin). v2.1.6 is Phase 8.1 — pagination
-foundation. `db/019_pagination_indexes.sql` adds `IX_Pulls_ClosedAt`
+**Status:** v2.1.7 shipped on `main` (2026-05-24, tag `v2.1.7` at
+`2414edc`, pushed to origin). v2.1.7 is Phase 8.2 + 8.3 — shared
+pagination component + wiring. `wwwroot/js/components/pagination.js`
+exposes `mountPagination({page, pageSize, total, onChange})` with
+page-aware ellipsis windowing (always shows first + last + cur±1);
+`Views/Shared/_Pagination.cshtml` is the Razor partial with the same
+DOM shape but `<a href="?page=N&...">` for full-reload nav. One
+`wwwroot/css/components/pagination.css` themes both via existing CSS
+variables. Reports drops the partial below the list pane (server-
+rendered, BaseQuery preserves filters across navigation); Pos +
+Transactions mount the JS control. Filter changes reset to page 1
+everywhere. Transactions PAGE_SIZE flipped 500 → 50 (matches the rest
+of the app); data-limit-notice banner kept as the "use Export for
+everything" CTA. Smokes 8.2 (Node module assertions + served-file
+checks) and 8.3 (per-page wire-up + Reports partial render) added.
+Battery: 34/34 PASS.
+
+v2.1.6 lineage: Phase 8.1 — pagination `db/019_pagination_indexes.sql` adds `IX_Pulls_ClosedAt`
 (filtered `Status='closed'`, INCLUDE WH/PullDate/PullNumber) +
 `IX_PO_OrderDate` (status-agnostic). New `Models/Pagination.cs` carries
 shared `PaginatedRequest`/`PaginatedResponse<T>` (1-based page, hard cap
@@ -55,7 +70,8 @@ iframe-to-PDF). v2.1.3 (`e0e3820`) added FastReport.OpenSource
 bootstrap (Phase 7.2). v2.1.2 (`59bcf37`) added
 `Pulls.ReferenceNumber` (Phase 7.1).
 
-Lineage: v2.1.5 (`6008fa6`) shipped Phase 7.4 Reports DO refactor.
+Earlier lineage: v2.1.6 (`d1c16f8`) shipped Phase 8.1 pagination
+foundation. v2.1.5 (`6008fa6`) shipped Phase 7.4 Reports DO refactor.
 v2.1.1 (`5d88b86`) added the drawer's close-auth section (signer +
 role + signature SVG + PNG download). v2.1 (`3b6ed06`) bundled PullItem
 admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
