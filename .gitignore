@@ -44,8 +44,13 @@ db_backup/
 dev-server.log
 dev-server.err.log
 
-# Phase 8.4 — export-generated workbooks. The exports/ dir itself is
-# checked in via .gitkeep so the runtime path exists on fresh clones,
-# but its contents are operator data — never commit.
+# Phase 8.4 — export-generated workbooks. The exports/ dirs themselves are
+# checked in via .gitkeep so the runtime paths exist on fresh clones, but
+# their contents are operator data — never commit. Two possible locations
+# depending on how the app is launched:
+#   - exports/                          (when launched from repo root)
+#   - src/ReceivingOps.Web/exports/     (dotnet run resolves via AppContext.BaseDirectory)
 exports/*
 !exports/.gitkeep
+src/ReceivingOps.Web/exports/*
+!src/ReceivingOps.Web/exports/.gitkeep

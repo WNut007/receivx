@@ -407,66 +407,55 @@ async function confirmCancel() {
   }
 }
 
-/* ---------- Export — uses what's currently rendered ---------- */
-function exportToExcel() {
+/* ---------- Export — Phase 8.4: decoupled. Server queues a Hangfire
+   job that generates the XLSX off-thread, emails the operator a signed
+   download link. UI confirms the queue + tells the operator to check
+   email. The page-slice-only client-side XLSX path is gone — exports
+   now always cover the full filtered result (capped at MaxRows on the
+   server, default 100K). */
+async function exportToExcel() {
+  if (currentTotal === 0) {
+    showToast('Nothing to export', 'Adjust filters first', 'danger');
+    return;
+  }
+  // Build the same filter shape the server's TransactionsExportRequest
+  // expects. The server applies non-admin warehouse scoping itself, so
+  // we don't even need to send warehouseId on this side — but sending
+  // it doesn't hurt for admins.
+  const dateRange = computeDateRange(document.getElementById('f-date').value);
+  const kindMap = { 'receive': 'receive', 'cancel': 'reversal', 'voided': 'voided' };
+  const action = document.getElementById('f-action').value;
+  const req = {
+    warehouseId:    null,  // server fills in from session for non-admin
+    warehouseCode:  document.getElementById('f-warehouse').value !== 'all'
+                      ? document.getElementById('f-warehouse').value : null,
+    dateFrom:       dateRange.from ? dateRange.from.toISOString() : null,
+    dateTo:         dateRange.to   ? dateRange.to.toISOString()   : null,
+    kind:           (action && action !== 'all') ? (kindMap[action] || null) : null,
+    receivedByName: document.getElementById('f-operator').value !== 'all'
+                      ? document.getElementById('f-operator').value : null,
+    q:              document.getElementById('f-search').value.trim() || null,
+    hour:           hourFilter,
+    maxRows:        100000,
+  };
   try {
-    if (typeof XLSX === 'undefined') return showToast('Export failed', 'Library not loaded', 'danger');
-    const list = currentRows;
-    if (list.length === 0) return showToast('Nothing to export', '', 'danger');
-
-    const now = new Date();
-    const wb = XLSX.utils.book_new();
-
-    const positives = list.filter(r => r.qtyReceived > 0);
-    const negatives = list.filter(r => r.qtyReceived < 0);
-    const net = list.reduce((a,r) => a + r.qtyReceived, 0);
-    const meta = [
-      { Field: 'Report',         Value: 'Receipt Transactions Journal' },
-      { Field: 'Exported At',    Value: now.toLocaleString('en-GB') },
-      { Field: 'Total',          Value: list.length },
-      { Field: 'Server Total',   Value: currentTotal },
-      { Field: 'Receipts',       Value: positives.length },
-      { Field: 'Reversals',      Value: negatives.length },
-      { Field: 'Net Units',      Value: net },
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(meta), 'Header');
-
-    const rows = list.map(r => ({
-      'Receipt ID':    r.id,
-      'Type':          r.qtyReceived < 0 ? 'Reversal' : (r.reversedById ? 'Voided' : 'Receipt'),
-      'When':          formatFull(r.receivedAt),
-      'Pull':          r.pullNumber,
-      'Warehouse':     r.warehouseCode,
-      'Item Code':     r.itemCode,
-      'Description':   r.itemDescription,
-      'PO':            r.poNumber || '',
-      'PO Line':       r.poLineNumber || '',
-      'Vendor':        r.vendorName || '',
-      'Hour':          String(r.hourOfDay).padStart(2,'0') + ':00',
-      'Quantity':      r.qtyReceived,
-      'Lot/Batch':     r.lotBatch,
-      'Pallet':        r.palletId,
-      'Bin':           r.binLocation,
-      'QC':            r.qcStatus,
-      'Note':          r.note,
-      'Operator':      r.receivedByName,
-      'Reverses':      r.reversesReceiptId || '',
-      'Reversed By':   r.reversedById || '',
-      'Reason':        r.cancelReason || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [
-      {wch:36},{wch:10},{wch:18},{wch:10},{wch:8},{wch:18},{wch:32},
-      {wch:14},{wch:7},{wch:22},
-      {wch:6},{wch:9},{wch:16},{wch:12},{wch:10},{wch:10},{wch:32},{wch:14},{wch:36},{wch:36},{wch:14}
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
-
-    XLSX.writeFile(wb, `transactions_${now.toISOString().slice(0,10)}.xlsx`);
-    showToast('Export complete', `${list.length} transactions`);
+    const resp = await fetch('/api/exports/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!resp.ok) {
+      let title = `Queue failed (${resp.status})`;
+      try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Export not queued', title, 'danger');
+      return;
+    }
+    const body = await resp.json();
+    showToast('Export queued', body.message || `Check ${body.email}`);
   } catch (e) {
-    console.error(e);
-    showToast('Export failed', e.message, 'danger');
+    console.error('export queue failed', e);
+    showToast('Network error', 'Could not queue export', 'danger');
   }
 }
 
