@@ -817,6 +817,52 @@ document.getElementById('btn-clear-audit').addEventListener('click', () => {
   showToast('Audit log cannot be cleared', 'Audit entries are permanent', 'danger');
 });
 
+// Phase 8.4 ext — Audit Log Export (admin only). Reveal the button if
+// /api/auth/me says role=admin; build AuditLogExportRequest from the
+// current toolbar state and POST to /api/exports/audit-log.
+async function revealAdminAuditControls() {
+  try {
+    const me = await jsonFetch('/api/auth/me');
+    if ((me?.role || me?.roleKey) === 'admin') {
+      const btn = document.getElementById('btn-export-audit');
+      if (btn) btn.hidden = false;
+    }
+  } catch { /* not fatal — button stays hidden, backend gates anyway */ }
+}
+async function exportAuditLog() {
+  const action = document.getElementById('filter-audit-action').value;
+  const q      = document.getElementById('search-audit').value.trim() || null;
+  const range  = auditDateRange(document.getElementById('filter-audit-date').value);
+  const req = {
+    action: (action && action !== 'all') ? action : null,
+    q,
+    occurredFrom: range.from ? range.from.toISOString() : null,
+    occurredTo:   range.to   ? range.to.toISOString()   : null,
+    maxRows: 100000,
+  };
+  try {
+    const resp = await fetch('/api/exports/audit-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!resp.ok) {
+      let title = `Queue failed (${resp.status})`;
+      try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Export not queued', title, 'danger');
+      return;
+    }
+    const body = await resp.json();
+    showToast('Export queued', body.message || `Check ${body.email}`);
+  } catch (e) {
+    console.error('audit export queue failed', e);
+    showToast('Network error', 'Could not queue export', 'danger');
+  }
+}
+document.getElementById('btn-export-audit')?.addEventListener('click', exportAuditLog);
+revealAdminAuditControls();
+
 // Row actions delegated
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
