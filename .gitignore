@@ -42,3 +42,10 @@ db_backup/
 
 # Dev server stdout capture (from `dotnet run | tee dev-server.log`)
 dev-server.log
+dev-server.err.log
+
+# Phase 8.4 — export-generated workbooks. The exports/ dir itself is
+# checked in via .gitkeep so the runtime path exists on fresh clones,
+# but its contents are operator data — never commit.
+exports/*
+!exports/.gitkeep

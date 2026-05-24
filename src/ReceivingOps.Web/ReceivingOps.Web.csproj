@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="Dapper" Version="2.1.79" />
     <PackageReference Include="FastReport.OpenSource" Version="2026.2.1" />
     <PackageReference Include="FastReport.OpenSource.Export.PdfSimple" Version="2026.2.1" />

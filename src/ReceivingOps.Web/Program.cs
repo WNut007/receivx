@@ -14,6 +14,7 @@ using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
 using ReceivingOps.Web.Services.Email;
+using ReceivingOps.Web.Services.Exports;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -118,6 +119,14 @@ builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 // logs the would-be email instead) so dev without SMTP doesn't crash.
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
 builder.Services.AddSingleton<IEmailService, MailKitEmailService>();
+
+// ---- v2.x Phase 8.4 — export pipeline ----
+// ExportOptions: storage root + signing key + base URL for download links
+// + file lifetime. Production deploys must override SigningKey via secret.
+builder.Services.Configure<ExportOptions>(builder.Configuration.GetSection("Exports"));
+builder.Services.AddSingleton<ExportTokenService>();
+builder.Services.AddScoped<TransactionsExportJob>();
+builder.Services.AddScoped<IExportService, ExportService>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
