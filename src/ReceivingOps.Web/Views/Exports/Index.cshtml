@@ -38,9 +38,29 @@
             </div>
         </div>
 
+        @* Phase 8.4 ext — 2-tab split. Pending = actionable backlog
+           (in-flight + failed + ready-to-download). Downloaded = archive
+           of jobs the operator already grabbed. Counts come from
+           /api/exports/tab-counts and refresh on the same cadence as the
+           list. *@
+        <nav class="exports-tabs" role="tablist" aria-label="Export jobs">
+            <button type="button" role="tab" class="exports-tab is-active"
+                    data-tab="pending" aria-selected="true">
+                <i class="bi bi-clock-history"></i>
+                <span>Pending</span>
+                <span class="tab-count tab-count-active" id="tab-count-pending" hidden>0</span>
+            </button>
+            <button type="button" role="tab" class="exports-tab"
+                    data-tab="downloaded" aria-selected="false">
+                <i class="bi bi-check2-circle"></i>
+                <span>Downloaded</span>
+                <span class="tab-count tab-count-muted" id="tab-count-downloaded" hidden>0</span>
+            </button>
+        </nav>
+
         <div class="section">
             <div class="section-head">
-                <div class="section-title"><i class="bi bi-cloud-download"></i> Export jobs</div>
+                <div class="section-title"><i class="bi bi-cloud-download"></i> <span id="section-title">Pending</span></div>
                 <div class="meta-line" id="list-count">0 records</div>
             </div>
 
