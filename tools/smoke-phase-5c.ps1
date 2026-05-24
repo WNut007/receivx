@@ -233,7 +233,7 @@ OK "Line deleted (no receipts referenced)"
 # 5. Delete a line WITH receipts → 409 (§7.13)
 # ----------------------------------------------------------------------------
 Step "Find a line on PO-2401-018 with ReceivedQty > 0"
-$po018 = (Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01" -WebSession $adm) | Where-Object { $_.poNumber -eq 'PO-2401-018' } | Select-Object -First 1
+$po018 = ((Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&pageSize=500" -WebSession $adm).items) | Where-Object { $_.poNumber -eq 'PO-2401-018' } | Select-Object -First 1
 if (-not $po018) { Fail "Could not find PO-2401-018 in WH-01 list" }
 $detail018 = Invoke-RestMethod -Uri "$base/api/pos/$($po018.id)" -WebSession $adm
 $lineWithReceipts = $detail018.lines | Where-Object { $_.receivedQty -gt 0 } | Select-Object -First 1

@@ -272,7 +272,7 @@ OK "Concurrent test cleaned up"
 # 12. /api/pos read endpoints
 # ============================================================================
 Step "GET /api/pos returns the seeded catalog"
-$pos = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH01" -WebSession $adm
+$pos = (Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH01&pageSize=500" -WebSession $adm).items
 if ($pos.Count -lt 4) { Fail "Expected ≥4 WH-01 POs, got $($pos.Count)" }
 $po2401018 = $pos | Where-Object { $_.poNumber -eq 'PO-2401-018' } | Select-Object -First 1
 if (-not $po2401018) { Fail "PO-2401-018 missing from list" }

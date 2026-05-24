@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
@@ -23,17 +24,28 @@ public class PurchaseOrdersApiController : ControllerBase
     // ---- Reads (authenticated) ----
 
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<PoListRow>>> List(
+    public async Task<ActionResult<PaginatedResponse<PoListRow>>> List(
         [FromQuery] Guid? warehouseId,
         [FromQuery] string? status,
         [FromQuery] string? itemCode,
         [FromQuery] string? q,
         [FromQuery] DateOnly? orderDateFrom,
         [FromQuery] DateOnly? orderDateTo,
-        CancellationToken ct)
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
     {
-        var rows = await _repo.QueryAsync(warehouseId, status, itemCode, q, orderDateFrom, orderDateTo, ct);
-        return Ok(rows);
+        var req = new PaginatedRequest { Page = page, PageSize = pageSize };
+        var (items, total) = await _repo.QueryAsync(
+            warehouseId, status, itemCode, q, orderDateFrom, orderDateTo,
+            req.Skip, req.Take, ct);
+        return Ok(new PaginatedResponse<PoListRow>
+        {
+            Items = items,
+            Page = Math.Max(1, page),
+            PageSize = req.Take,
+            Total = total,
+        });
     }
 
     [HttpGet("{id:guid}")]

@@ -123,7 +123,7 @@ OK "Line added (Id $($line.id.ToString().Substring(0,8)))"
 # STEP 3 — Filtered list returns the linked PO
 # ============================================================================
 Step "Step 3: GET /api/pos?warehouseId — list contains $poNumber with pullId=$pullId"
-$listed = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01" -WebSession $sv
+$listed = (Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&pageSize=500" -WebSession $sv).items
 $match = $listed | Where-Object { $_.poNumber -eq $poNumber } | Select-Object -First 1
 if (-not $match)                  { Fail "$poNumber missing from list" }
 if ($match.pullId -ne $pullId)    { Fail "List row pullId=$($match.pullId), expected $pullId" }

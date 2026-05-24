@@ -9,9 +9,10 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
 
     public PurchaseOrderRepository(IDbConnectionFactory factory) => _factory = factory;
 
-    public async Task<IReadOnlyList<PoListRow>> QueryAsync(
+    public async Task<(IReadOnlyList<PoListRow> Items, int Total)> QueryAsync(
         Guid? warehouseId, string? status, string? itemCode, string? q,
         DateOnly? orderDateFrom, DateOnly? orderDateTo,
+        int skip, int take,
         CancellationToken ct = default)
     {
         var where = new List<string>();
@@ -57,7 +58,11 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
         }
 
         var whereSql = where.Count == 0 ? "" : "WHERE " + string.Join(" AND ", where);
-        var sql = $@"
+
+        // Two queries in one round-trip via QueryMultiple: the page slice +
+        // the unfiltered-by-paging total. Po.Id deterministic tiebreaker so
+        // OFFSET stays stable across requests when many POs share OrderDate.
+        var pageSql = $@"
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode,
                     po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate,
                     po.Status, po.CreatedAt, po.ClosedAt,
@@ -69,11 +74,19 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             INNER JOIN dbo.Warehouses w ON w.Id = po.WarehouseId
             LEFT  JOIN dbo.Pulls      p ON p.Id = po.PullId
             {whereSql}
-            ORDER BY po.OrderDate DESC, po.PoNumber DESC;";
+            ORDER BY po.OrderDate DESC, po.PoNumber DESC, po.Id DESC
+            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
+
+            SELECT COUNT(*) FROM dbo.PurchaseOrders po {whereSql};";
+        p.Add("Skip", Math.Max(0, skip));
+        p.Add("Take", Math.Clamp(take, 1, 500));
 
         using var conn = _factory.Create();
-        var rows = await conn.QueryAsync<PoListRow>(new CommandDefinition(sql, p, cancellationToken: ct));
-        return rows.AsList();
+        using var multi = await conn.QueryMultipleAsync(
+            new CommandDefinition(pageSql, p, cancellationToken: ct));
+        var items = (await multi.ReadAsync<PoListRow>()).AsList();
+        var total = await multi.ReadSingleAsync<int>();
+        return (items, total);
     }
 
     public async Task<PoDetail?> GetDetailAsync(Guid id, CancellationToken ct = default)

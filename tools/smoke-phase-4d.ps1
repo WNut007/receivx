@@ -223,7 +223,7 @@ OK "NULL→NULL echo is identity, 200 ok"
 # (11) GET /api/pos list includes PullId + PullNumber
 # ============================================================================
 Step "(11) GET /api/pos list includes PullId+PullNumber for linked POs"
-$list = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01" -WebSession $session
+$list = (Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&pageSize=500" -WebSession $session).items
 $linkedRow   = $list | Where-Object { $_.poNumber -eq 'PO-SMOKE-4D-001' }
 $unlinkedRow = $list | Where-Object { $_.poNumber -eq 'PO-SMOKE-4D-002' }
 if (-not $linkedRow)   { Fail "Linked smoke PO not in list" }

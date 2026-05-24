@@ -8,10 +8,16 @@ namespace ReceivingOps.Web.Data.Repositories;
 /// </summary>
 public interface IPurchaseOrderRepository
 {
-    /// <summary>GET /api/pos — list with per-PO line summary (count + ordered + received).</summary>
-    Task<IReadOnlyList<PoListRow>> QueryAsync(
+    /// <summary>
+    /// GET /api/pos — paged list with per-PO line summary
+    /// (count + ordered + received). Returns the rows for the requested
+    /// slice + the unfiltered-by-paging total so the API layer can wrap
+    /// it in <c>PaginatedResponse&lt;PoListRow&gt;</c>.
+    /// </summary>
+    Task<(IReadOnlyList<PoListRow> Items, int Total)> QueryAsync(
         Guid? warehouseId, string? status, string? itemCode, string? q,
         DateOnly? orderDateFrom, DateOnly? orderDateTo,
+        int skip, int take,
         CancellationToken ct = default);
 
     /// <summary>GET /api/pos/{id} — header + lines (no receipts inline; the

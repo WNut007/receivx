@@ -21,7 +21,8 @@
  * =========================================================================== */
 
 let warehouses = [];        // /api/warehouses?status=active
-let currentRows = [];       // current /api/pos page
+let currentRows = [];       // current /api/pos page (Items only — Total in currentTotal)
+let currentTotal = 0;       // unfiltered-by-paging row count from PaginatedResponse
 let currentDetail = null;   // PoDetail being edited
 let currentRole = null;     // 'admin' | 'supervisor' | etc — from /api/auth/me
 let newPoPullAc = null;     // autocomplete controller for the New-PO linked-pull picker
@@ -155,12 +156,15 @@ async function loadList() {
   const tbody = document.getElementById('po-tbody');
   tbody.innerHTML = `<tr><td colspan="9" class="empty-row"><i class="bi bi-hourglass-split"></i> Loading…</td></tr>`;
   try {
-    currentRows = await jsonFetch('/api/pos?' + buildListQuery());
+    // Phase 8.1: /api/pos returns PaginatedResponse<PoListRow> = { items, page, pageSize, total, ... }
+    const resp = await jsonFetch('/api/pos?' + buildListQuery());
+    currentRows  = resp.items || [];
+    currentTotal = resp.total | 0;
     renderList();
   } catch (e) {
     console.error('loadList failed', e);
     showToast('Could not load purchase orders', e.message, 'danger');
-    currentRows = [];
+    currentRows = []; currentTotal = 0;
     renderList();
   }
 }
@@ -199,7 +203,15 @@ function renderList() {
       `;
     }).join('');
   }
-  document.getElementById('list-count').textContent = `${list.length} of ${currentRows.length} records`;
+  // Result-count surface — distinguish page slice (currentRows) from
+  // server total (currentTotal). With pagination the operator may be
+  // looking at 50 of 51; the badge needs to make that explicit so
+  // they don't think the missing PO is a bug.
+  const linkageFiltered = list.length !== currentRows.length;
+  const countLabel = linkageFiltered
+    ? `${list.length} shown · ${currentRows.length} on page · ${currentTotal} total`
+    : `${currentRows.length} of ${currentTotal} records`;
+  document.getElementById('list-count').textContent = countLabel;
   document.getElementById('footer-list').textContent =
     list.length === 0 ? '—' : `${list.length} purchase orders`;
 }

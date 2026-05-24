@@ -38,44 +38,47 @@ OK "Chrome has 7 options (default=last_2_days) + custom-range row + Apply/Clear"
 
 # ----------------------------------------------------------------------------
 # 2. Server filter — orderDateFrom/orderDateTo narrows results
+# Phase 8.1: /api/pos returns PaginatedResponse so `.total` is the
+# server-filtered count (pageSize=500 keeps `.items` full for the
+# range-spotcheck below).
 # ----------------------------------------------------------------------------
 Step "GET /api/pos with orderDateFrom/orderDateTo narrows the list"
 $today     = (Get-Date -Format 'yyyy-MM-dd')
 $yesterday = (Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
 $weekAgo   = (Get-Date).AddDays(-7).ToString('yyyy-MM-dd')
 
-$noFilter = Invoke-RestMethod -Uri "$base/api/pos" -WebSession $sv
-$last2    = Invoke-RestMethod -Uri "$base/api/pos?orderDateFrom=$yesterday&orderDateTo=$today" -WebSession $sv
-$week     = Invoke-RestMethod -Uri "$base/api/pos?orderDateFrom=$weekAgo&orderDateTo=$today" -WebSession $sv
+$noFilter = Invoke-RestMethod -Uri "$base/api/pos?pageSize=500" -WebSession $sv
+$last2    = Invoke-RestMethod -Uri "$base/api/pos?orderDateFrom=$yesterday&orderDateTo=$today&pageSize=500" -WebSession $sv
+$week     = Invoke-RestMethod -Uri "$base/api/pos?orderDateFrom=$weekAgo&orderDateTo=$today&pageSize=500" -WebSession $sv
 
-if ($noFilter.Count -lt 1) { Fail "Expected baseline /api/pos to return at least 1 row, got 0" }
-if ($last2.Count -gt $week.Count) { Fail "last 2 days ($($last2.Count)) > last 7 days ($($week.Count)) — bad filter" }
-if ($week.Count -gt $noFilter.Count) { Fail "last 7 days ($($week.Count)) > no filter ($($noFilter.Count)) — bad filter" }
+if ($noFilter.total -lt 1) { Fail "Expected baseline /api/pos to return at least 1 row, got 0" }
+if ($last2.total -gt $week.total) { Fail "last 2 days ($($last2.total)) > last 7 days ($($week.total)) — bad filter" }
+if ($week.total -gt $noFilter.total) { Fail "last 7 days ($($week.total)) > no filter ($($noFilter.total)) — bad filter" }
 # Every row returned must respect the range — sample check
-$outOfRange = @($last2 | Where-Object { $_.orderDate -lt $yesterday -or $_.orderDate -gt "$today`T23:59:59" }).Count
+$outOfRange = @($last2.items | Where-Object { $_.orderDate -lt $yesterday -or $_.orderDate -gt "$today`T23:59:59" }).Count
 if ($outOfRange -gt 0) { Fail "$outOfRange rows in last_2_days fell outside [$yesterday, $today]" }
-OK "Date filter narrows: no-filter=$($noFilter.Count) | last 7d=$($week.Count) | last 2d=$($last2.Count)"
+OK "Date filter narrows: no-filter=$($noFilter.total) | last 7d=$($week.total) | last 2d=$($last2.total)"
 
 # ----------------------------------------------------------------------------
 # 3. Combined filter — warehouse + date range intersects
 # ----------------------------------------------------------------------------
 Step "Combined warehouse + date filter intersects correctly"
-$whOnly      = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01" -WebSession $sv
-$whAndLast2  = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&orderDateFrom=$yesterday&orderDateTo=$today" -WebSession $sv
-if ($whAndLast2.Count -gt $whOnly.Count) { Fail "warehouse+date ($($whAndLast2.Count)) > warehouse-only ($($whOnly.Count))" }
-$wrongWh = @($whAndLast2 | Where-Object { $_.warehouseId -ne $WH_01 }).Count
+$whOnly      = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&pageSize=500" -WebSession $sv
+$whAndLast2  = Invoke-RestMethod -Uri "$base/api/pos?warehouseId=$WH_01&orderDateFrom=$yesterday&orderDateTo=$today&pageSize=500" -WebSession $sv
+if ($whAndLast2.total -gt $whOnly.total) { Fail "warehouse+date ($($whAndLast2.total)) > warehouse-only ($($whOnly.total))" }
+$wrongWh = @($whAndLast2.items | Where-Object { $_.warehouseId -ne $WH_01 }).Count
 if ($wrongWh -gt 0) { Fail "$wrongWh rows had wrong warehouseId" }
-OK "warehouse + date: $($whAndLast2.Count) rows (subset of $($whOnly.Count) warehouse-only)"
+OK "warehouse + date: $($whAndLast2.total) rows (subset of $($whOnly.total) warehouse-only)"
 
 # ----------------------------------------------------------------------------
-# 4. Empty range — future dates return []
+# 4. Empty range — future dates return total=0
 # ----------------------------------------------------------------------------
-Step "Future date range returns []"
+Step "Future date range returns total=0"
 $future = (Get-Date).AddDays(10).ToString('yyyy-MM-dd')
 $farFut = (Get-Date).AddDays(20).ToString('yyyy-MM-dd')
 $empty = Invoke-RestMethod -Uri "$base/api/pos?orderDateFrom=$future&orderDateTo=$farFut" -WebSession $sv
-if ($empty.Count -ne 0) { Fail "Future range should return 0 rows, got $($empty.Count)" }
-OK "Future range correctly returns empty"
+if ($empty.total -ne 0) { Fail "Future range should return total=0, got $($empty.total)" }
+OK "Future range correctly returns empty (total=0)"
 
 Write-Host ""
 Write-Host "ALL PASS — /Pos OrderDate filter (chrome + API + combined + empty)." -ForegroundColor Green
