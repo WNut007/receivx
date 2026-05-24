@@ -2,8 +2,28 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.9 shipped on `main` (2026-05-24, tag `v2.1.9`, pushed
-to origin). v2.1.9 adds the **admin email diagnostic** —
+**Status:** v2.1.10 shipped on `main` (2026-05-25, tag `v2.1.10`,
+pushed to origin). v2.1.10 extends the Phase 8.4 export pipeline to
+**/Pos + /Masters Audit Log**. Three jobs now produce XLSX via the
+same path (TransactionsExportJob + PosExportJob + AuditLogExportJob,
+all on Hangfire "exports" queue, all using ClosedXML +
+MailKitEmailService). New endpoints: POST `/api/exports/pos` (admin OR
+supervisor — procurement leads need it; supervisor pinned to session
+WH) and POST `/api/exports/audit-log` (admin only — audit data is
+sensitive). Download path globs the exports/ dir by jobId hex, so new
+job types add cleanly without controller change. Files: transactions-,
+pos-, audit-log- prefixes. Export buttons added: `/Pos` header (next
+to Refresh, hidden until JS reveals for admin/supervisor),
+`/Masters → Audit Log` toolbar (hidden until admin via
+`/api/auth/me`). New AuditExportQuery + `IAuditRepository.QueryForExportAsync`
+(parallel to existing 500-row-capped QueryAsync, bumped to 100K +
+adds OccurredFrom/To date window covered by IX_Audit_When). POSTs
+return 202 Accepted (was 200 OK, now semantically correct since real
+work runs later). Smoke `smoke-export-extensions` covers all 4 paths
++ permission matrix (operator/supervisor 403 where expected). Battery:
+37/37 PASS.
+
+v2.1.9 lineage: admin email diagnostic —
 `AdminEmailController` with `GET /api/admin/smtp-config` (metadata +
 configured flags, NEVER credentials) and `POST /api/admin/email-test`
 (send a test via the same `IEmailService` Hangfire jobs use, surfaces
