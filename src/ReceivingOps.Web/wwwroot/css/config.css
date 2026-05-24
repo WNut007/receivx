@@ -484,3 +484,78 @@
   }
   .danger-zone-info .help { color: var(--text-dim); font-size: 13px; }
 
+  /* ===== Email test diagnostic (admin-only section) ===== */
+  .smtp-config-display {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .config-item { display: flex; flex-direction: column; gap: 3px; }
+  .config-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--text-muted); font-weight: 600;
+  }
+  .config-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px; color: var(--text); word-break: break-all;
+  }
+  .config-value.status-ok      { color: var(--ok); }
+  .config-value.status-warning { color: var(--warn); }
+
+  .email-test-form .form-control { font-size: 13px; }
+
+  .email-test-result { font-size: 13px; }
+  .alert {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .alert > i { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .alert strong { color: var(--text); }
+  .alert .setting-help { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+  .alert .setting-help a { color: var(--accent); }
+
+  .alert-success { background: var(--ok-bg);    border-color: var(--ok);    color: var(--text); }
+  .alert-success > i { color: var(--ok); }
+
+  .alert-error   { background: var(--error-bg); border-color: var(--error); color: var(--text); }
+  .alert-error > i { color: var(--error); }
+
+  .alert-info    { background: var(--info-bg);  border-color: var(--info);  color: var(--text); }
+  .alert-info > i { color: var(--info); }
+
+  .result-details {
+    margin: 8px 0 0; padding-left: 18px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .result-details li { margin-bottom: 3px; }
+  .result-details code {
+    background: var(--surface-3); color: var(--text);
+    padding: 1px 5px; border-radius: 4px;
+    font-family: 'Roboto Mono', monospace; font-size: 11px;
+  }
+
+  details summary {
+    cursor: pointer; font-size: 12px; color: var(--text-dim); margin-top: 10px;
+    user-select: none;
+  }
+  details summary:hover { color: var(--text); }
+  .troubleshoot-list {
+    margin: 8px 0 0; padding-left: 18px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .troubleshoot-list li { margin-bottom: 6px; }
+  .troubleshoot-list strong { color: var(--text); }
+  .troubleshoot-list a { color: var(--accent); }
+
