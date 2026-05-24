@@ -28,4 +28,11 @@ public class ExportService : IExportService
         _jobs.Enqueue<TransactionsExportJob>(job => job.RunAsync(jobId, request, requesterEmail, requesterName));
         return jobId;
     }
+
+    public Guid EnqueuePosExport(PosExportRequest request, string requesterEmail, string requesterName)
+    {
+        var jobId = Guid.NewGuid();
+        _jobs.Enqueue<PosExportJob>(job => job.RunAsync(jobId, request, requesterEmail, requesterName));
+        return jobId;
+    }
 }

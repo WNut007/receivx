@@ -126,6 +126,7 @@ builder.Services.AddSingleton<IEmailService, MailKitEmailService>();
 builder.Services.Configure<ExportOptions>(builder.Configuration.GetSection("Exports"));
 builder.Services.AddSingleton<ExportTokenService>();
 builder.Services.AddScoped<TransactionsExportJob>();
+builder.Services.AddScoped<PosExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----

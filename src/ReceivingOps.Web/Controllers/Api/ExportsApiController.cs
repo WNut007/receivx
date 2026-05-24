@@ -6,37 +6,36 @@ using ReceivingOps.Web.Services.Exports;
 
 namespace ReceivingOps.Web.Controllers.Api;
 
-// Phase 8.4.4 — public surface for the export pipeline.
+// Phase 8.4 — public surface for the export pipeline.
 //
-//   POST /api/exports/transactions       → enqueues a Hangfire job, returns
-//                                          { jobId } so the UI can show
-//                                          "queued; check your email"
-//   GET  /api/exports/{id}/download      → HMAC-signed download. No cookie
-//                                          auth check — the token IS the
-//                                          authn, so the email recipient can
-//                                          download without an active session
-//                                          (corp Gmail account ≠ ReceivingOps
-//                                          account is common).
+//   POST /api/exports/transactions       enqueue Transactions export
+//   POST /api/exports/pos                enqueue Purchase Orders export (admin OR supervisor)
+//   GET  /api/exports/{id}/download      HMAC-signed download. NOT [Authorize] —
+//                                        the HMAC token IS the authn, so the email
+//                                        recipient can download from any browser
+//                                        without an active ReceivingOps session.
+//
+// The download endpoint globs the exports/ dir for any file containing the
+// jobId hex string — that way each new job type works without touching the
+// download path (Transactions writes "transactions-{id}.xlsx", Pos writes
+// "pos-{id}.xlsx", future jobs whatever they want).
 [ApiController]
 [Route("api/exports")]
 public class ExportsApiController : ControllerBase
 {
     private readonly IExportService _exports;
     private readonly ExportTokenService _tokens;
-    private readonly TransactionsExportJob _jobHelper;
     private readonly ExportOptions _opts;
     private readonly ILogger<ExportsApiController> _log;
 
     public ExportsApiController(
         IExportService exports,
         ExportTokenService tokens,
-        TransactionsExportJob jobHelper,
         IOptions<ExportOptions> opts,
         ILogger<ExportsApiController> log)
     {
         _exports = exports;
         _tokens = tokens;
-        _jobHelper = jobHelper;
         _opts = opts.Value;
         _log = log;
     }
@@ -56,16 +55,11 @@ public class ExportsApiController : ControllerBase
         // email claim). The non-admin warehouse scoping mirrors the
         // /api/transactions endpoint — admins can pass any warehouse, non-
         // admins are pinned to their session warehouse.
-        var email = User.FindFirstValue("email");
-        var name  = User.FindFirstValue("displayName") ?? User.Identity?.Name ?? "Operator";
-        if (string.IsNullOrWhiteSpace(email))
-            return Problem(title: "Your account has no email on file — ask an admin to set one.", statusCode: 400);
+        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
 
         var isAdmin = User.IsInRole("admin");
         if (!isAdmin)
         {
-            // Force the WH filter to the session warehouse so a non-admin
-            // can't ask for an export covering data they can't see.
             var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var wh) ? wh : (Guid?)null;
             req.WarehouseId = sessionWh;
             req.WarehouseCode = null;
@@ -73,7 +67,7 @@ public class ExportsApiController : ControllerBase
 
         var jobId = _exports.EnqueueTransactionsExport(req, email, name);
         _log.LogInformation("Queued transactions export job {JobId} for {Email}", jobId, email);
-        return Ok(new EnqueueResponse
+        return Accepted(new EnqueueResponse
         {
             JobId = jobId,
             Email = email,
@@ -81,9 +75,30 @@ public class ExportsApiController : ControllerBase
         });
     }
 
-    // NOT [Authorize] — the HMAC token is the authn. The recipient may be
-    // reading email outside their ReceivingOps session entirely; we don't
-    // want to require a cookie round-trip just to download.
+    [HttpPost("pos")]
+    [Authorize(Roles = "admin,supervisor")]
+    public IActionResult QueuePos([FromBody] PosExportRequest req)
+    {
+        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
+
+        // Supervisors are pinned to their session warehouse — admins can
+        // pass any warehouse or none (cross-warehouse view).
+        if (!User.IsInRole("admin"))
+        {
+            var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var wh) ? wh : (Guid?)null;
+            req.WarehouseId = sessionWh;
+        }
+
+        var jobId = _exports.EnqueuePosExport(req, email, name);
+        _log.LogInformation("Queued POs export job {JobId} for {Email}", jobId, email);
+        return Accepted(new EnqueueResponse
+        {
+            JobId = jobId,
+            Email = email,
+            Message = $"Export queued. You'll receive an email at {email} when it's ready (usually under a minute).",
+        });
+    }
+
     [HttpGet("{id:guid}/download")]
     public IActionResult Download(Guid id, [FromQuery] string? token)
     {
@@ -92,16 +107,47 @@ public class ExportsApiController : ControllerBase
         if (!_tokens.Validate(token, id, out var expiresAt))
             return Problem(title: "Invalid or expired token", statusCode: 401);
 
-        var (path, fileName) = _jobHelper.ResolveFilePath(id);
-        if (!System.IO.File.Exists(path))
+        // Find the file by jobId hex — each job type names its file with a
+        // different prefix (transactions-, pos-, audit-log-, …). Globbing
+        // the directory keeps this endpoint agnostic of the producer.
+        var dir = ResolveExportDir();
+        var idHex = id.ToString("N");
+        var matches = Directory.Exists(dir)
+            ? Directory.GetFiles(dir, $"*{idHex}*.xlsx")
+            : Array.Empty<string>();
+        if (matches.Length == 0)
         {
-            _log.LogWarning("Download for job {JobId} requested but file gone (expected at {Path})", id, path);
+            _log.LogWarning("Download for job {JobId} requested but no file found in {Dir}", id, dir);
             return Problem(title: "Export file no longer available", statusCode: 410);
         }
 
+        var path = matches[0];
+        var fileName = Path.GetFileName(path);
         Response.Headers["Content-Disposition"] = $"attachment; filename=\"{fileName}\"";
         Response.Headers["X-Token-Expires-At"] = expiresAt.ToString("O");
         var bytes = System.IO.File.ReadAllBytes(path);
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    /// <summary>Same path-resolution logic the job classes use — kept local so the controller doesn't take a job dependency just for one helper.</summary>
+    private string ResolveExportDir()
+    {
+        return Path.IsPathRooted(_opts.StorageRoot)
+            ? _opts.StorageRoot
+            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", _opts.StorageRoot));
+    }
+
+    /// <summary>Pulls the requester's email + display name from the auth cookie. Returns 400 when email is missing.</summary>
+    private bool TryGetRequester(out string email, out string name, out IActionResult? error)
+    {
+        email = User.FindFirstValue("email") ?? "";
+        name  = User.FindFirstValue("displayName") ?? User.Identity?.Name ?? "Operator";
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            error = Problem(title: "Your account has no email on file — ask an admin to set one.", statusCode: 400);
+            return false;
+        }
+        error = null;
+        return true;
     }
 }
