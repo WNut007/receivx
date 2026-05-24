@@ -324,6 +324,33 @@
       pointer-events: none;
       cursor: not-allowed;
     }
+
+    /* Phase 8.5+ — unread completed exports badge. Lives inside the
+       Exports nav entry; updated by exports-badge.js polling every 10s. */
+    .app-nav-badge {
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      min-width: 18px; height: 18px;
+      padding: 0 6px;
+      margin-left: 6px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-radius: 10px;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 10px; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .app-nav-badge[hidden] { display: none; }
+    .app-nav-badge.bump { animation: app-nav-badge-bump 0.3s ease-out; }
+    @keyframes app-nav-badge-bump {
+      0%   { transform: scale(1); }
+      50%  { transform: scale(1.25); }
+      100% { transform: scale(1); }
+    }
+    /* Collapsed vertical mode hides the label — collapse the badge too,
+       since there's no menu text for it to attach to. */
+    .app-nav.position-vertical.collapsed .app-nav-badge { display: none; }
     .app-nav-item.disabled::after {
       content: 'Soon';
       font-family: 'Roboto Mono', monospace;
@@ -798,6 +825,7 @@
              href="${m.href}" data-id="${m.id}" title="${m.label}">
             <i class="bi ${m.icon}"></i>
             <span class="label">${m.label}</span>
+            ${m.id === 'exports' ? '<span class="app-nav-badge" id="exports-badge" hidden></span>' : ''}
           </a>
         `).join('')}
       </div>
@@ -1238,4 +1266,16 @@
       confirmBtn.addEventListener('click', () => cleanup(true));
     });
   };
+
+  // Phase 8.5+ — auto-load the unread-exports badge poller. app-nav.js
+  // runs on every authenticated page; loading the badge module here
+  // means individual pages don't need to remember a script include.
+  // Idempotent: if the module is already present we don't re-inject.
+  if (!document.querySelector('script[data-module="exports-badge"]')) {
+    const s = document.createElement('script');
+    s.src = '/js/components/exports-badge.js';
+    s.async = true;
+    s.dataset.module = 'exports-badge';
+    document.body.appendChild(s);
+  }
 })();

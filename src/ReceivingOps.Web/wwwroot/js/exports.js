@@ -166,9 +166,26 @@
         onChange: (newPage) => { currentPage = newPage; loadList(); },
     });
 
+    // ---------- Mark all unread as read once data is on screen ----------
+    // Phase 8.5+ — visiting /Exports is the operator's signal that they
+    // saw the queue; the nav-bar badge clears. Fire-and-forget; refresh
+    // the badge immediately so it doesn't wait for the next 10s poll.
+    async function markAllReadOnVisit() {
+        try {
+            await fetch('/api/exports/mark-all-read', {
+                method: 'POST',
+                credentials: 'same-origin',
+            });
+            if (typeof window.refreshExportsBadge === 'function') {
+                window.refreshExportsBadge();
+            }
+        } catch { /* silent — badge stays whatever it is */ }
+    }
+
     // ---------- Init ----------
     (async () => {
         await loadAdminFlag();
         await loadList();
+        await markAllReadOnVisit();
     })();
 })();
