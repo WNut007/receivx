@@ -107,6 +107,13 @@ async function loadCurrentUser() {
   // §5c — Close PO is admin-only. Hide the button for non-admins (backend still gates).
   const closeBtn = document.getElementById('btn-close-po');
   if (closeBtn && currentRole !== 'admin') closeBtn.style.display = 'none';
+
+  // Phase 8.4 ext — Export PO list is admin OR supervisor. Backend gates;
+  // hide for operators to avoid showing a button they can't use.
+  const exportBtn = document.getElementById('btn-export');
+  if (exportBtn && (currentRole === 'admin' || currentRole === 'supervisor')) {
+    exportBtn.hidden = false;
+  }
 }
 
 /* ---------- List view ---------- */
@@ -701,6 +708,48 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
   if (currentDetail) openDetail(currentDetail.id);
   else loadList();
 });
+
+// Phase 8.4 ext — Export button (admin OR supervisor only; hidden until
+// loadCurrentUser sets currentRole). Sends the current filter to
+// /api/exports/pos; the server enqueues a Hangfire job that emails the
+// requester a signed download link when the XLSX is ready.
+async function exportPosList() {
+  if (currentTotal === 0) {
+    showToast('Nothing to export', 'Adjust filters first', 'danger');
+    return;
+  }
+  const range = computeDateRange(document.getElementById('f-date').value);
+  const whId = document.getElementById('f-warehouse').value;
+  const status = document.getElementById('f-status').value;
+  const req = {
+    warehouseId:   whId && whId !== 'all' ? whId : null,
+    status:        status && status !== 'all' ? status : null,
+    q:             document.getElementById('f-search').value.trim() || null,
+    orderDateFrom: range.from || null,
+    orderDateTo:   range.to   || null,
+    maxRows:       100000,
+  };
+  try {
+    const resp = await fetch('/api/exports/pos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!resp.ok) {
+      let title = `Queue failed (${resp.status})`;
+      try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Export not queued', title, 'danger');
+      return;
+    }
+    const body = await resp.json();
+    showToast('Export queued', body.message || `Check ${body.email}`);
+  } catch (e) {
+    console.error('export queue failed', e);
+    showToast('Network error', 'Could not queue export', 'danger');
+  }
+}
+document.getElementById('btn-export').addEventListener('click', exportPosList);
 
 document.getElementById('btn-new-po').addEventListener('click', openNewPoModal);
 // The autocomplete reads warehouseId lazily from the select on each search, so
