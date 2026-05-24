@@ -1,10 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FastReport.Web;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using ReceivingOps.Web.Data;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Hangfire;
 using ReceivingOps.Web.Json;
 using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
@@ -118,6 +122,34 @@ builder.Services.Configure<CompanyInfo>(builder.Configuration.GetSection("Compan
 // .frx templates land in Phase 7.3; this commit only wires the bootstrap.
 builder.Services.AddFastReport();
 
+// ---- v2.x Phase 8.4 — Hangfire (background jobs, SQL-Server-backed) ----
+// Uses the same SQL Server as the app (ConnectionStrings:Default). Hangfire
+// creates its own tables under schema [HangFire] on first start, so the
+// app schema stays untouched. The schema flag PrepareSchemaIfNecessary
+// defaults to true — fine for dev; production turns it off post-bootstrap.
+var hangfireCs = builder.Configuration.GetConnectionString("Default")
+    ?? throw new InvalidOperationException("ConnectionStrings:Default required for Hangfire");
+builder.Services.AddHangfire(cfg => cfg
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UseSqlServerStorage(hangfireCs, new SqlServerStorageOptions
+    {
+        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+        QueuePollInterval = TimeSpan.FromSeconds(15),
+        UseRecommendedIsolationLevel = true,
+        DisableGlobalLocks = true,
+    }));
+// In-process worker — runs background jobs alongside the web tier. Fine
+// for the export-on-demand workload; a separate Hangfire worker process
+// can be added later if exports start contending with request threads.
+builder.Services.AddHangfireServer(opts =>
+{
+    opts.WorkerCount = 2;
+    opts.Queues = new[] { "exports", "default" };
+});
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
@@ -136,6 +168,14 @@ app.UseAuthorization();
 // preview component. Reports themselves are served by a dedicated controller
 // in Phase 7.3; this just enables the viewer's runtime assets.
 app.UseFastReport();
+
+// Hangfire dashboard at /hangfire — admin only. The filter checks
+// User.IsInRole("admin") in HangfireDashboardAuth.
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireDashboardAuth() },
+    DashboardTitle = "ReceivingOps — Background Jobs",
+});
 
 app.MapControllerRoute(
     name: "default",

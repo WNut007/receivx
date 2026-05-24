@@ -12,6 +12,8 @@
     <PackageReference Include="FastReport.OpenSource" Version="2026.2.1" />
     <PackageReference Include="FastReport.OpenSource.Export.PdfSimple" Version="2026.2.1" />
     <PackageReference Include="FastReport.OpenSource.Web" Version="2026.2.1" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.*" />
+    <PackageReference Include="Hangfire.SqlServer" Version="1.8.*" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.1" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.16" />
   </ItemGroup>
