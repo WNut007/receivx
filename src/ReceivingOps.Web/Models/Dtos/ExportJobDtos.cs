@@ -19,6 +19,7 @@ public class ExportJobLogRow
     public string? FileName      { get; set; }
     public int? RowsExported     { get; set; }
     public string? ErrorMessage  { get; set; }
+    public DateTime? DownloadedAt { get; set; }  // db/023 — operator's click recorded
 }
 
 /// <summary>
@@ -41,7 +42,20 @@ public class ExportJobView
     public int? RowsExported     { get; set; }
     public string? ErrorMessage  { get; set; }
     public string? DownloadUrl   { get; set; }   // null unless EffectiveStatus == "succeeded"
+    public DateTime? DownloadedAt { get; set; }  // db/023 — set when operator clicked Download
     // Admin-only "see all" view fills the requester fields; per-user view leaves them null.
     public string? RequesterEmail { get; set; }
     public string? RequesterName  { get; set; }
+}
+
+/// <summary>
+/// Phase 8.4 ext — tab counts for the My Exports page split.
+/// Counts are scoped to the requesting user (or all users when
+/// admin opts into "see everyone"). Pending = actionable backlog;
+/// Downloaded = archive of grabs.
+/// </summary>
+public class ExportTabCounts
+{
+    public int Pending { get; set; }
+    public int Downloaded { get; set; }
 }

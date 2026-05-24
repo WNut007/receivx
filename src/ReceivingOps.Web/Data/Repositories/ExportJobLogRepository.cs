@@ -83,15 +83,38 @@ public class ExportJobLogRepository : IExportJobLogRepository
     }
 
     public async Task<(IReadOnlyList<ExportJobLogRow> Items, int Total)> QueryPagedAsync(
-        Guid? requesterUserId, int skip, int take, CancellationToken ct = default)
+        Guid? requesterUserId, string? tab, int skip, int take, CancellationToken ct = default)
     {
-        var where = requesterUserId.HasValue ? "WHERE RequesterUserId = @UserId" : "";
+        var clauses = new List<string>();
+        if (requesterUserId.HasValue) clauses.Add("RequesterUserId = @UserId");
+
+        // Tab predicate. "pending" includes expired-file rows on purpose —
+        // the UI badges them as "Expired" so the operator sees they're not
+        // actionable. The badge count (GetTabCountsAsync) DOES filter out
+        // expired so it represents true actionable backlog; here in the
+        // list we preserve the full bucket so the user can see the row
+        // and know "yes, the system noticed it expired."
+        if (string.Equals(tab, "pending", StringComparison.OrdinalIgnoreCase))
+        {
+            clauses.Add(@"(Status IN ('queued','running','failed')
+                          OR (Status = 'succeeded' AND DownloadedAt IS NULL))");
+        }
+        else if (string.Equals(tab, "downloaded", StringComparison.OrdinalIgnoreCase))
+        {
+            clauses.Add("Status = 'succeeded' AND DownloadedAt IS NOT NULL");
+        }
+
+        var where = clauses.Count > 0 ? "WHERE " + string.Join(" AND ", clauses) : "";
+
         // IX_ExportJobsLog_UserDate covers the (UserId, EnqueuedAt DESC) seek;
         // the cross-user variant falls back to a scan (small table, fine).
+        // IX_ExportJobsLog_UserPending narrows the pending path further when
+        // both the user filter + Status='succeeded' AND DownloadedAt IS NULL
+        // overlap (db/023 filtered index).
         var sql = $@"
             SELECT  Id, RequesterUserId, RequesterEmail, RequesterName, JobType,
                     FilterJson, Status, EnqueuedAt, StartedAt, CompletedAt,
-                    FileName, RowsExported, ErrorMessage
+                    FileName, RowsExported, ErrorMessage, DownloadedAt
             FROM    dbo.ExportJobsLog
             {where}
             ORDER BY EnqueuedAt DESC, Id DESC
@@ -105,6 +128,68 @@ public class ExportJobLogRepository : IExportJobLogRepository
         var items = (await multi.ReadAsync<ExportJobLogRow>()).AsList();
         var total = await multi.ReadSingleAsync<int>();
         return (items, total);
+    }
+
+    public async Task<ExportTabCounts> GetTabCountsAsync(
+        Guid? requesterUserId, ISet<string> presentIdHexes, CancellationToken ct = default)
+    {
+        var userClause = requesterUserId.HasValue ? "WHERE RequesterUserId = @UserId" : "";
+        // Three pieces:
+        //   1. Always-pending raw count: queued | running | failed
+        //   2. Succeeded-undownloaded row IDs (then intersected with files on disk in C#)
+        //   3. Downloaded raw count: succeeded + DownloadedAt set
+        // Single round-trip via QueryMultiple.
+        var sql = $@"
+            SELECT COUNT(*) FROM dbo.ExportJobsLog
+            {userClause}
+            {(string.IsNullOrEmpty(userClause) ? "WHERE" : "AND")} Status IN ('queued','running','failed');
+
+            SELECT Id FROM dbo.ExportJobsLog
+            {userClause}
+            {(string.IsNullOrEmpty(userClause) ? "WHERE" : "AND")} Status = 'succeeded' AND DownloadedAt IS NULL;
+
+            SELECT COUNT(*) FROM dbo.ExportJobsLog
+            {userClause}
+            {(string.IsNullOrEmpty(userClause) ? "WHERE" : "AND")} Status = 'succeeded' AND DownloadedAt IS NOT NULL;";
+
+        using var conn = _factory.Create();
+        using var multi = await conn.QueryMultipleAsync(new CommandDefinition(sql, new { UserId = requesterUserId }, cancellationToken: ct));
+        var inFlightOrFailed = await multi.ReadSingleAsync<int>();
+        var succeededUndownloadedIds = (await multi.ReadAsync<Guid>()).ToList();
+        var downloaded = await multi.ReadSingleAsync<int>();
+
+        // Intersect succeeded-undownloaded with on-disk file set — only
+        // count what the operator can actually grab. Expired (file gone)
+        // rows aren't actionable so they don't inflate the badge.
+        var actionableSucceeded = 0;
+        foreach (var id in succeededUndownloadedIds)
+        {
+            if (presentIdHexes.Contains(id.ToString("N"))) actionableSucceeded++;
+        }
+
+        return new ExportTabCounts
+        {
+            Pending = inFlightOrFailed + actionableSucceeded,
+            Downloaded = downloaded,
+        };
+    }
+
+    public async Task<int> MarkDownloadedAsync(Guid id, Guid requesterUserId, CancellationToken ct = default)
+    {
+        // Privacy guard: the WHERE clause refuses to touch another user's
+        // row even if the caller supplies the wrong id. Combined with the
+        // DownloadedAt IS NULL check, the operation is idempotent — a
+        // re-click after the row's already marked returns 0 rows affected
+        // (controller surfaces this as 404 so the smoke can assert it).
+        const string sql = @"
+            UPDATE dbo.ExportJobsLog
+            SET    DownloadedAt = SYSUTCDATETIME()
+            WHERE  Id = @Id
+              AND  RequesterUserId = @UserId
+              AND  Status = 'succeeded'
+              AND  DownloadedAt IS NULL;";
+        using var conn = _factory.Create();
+        return await conn.ExecuteAsync(new CommandDefinition(sql, new { Id = id, UserId = requesterUserId }, cancellationToken: ct));
     }
 
     public async Task<ExportJobLogRow?> GetByIdAsync(Guid id, CancellationToken ct = default)

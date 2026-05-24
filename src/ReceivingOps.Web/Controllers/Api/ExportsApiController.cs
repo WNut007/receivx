@@ -158,6 +158,7 @@ public class ExportsApiController : ControllerBase
         [FromQuery] bool all = false,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
+        [FromQuery] string? tab = null,
         CancellationToken ct = default)
     {
         var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
@@ -168,7 +169,7 @@ public class ExportsApiController : ControllerBase
         Guid? scope = (all && isAdmin) ? null : userId;
 
         var req = new PaginatedRequest { Page = page, PageSize = pageSize };
-        var (rows, total) = await _jobsLog.QueryPagedAsync(scope, req.Skip, req.Take, ct);
+        var (rows, total) = await _jobsLog.QueryPagedAsync(scope, tab, req.Skip, req.Take, ct);
 
         // File existence check per row — used to flip succeeded→expired.
         // One Directory.GetFiles call per request, then HashSet lookups
@@ -201,6 +202,7 @@ public class ExportsApiController : ControllerBase
             RowsExported = r.RowsExported,
             ErrorMessage = r.ErrorMessage,
             DownloadUrl = BuildDownloadUrl(r, presentIds, expiresAt),
+            DownloadedAt = r.DownloadedAt,
             // Always populate requester fields — useful for self-identification
             // on the per-user view ("yes that's mine") and required for the
             // admin see-all view. Privacy is enforced by the WHERE scope above
@@ -263,6 +265,52 @@ public class ExportsApiController : ControllerBase
 
         var marked = await _jobsLog.MarkAllUnreadAsReadAsync(userId, ct);
         return Ok(new { marked });
+    }
+
+    // GET /api/exports/tab-counts — Pending vs Downloaded badge numbers
+    // for the 2-tab My Exports layout. Scope mirrors ListJobs: admin can
+    // opt into ?all=true to see everyone; default is per-user.
+    //
+    // Pending count is "actionable" — queued|running|failed plus the
+    // subset of succeeded-undownloaded rows whose files are still on
+    // disk. Expired rows aren't counted (operator can't act on them).
+    [HttpGet("tab-counts")]
+    [Authorize]
+    public async Task<ActionResult<ExportTabCounts>> TabCounts(
+        [FromQuery] bool all = false,
+        CancellationToken ct = default)
+    {
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
+        if (userId == Guid.Empty)
+            return Problem(title: "Could not identify the requesting user.", statusCode: 401);
+
+        var isAdmin = User.IsInRole("admin");
+        Guid? scope = (all && isAdmin) ? null : userId;
+
+        var present = SnapshotPresentIds();
+        var counts = await _jobsLog.GetTabCountsAsync(scope, present, ct);
+        return Ok(counts);
+    }
+
+    // POST /api/exports/{id}/mark-downloaded — fired by the My Exports
+    // page when the operator clicks Download. Stamps DownloadedAt on the
+    // row so it moves from Pending → Downloaded. Privacy guard lives in
+    // the repo (WHERE RequesterUserId = @UserId); 404 = no row updated
+    // (wrong user OR already-marked OR not-yet-succeeded). Idempotent —
+    // re-click after marked returns 404 with no state change.
+    [HttpPost("{id:guid}/mark-downloaded")]
+    [Authorize]
+    public async Task<IActionResult> MarkDownloaded(Guid id, CancellationToken ct)
+    {
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : Guid.Empty;
+        if (userId == Guid.Empty)
+            return Problem(title: "Could not identify the requesting user.", statusCode: 401);
+
+        var affected = await _jobsLog.MarkDownloadedAsync(id, userId, ct);
+        if (affected == 0)
+            return NotFound(new { id, message = "Not your row, already marked, or not yet succeeded." });
+
+        return Ok(new { id, downloadedAt = DateTime.UtcNow });
     }
 
     /// <summary>One disk scan → HashSet of jobId hex strings for the present XLSX files. Same pattern as ListJobs.</summary>
