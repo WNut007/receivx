@@ -35,4 +35,11 @@ public class ExportService : IExportService
         _jobs.Enqueue<PosExportJob>(job => job.RunAsync(jobId, request, requesterEmail, requesterName));
         return jobId;
     }
+
+    public Guid EnqueueAuditLogExport(AuditLogExportRequest request, string requesterEmail, string requesterName)
+    {
+        var jobId = Guid.NewGuid();
+        _jobs.Enqueue<AuditLogExportJob>(job => job.RunAsync(jobId, request, requesterEmail, requesterName));
+        return jobId;
+    }
 }

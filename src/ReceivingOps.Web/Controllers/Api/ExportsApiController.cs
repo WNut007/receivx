@@ -99,6 +99,25 @@ public class ExportsApiController : ControllerBase
         });
     }
 
+    [HttpPost("audit-log")]
+    [Authorize(Roles = "admin")]
+    public IActionResult QueueAuditLog([FromBody] AuditLogExportRequest req)
+    {
+        // Audit data is sensitive (operator names, IPs, entity ids) —
+        // admin-only at this layer matches the spec. No warehouse
+        // scoping: AuditLog rows aren't warehouse-bound.
+        if (!TryGetRequester(out var email, out var name, out var err)) return err!;
+
+        var jobId = _exports.EnqueueAuditLogExport(req, email, name);
+        _log.LogInformation("Queued audit-log export job {JobId} for {Email}", jobId, email);
+        return Accepted(new EnqueueResponse
+        {
+            JobId = jobId,
+            Email = email,
+            Message = $"Export queued. You'll receive an email at {email} when it's ready (usually under a minute).",
+        });
+    }
+
     [HttpGet("{id:guid}/download")]
     public IActionResult Download(Guid id, [FromQuery] string? token)
     {

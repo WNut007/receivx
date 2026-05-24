@@ -127,6 +127,7 @@ builder.Services.Configure<ExportOptions>(builder.Configuration.GetSection("Expo
 builder.Services.AddSingleton<ExportTokenService>();
 builder.Services.AddScoped<TransactionsExportJob>();
 builder.Services.AddScoped<PosExportJob>();
+builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----

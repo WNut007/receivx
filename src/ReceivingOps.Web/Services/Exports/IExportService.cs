@@ -12,4 +12,7 @@ public interface IExportService
 
     /// <summary>Queues a /Pos (Purchase Orders) export. Returns the assigned jobId.</summary>
     Guid EnqueuePosExport(PosExportRequest request, string requesterEmail, string requesterName);
+
+    /// <summary>Queues an Audit Log export (admin-only at controller layer). Returns the assigned jobId.</summary>
+    Guid EnqueueAuditLogExport(AuditLogExportRequest request, string requesterEmail, string requesterName);
 }
