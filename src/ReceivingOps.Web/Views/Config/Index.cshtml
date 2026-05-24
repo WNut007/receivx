@@ -166,6 +166,63 @@
       </div>
     </div>
 
+    <!-- ADMIN — Email diagnostic. Hidden unless current user is admin;
+         JS toggles .admin-only sections based on session.role from
+         /api/auth/me. The endpoints behind it are themselves
+         [Authorize(Roles = "admin")] so the UI gate is convenience-
+         only, never the security boundary. -->
+    <div class="section admin-only" data-admin-only hidden>
+      <div class="section-head">
+        <div class="section-title-block">
+          <div class="eyebrow">Diagnostics · Admin only</div>
+          <div class="section-title">Email test</div>
+          <div class="section-desc">Verify SMTP configuration. Use after setting <code>Smtp:*</code> user-secrets or to debug failed export emails.</div>
+        </div>
+      </div>
+
+      <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 16px;">
+        <!-- Config display -->
+        <div class="smtp-config-display">
+          <div class="config-grid">
+            <div class="config-item">
+              <div class="config-label">SMTP host</div>
+              <div class="config-value" id="smtp-host">—</div>
+            </div>
+            <div class="config-item">
+              <div class="config-label">Port</div>
+              <div class="config-value" id="smtp-port">—</div>
+            </div>
+            <div class="config-item">
+              <div class="config-label">From address</div>
+              <div class="config-value" id="smtp-from">—</div>
+            </div>
+            <div class="config-item">
+              <div class="config-label">Credentials</div>
+              <div class="config-value" id="smtp-creds">—</div>
+            </div>
+          </div>
+          <p class="setting-help" style="margin-top: 6px;">
+            <i class="bi bi-info-circle"></i>
+            Credentials are configured via <code>dotnet user-secrets</code> and never exposed in the UI.
+            If unset, emails are logged at Information level instead of sent.
+          </p>
+        </div>
+
+        <!-- Test form -->
+        <div class="email-test-form">
+          <label for="email-test-to" class="setting-name" style="display: block; margin-bottom: 6px;">Send test email to</label>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="email" id="email-test-to" class="form-control" placeholder="you@example.com" style="flex: 1; min-width: 240px;">
+            <button class="btn btn-primary" id="email-test-send">
+              <i class="bi bi-envelope"></i> Send test
+            </button>
+          </div>
+        </div>
+
+        <div class="email-test-result" id="email-test-result" hidden></div>
+      </div>
+    </div>
+
     <!-- DANGER -->
     <div class="section">
       <div class="section-head">
