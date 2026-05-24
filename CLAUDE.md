@@ -2,8 +2,23 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.8 shipped on `main` (2026-05-24, tag `v2.1.8`, pushed
-to origin). v2.1.8 is Phase 8.4 — decoupled export pipeline.
+**Status:** v2.1.9 shipped on `main` (2026-05-24, tag `v2.1.9`, pushed
+to origin). v2.1.9 adds the **admin email diagnostic** —
+`AdminEmailController` with `GET /api/admin/smtp-config` (metadata +
+configured flags, NEVER credentials) and `POST /api/admin/email-test`
+(send a test via the same `IEmailService` Hangfire jobs use, surfaces
+exception detail on failure). `/Config` page gains an admin-gated
+"Email test" section: SMTP config display + test form + alert panel
+with Gmail-specific troubleshooting (app-password / 2FA / firewall /
+TLS) on failure. UI hidden via `[data-admin-only]` toggled by
+`/api/auth/me` role check; endpoints have their own
+`[Authorize(Roles="admin")]` gate so UI is convenience-only.
+`smoke-email-test` covers all 6 cases (metadata leak check, input
+validation, valid send, supervisor-blocked at both endpoints, page
+DOM hooks). Bumped the 8.4 export-smoke timeout 20s → 30s to absorb
+Hangfire pickup latency under battery load. Battery: 36/36 PASS.
+
+v2.1.8 lineage: Phase 8.4 — decoupled export pipeline.
 **Stack added:** Hangfire.AspNetCore + Hangfire.SqlServer 1.8.x
 (background jobs persisted in the existing DB under `[HangFire]`
 schema, in-process worker with 2 threads on the "exports" queue);

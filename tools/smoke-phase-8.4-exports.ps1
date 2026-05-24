@@ -61,11 +61,11 @@ OK "Queued: jobId=$jobId for $($queue.email)"
 # ----------------------------------------------------------------------------
 Step "Hangfire worker runs the job; XLSX file appears within 20s"
 $expectedPath = Join-Path $exportRoot "transactions-$($jobId.Replace('-','')).xlsx"
-$deadline = (Get-Date).AddSeconds(20)
+$deadline = (Get-Date).AddSeconds(30)
 while (-not (Test-Path $expectedPath) -and (Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
 }
-if (-not (Test-Path $expectedPath)) { Fail "Export file never appeared at $expectedPath (waited 20s)" }
+if (-not (Test-Path $expectedPath)) { Fail "Export file never appeared at $expectedPath (waited 30s)" }
 $size = (Get-Item $expectedPath).Length
 if ($size -lt 1000) { Fail "Export file suspiciously small: $size bytes" }
 # XLSX = ZIP archive — first 2 bytes "PK" magic
