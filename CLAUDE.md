@@ -2,9 +2,27 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.11 shipped on `main` (2026-05-25, tag `v2.1.11`,
-pushed to origin). v2.1.11 adds the **My Exports page** — visibility
-UI for export job status. New `dbo.ExportJobsLog` table (migration
+**Status:** v2.1.12 shipped on `main` (2026-05-25, tag `v2.1.12`,
+pushed to origin). v2.1.12 adds the **nav-bar badge** for unread
+completed exports so operators don't have to keep checking /Exports
+or their inbox. Migration `db/022` adds `ExportJobsLog.ReadAt`
+(nullable) + backfills existing succeeded rows as read so day-1
+operators don't face a flood. New endpoints
+`GET /api/exports/unread-count` and `POST /api/exports/mark-all-read`
+are per-user (admin's see-all toggle does NOT widen the badge — it
+represents "things I haven't downloaded yet"). Count uses the
+existing on-disk file scan so expired files don't inflate it.
+`app-nav.js` renders `#exports-badge` inside the Exports menu entry
+(pill-shaped + subtle pulse on count-increase + compact-dot variant
+for collapsed vertical nav) and auto-injects
+`wwwroot/js/components/exports-badge.js` so individual pages don't
+need a script include. Badge polls every 10s, silent on network
+errors. `/Exports` page calls mark-all-read after initial render +
+manually refreshes the badge for instant clear. Smoke
+`smoke-exports-badge` covers all 5 paths incl. cross-user privacy
+guard. Battery: 39/39 PASS.
+
+v2.1.11 lineage: My Exports page — visibility UI for export job status. New `dbo.ExportJobsLog` table (migration
 `db/020`) persists every Hangfire export job's lifecycle (queued →
 running → succeeded/failed). `ExportService.Enqueue*Async` writes the
 queued row BEFORE handing to Hangfire; each `*ExportJob.RunAsync`
