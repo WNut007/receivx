@@ -1,0 +1,109 @@
+@*
+   Shared pagination partial (Phase 8.2) — used by server-rendered pages
+   that want full-reload navigation (?page=N&...). DOM shape matches the
+   JS-rendered mountPagination() output 1:1 so the CSS in
+   components/pagination.css themes both identically.
+
+   Caller:
+     @await Html.PartialAsync("_Pagination", new ReceivingOps.Web.Models.PaginationPartialModel
+     {
+         Page = Model.Page,
+         PageSize = Model.PageSize,
+         Total = Model.Total,
+         BaseQuery = "?dateRange=last_2_days",
+         Label = "pulls",
+     })
+
+   Renders nothing when totalPages <= 1.
+
+   Local variable `cur` (not `page`) — Razor would otherwise parse `@page`
+   as the @page routing directive and reject the file.
+*@
+@model ReceivingOps.Web.Models.PaginationPartialModel
+@{
+    var totalPages = Model.PageSize <= 0 ? 0 : (int)Math.Ceiling((double)Model.Total / Model.PageSize);
+    var cur = Math.Max(1, Math.Min(totalPages == 0 ? 1 : totalPages, Model.Page));
+    var label = string.IsNullOrEmpty(Model.Label) ? "records" : Model.Label;
+    var maxButtons = Model.MaxButtons > 0 ? Model.MaxButtons : 7;
+
+    // Same windowing logic as JS pageWindow(): always show first + last
+    // + (cur ± 1), ellipsis where pages skipped.
+    List<object> tokens;
+    if (totalPages <= maxButtons)
+    {
+        tokens = Enumerable.Range(1, totalPages).Cast<object>().ToList();
+    }
+    else
+    {
+        var set = new SortedSet<int> { 1, totalPages, cur };
+        if (cur > 1)          set.Add(cur - 1);
+        if (cur < totalPages) set.Add(cur + 1);
+        tokens = new List<object>();
+        int? prev = null;
+        foreach (var p in set)
+        {
+            if (prev is { } pv && p - pv > 1) tokens.Add("ellipsis");
+            tokens.Add(p);
+            prev = p;
+        }
+    }
+
+    string Href(int p)
+    {
+        // Strip any existing page= from the base, then append. Tolerates
+        // base with or without leading "?" — caller usually provides "?...".
+        var bq = Model.BaseQuery ?? "";
+        if (bq.Length > 0 && !bq.StartsWith("?")) bq = "?" + bq;
+        var trimmed = System.Text.RegularExpressions.Regex.Replace(
+            bq, @"([?&])page=\d+(&|$)", "$1").TrimEnd('?', '&');
+        var sep = trimmed.Length == 0 || trimmed == "?" ? "?" : (trimmed.Contains('?') ? "&" : "?");
+        return trimmed + sep + "page=" + p;
+    }
+}
+@if (totalPages > 1)
+{
+    <nav class="pagination" role="navigation" aria-label="Pagination">
+        <span class="pagination-info">Page <b>@cur</b> of <b>@totalPages</b> · <b>@Model.Total.ToString("N0")</b> @label</span>
+        <ul class="pagination-nav">
+            <li>
+                @if (cur > 1)
+                {
+                    <a class="pagination-btn prev" href="@Href(cur - 1)" aria-label="Previous page">&lsaquo; Prev</a>
+                }
+                else
+                {
+                    <a class="pagination-btn prev" href="#" aria-disabled="true" aria-label="Previous page">&lsaquo; Prev</a>
+                }
+            </li>
+            @foreach (var t in tokens)
+            {
+                if (t is string s && s == "ellipsis")
+                {
+                    <li><span class="pagination-ellipsis" aria-hidden="true">…</span></li>
+                }
+                else
+                {
+                    var n = (int)t;
+                    if (n == cur)
+                    {
+                        <li><a class="pagination-btn active" href="#" aria-current="page" aria-label="Page @n">@n</a></li>
+                    }
+                    else
+                    {
+                        <li><a class="pagination-btn" href="@Href(n)" aria-label="Page @n">@n</a></li>
+                    }
+                }
+            }
+            <li>
+                @if (cur < totalPages)
+                {
+                    <a class="pagination-btn next" href="@Href(cur + 1)" aria-label="Next page">Next &rsaquo;</a>
+                }
+                else
+                {
+                    <a class="pagination-btn next" href="#" aria-disabled="true" aria-label="Next page">Next &rsaquo;</a>
+                }
+            </li>
+        </ul>
+    </nav>
+}
