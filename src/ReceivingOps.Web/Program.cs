@@ -145,6 +145,9 @@ builder.Services.Configure<ErpSyncOptions>(builder.Configuration.GetSection("Erp
 builder.Services.AddScoped<IErpSyncService, ErpSyncService>();
 builder.Services.AddScoped<IErpUpsertService, ErpUpsertService>();
 builder.Services.AddScoped<ErpSyncJob>();
+// Singleton — guards recurring vs manual-trigger overlap. In-process only;
+// distributed locking would be needed for a multi-instance deployment.
+builder.Services.AddSingleton<ErpSyncMutex>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
