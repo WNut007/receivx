@@ -297,7 +297,8 @@ function renderLines() {
   const tbody = document.getElementById('po-lines-tbody');
   const lines = currentDetail.lines || [];
   if (lines.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">
+    // Phase 9 bumped colspan 7 → 12 (5 new ERP columns).
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-row">
       <i class="bi bi-inbox"></i> No lines yet — click <b>Add line</b>
     </td></tr>`;
   } else {
@@ -316,6 +317,11 @@ function renderLines() {
           <td class="num">${(l.orderedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.receivedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.remainingQty | 0).toLocaleString()}</td>
+          ${erpCell(l.invoiceNo,    'erp-col-first')}
+          ${erpCell(l.subInventory)}
+          ${erpCell(l.toLocation)}
+          ${erpCell(l.palletId)}
+          ${erpCell(l.vmiPalletId)}
           <td style="text-align:right;">
             <button class="btn btn-icon danger" data-act="delete-line" data-line-id="${escHtml(l.id)}"
                     title="${escHtml(deleteTitle)}" ${canDelete ? '' : 'disabled'}>
@@ -328,6 +334,17 @@ function renderLines() {
   }
   document.getElementById('footer-detail').textContent =
     lines.length === 0 ? '—' : `${lines.length} lines · ${lines.reduce((s, l) => s + (l.orderedQty|0), 0).toLocaleString()} pcs ordered`;
+}
+
+// Phase 9 — renders one ERP-sourced cell. Em-dash + muted styling for
+// nulls (distinguishes "ERP hasn't populated this" from "no value");
+// full text in the title tooltip so truncated values are recoverable.
+function erpCell(value, extraClass) {
+  const present = value != null && value !== '';
+  const cls = 'erp-col' + (extraClass ? ' ' + extraClass : '') + (present ? '' : ' is-empty');
+  const display = present ? escHtml(value) : '—';
+  const title = present ? ` title="${escHtml(value)}"` : '';
+  return `<td class="${cls}"${title}>${display}</td>`;
 }
 
 function backToList() {

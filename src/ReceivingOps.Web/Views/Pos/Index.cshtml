@@ -209,7 +209,7 @@
       </div>
 
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table po-lines-table">
           <thead>
             <tr>
               <th class="num" style="width: 70px;">Line #</th>
@@ -218,6 +218,14 @@
               <th class="num" style="width: 110px;">Ordered</th>
               <th class="num" style="width: 110px;">Received</th>
               <th class="num" style="width: 110px;">Remaining</th>
+              @* Phase 9 — 5 priority ERP columns. Other 15 ERP fields are in
+                 the API response + Excel export but not surfaced here (PO
+                 detail is already wide; full inspection lives in the export). *@
+              <th class="erp-col erp-col-first" style="width: 130px;">Invoice</th>
+              <th class="erp-col" style="width: 110px;">SubInv</th>
+              <th class="erp-col" style="width: 110px;">ToLoc</th>
+              <th class="erp-col" style="width: 110px;">Pallet</th>
+              <th class="erp-col" style="width: 110px;">VMI Pallet</th>
               <th style="width: 80px; text-align: right;">Actions</th>
             </tr>
           </thead>

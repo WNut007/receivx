@@ -359,6 +359,40 @@
   .custom-toast .icon-wrap { width: 28px; height: 28px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); display: grid; place-items: center; font-size: 13px; }
   .custom-toast.danger .icon-wrap { background: var(--error-bg); color: var(--error); }
   .custom-toast .msg { font-size: 13px; color: var(--text); }
+
+  /* Phase 9 — ERP-sourced columns in the PO Detail line table. Visually
+     grouped via subtle bg tint + left-border separator on the first ERP
+     column so operators can scan "core line data" vs "ERP metadata" at a
+     glance. Mono font + smaller size matches Receivx's tabular convention
+     for machine-sourced identifiers (POs, vendors, etc.). */
+  .po-lines-table th.erp-col,
+  .po-lines-table td.erp-col {
+    background: var(--surface-2);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .po-lines-table th.erp-col-first,
+  .po-lines-table td.erp-col-first {
+    border-left: 1px solid var(--border);
+  }
+  .po-lines-table th.erp-col {
+    /* Header keeps the table's UPPERCASE convention; override the mono +
+       size only for body cells. Re-apply the th defaults inherited from
+       .data-table th. */
+    font-family: inherit;
+    font-size: inherit;
+    color: var(--text-dim);
+  }
+  /* Em-dash placeholder for nulls — distinguishes "ERP hasn't populated
+     this yet" from "field doesn't exist". */
+  .po-lines-table td.erp-col.is-empty {
+    color: var(--text-muted);
+  }
   .custom-toast .msg small {
     display: block; font-family: 'Roboto Mono', monospace;
     font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 2px;
