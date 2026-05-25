@@ -144,7 +144,7 @@ public class TransactionsExportJob
             "ReceivedByName", "ReversesReceiptId", "ReversedById", "CancelReason",
             // Phase 9.1 — ERP-sourced PullItem fields (db/024 + view ALTER 025)
             "ProductFamily", "FromSubInventory", "ToSubInventory",
-            "TrailId", "PullLocation", "PullPhase", "SpecialControl",
+            "TrialId", "PullLocation", "PullPhase", "SpecialControl",
         };
         for (int c = 0; c < headers.Length; c++)
         {
@@ -185,7 +185,7 @@ public class TransactionsExportJob
             ws.Cell(x, 24).Value = row.ProductFamily ?? "";
             ws.Cell(x, 25).Value = row.FromSubInventory ?? "";
             ws.Cell(x, 26).Value = row.ToSubInventory ?? "";
-            ws.Cell(x, 27).Value = row.TrailId ?? "";
+            ws.Cell(x, 27).Value = row.TrialId ?? "";
             ws.Cell(x, 28).Value = row.PullLocation ?? "";
             ws.Cell(x, 29).Value = row.PullPhase ?? "";
             ws.Cell(x, 30).Value = row.SpecialControl ?? "";
