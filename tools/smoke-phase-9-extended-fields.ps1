@@ -152,7 +152,11 @@ OK "All 5 UI-visible fields surface in API"
 # 3 API-only fields (hidden from UI but must appear in JSON)
 if ($line.kanbanNo -ne 'P9-KAN-001') { Fail "kanbanNo (API-only): '$($line.kanbanNo)'" }
 if ($line.note     -ne 'Phase 9 smoke test marker') { Fail "note (API-only): '$($line.note)'" }
-if (-not $line.deliveryDate -or $line.deliveryDate -notmatch '^2026-06-01') { Fail "deliveryDate (API-only): '$($line.deliveryDate)'" }
+# Invoke-RestMethod parses JSON DateTime into a [DateTime] object; comparing
+# with -match coerces via .ToString() which is en-US-locale-dependent
+# ("06/01/2026 00:00:00"). Normalize to ISO via ToString('yyyy-MM-dd').
+$ddIso = if ($line.deliveryDate) { ([DateTime]$line.deliveryDate).ToString('yyyy-MM-dd') } else { '' }
+if ($ddIso -ne '2026-06-01') { Fail "deliveryDate (API-only): '$ddIso' (raw='$($line.deliveryDate)')" }
 OK "3 API-only fields (kanbanNo, note, deliveryDate) surface in API"
 
 # ----------------------------------------------------------------------------
