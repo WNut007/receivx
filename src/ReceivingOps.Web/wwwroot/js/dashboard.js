@@ -1260,6 +1260,133 @@
   }
   document.getElementById('btn-export').addEventListener('click', exportToExcel);
 
+  // ============ PHASE 10.4 — MANUAL ERP SYNC TRIGGER ============
+  // Admin-gated button + modal. Reveals on role check, opens modal,
+  // posts to /api/admin/erp-sync/trigger, polls /jobs/{jobId} until
+  // terminal Hangfire state, closes with a toast. Behaviour:
+  //   - 202 (Accepted): start polling, disable Trigger button
+  //   - 409 (Conflict): show inline "already running" warning, keep
+  //         modal open so the operator can retry after a beat
+  //   - 4xx other: show inline error, keep modal open
+  //   - Terminal Succeeded: toast + close modal + refresh kanban
+  //   - Terminal Failed: toast with reason; modal stays open
+  async function initErpSync() {
+    let me;
+    try { me = await (await fetch('/api/auth/me')).json(); } catch { me = null; }
+    const role = me?.roleKey || me?.role || null;
+    const btn = document.getElementById('btn-erp-sync');
+    if (!btn || role !== 'admin') return;          // backend gates regardless
+    btn.style.display = '';                         // reveal
+
+    const modalEl = document.getElementById('erpSyncModal');
+    const modal = new bootstrap.Modal(modalEl);
+    const whSel = document.getElementById('erp-warehouse');
+    const daysEl = document.getElementById('erp-backfill-days');
+    const trigBtn = document.getElementById('erp-trigger');
+    const cancelBtn = document.getElementById('erp-cancel');
+    const statusEl = document.getElementById('erp-sync-status');
+    let pollTimer = null;
+
+    function setStatus(html, cls) {
+      statusEl.className = 'mt-3 alert alert-' + (cls || 'info') + ' py-2 mb-0';
+      statusEl.innerHTML = html;
+      statusEl.style.display = '';
+    }
+    function clearStatus() {
+      statusEl.style.display = 'none';
+      statusEl.innerHTML = '';
+    }
+    function setBusy(busy) {
+      trigBtn.disabled = busy;
+      cancelBtn.disabled = busy;
+      whSel.disabled = busy;
+      daysEl.disabled = busy;
+      trigBtn.innerHTML = busy
+        ? '<span class="spinner-border spinner-border-sm me-1"></span> Syncing…'
+        : 'Start sync';
+    }
+
+    btn.addEventListener('click', async () => {
+      clearStatus();
+      setBusy(false);
+      await ensureWarehouses();
+      populateWarehouseSelect(whSel, null);
+      daysEl.value = 30;
+      modal.show();
+    });
+
+    async function pollJob(jobId) {
+      const TERMINAL = new Set(['Succeeded', 'Failed', 'Deleted']);
+      try {
+        const r = await fetch('/api/admin/erp-sync/jobs/' + encodeURIComponent(jobId));
+        if (!r.ok) {
+          setStatus('Lost track of job (' + r.status + '). Check Hangfire dashboard.', 'warning');
+          setBusy(false);
+          return;
+        }
+        const data = await r.json();
+        const state = data.state || '(unknown)';
+        if (!TERMINAL.has(state)) {
+          setStatus('Status: <b>' + state + '</b>…', 'info');
+          pollTimer = setTimeout(() => pollJob(jobId), 2000);
+          return;
+        }
+        // Terminal — clean up + report.
+        setBusy(false);
+        if (state === 'Succeeded') {
+          modal.hide();
+          showToast('ERP sync complete', 'Check Hangfire dashboard for details');
+          if (typeof loadPulls === 'function') loadPulls();
+        } else {
+          setStatus(
+            'Sync ended in state <b>' + state + '</b>' +
+            (data.reason ? ' — ' + esc(data.reason) : ''),
+            state === 'Failed' ? 'danger' : 'warning');
+        }
+      } catch (err) {
+        setStatus('Polling error: ' + (err.message || err), 'danger');
+        setBusy(false);
+      }
+    }
+
+    trigBtn.addEventListener('click', async () => {
+      const warehouseId = whSel.value;
+      const backfillDays = parseInt(daysEl.value, 10) || 30;
+      if (!warehouseId) { setStatus('Pick a warehouse.', 'warning'); return; }
+      clearStatus();
+      setBusy(true);
+      try {
+        const r = await fetch('/api/admin/erp-sync/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ warehouseId, backfillDays }),
+        });
+        if (r.status === 202) {
+          const data = await r.json();
+          setStatus('Enqueued (job <code>' + esc(data.jobId) + '</code>). Polling…', 'info');
+          pollJob(data.jobId);
+        } else if (r.status === 409) {
+          setBusy(false);
+          setStatus('Another sync is already in progress. Try again shortly.', 'warning');
+        } else {
+          setBusy(false);
+          const body = await r.text();
+          setStatus('Trigger failed (' + r.status + '): ' + esc(body || '(no body)'), 'danger');
+        }
+      } catch (err) {
+        setBusy(false);
+        setStatus('Trigger error: ' + (err.message || err), 'danger');
+      }
+    });
+
+    modalEl.addEventListener('hidden.bs.modal', () => {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      clearStatus();
+      setBusy(false);
+    });
+  }
+  initErpSync();
+
   // ============ KEYBOARD ============
   document.addEventListener('keydown', (e) => {
     if (drawerEl.classList.contains('show') && e.key === 'Enter') launchReceiving();

@@ -118,6 +118,11 @@
         <button type="button" class="btn btn-outline-secondary" id="btn-export">
             <i class="bi bi-download me-1"></i> Export
         </button>
+        @* Phase 10.4 — manual ERP sync trigger. Hidden by default; JS reveals
+           when /api/auth/me reports role=admin. *@
+        <button type="button" class="btn btn-outline-secondary" id="btn-erp-sync" style="display: none;">
+            <i class="bi bi-arrow-repeat me-1"></i> <span id="btn-erp-sync-label">Sync ERP</span>
+        </button>
         <button type="button" class="btn btn-primary" id="btn-new-pull">
             <i class="bi bi-plus-lg me-1"></i> New Pull
         </button>
@@ -584,6 +589,47 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="iefm-save">Save changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ PHASE 10.4 — MANUAL ERP SYNC MODAL ============ -->
+<!-- Admin-only. Operator picks a warehouse + (optional) backfill window, -->
+<!-- POSTs to /api/admin/erp-sync/trigger, polls /jobs/{jobId} until       -->
+<!-- terminal state, then closes with a toast. The richer status page     -->
+<!-- (Phase 10.6) lives separately at /Admin/ErpSync.                     -->
+<div class="modal fade" id="erpSyncModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-arrow-repeat me-2"></i>
+                    Sync from ERP
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Pulls planning data from <code>BPI_PRS</code> for the chosen warehouse.
+                    Closed pulls are protected; operator-edited fields are preserved.
+                </p>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Warehouse *</label>
+                        <select class="form-select" id="erp-warehouse"></select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Backfill days</label>
+                        <input type="number" class="form-control" id="erp-backfill-days" value="30" min="1" max="365">
+                        <div class="form-text">DeliveryDate window. 30 days is the recurring default.</div>
+                    </div>
+                </div>
+                <div id="erp-sync-status" class="mt-3" style="display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="erp-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="erp-trigger">Start sync</button>
             </div>
         </div>
     </div>
