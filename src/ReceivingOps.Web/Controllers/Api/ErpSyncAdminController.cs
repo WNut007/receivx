@@ -82,10 +82,18 @@ public class ErpSyncAdminController : ControllerBase
 
         var backfillDays = (req.BackfillDays is int b && b > 0) ? b : 30;
 
-        var jobId = _bgClient.Enqueue<ErpSyncJob>(
-            j => j.RunForWarehouseAsync(req.WarehouseId, backfillDays));
+        // Capture operator name HERE — Hangfire serializes the lambda's args
+        // into the job payload, so by the time the worker thread runs there's
+        // no HttpContext to read User from. Falls back to "(unknown)" only if
+        // the [Authorize] gate somehow lets through an unidentified caller
+        // (shouldn't happen but the audit row stays writable).
+        var operatorName = User.FindFirst("displayName")?.Value
+                           ?? User.Identity?.Name
+                           ?? "(unknown)";
 
-        var operatorName = User.Identity?.Name ?? "(unknown)";
+        var jobId = _bgClient.Enqueue<ErpSyncJob>(
+            j => j.RunForWarehouseAsync(req.WarehouseId, backfillDays, operatorName));
+
         _log.LogInformation(
             "ErpSync manual trigger by {User} — jobId={JobId}, warehouse={Wh}, backfillDays={Days}",
             operatorName, jobId, req.WarehouseId, backfillDays);
