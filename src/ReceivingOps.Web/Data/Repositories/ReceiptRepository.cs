@@ -8,6 +8,7 @@ public class ReceiptRepository : IReceiptRepository
 {
     // Column list matches ReceiptJournalRow exactly so Dapper maps without explicit aliases.
     // PO context columns (§4.8 v2) are populated by 013_views_v2.sql.
+    // Phase 9.1 — last 7 columns are the ERP-sourced PullItem fields added by db/025.
     private const string JournalSelect = @"
         SELECT  Id, PullItemId, PullId, PullNumber, WarehouseId, WarehouseCode, WarehouseName,
                 ItemCode, ItemDescription,
@@ -16,7 +17,9 @@ public class ReceiptRepository : IReceiptRepository
                 HourOfDay, QtyReceived,
                 LotBatch, PalletId, BinLocation, QcStatus, Note,
                 ReceivedBy, ReceivedByName, ReceivedAt,
-                ReversesReceiptId, ReversedById, CancelReason, Kind
+                ReversesReceiptId, ReversedById, CancelReason, Kind,
+                ProductFamily, FromSubInventory, ToSubInventory, SpecialControl,
+                TrailId, PullLocation, PullPhase
         FROM    dbo.vw_TransactionsJournal ";
 
     private readonly IDbConnectionFactory _factory;

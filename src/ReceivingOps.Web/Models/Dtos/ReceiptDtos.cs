@@ -142,4 +142,17 @@ public class ReceiptJournalRow
     public Guid? ReversedById { get; set; }
     public string? CancelReason { get; set; }
     public string Kind { get; set; } = "receive";  // receive|voided|reversal
+
+    // Phase 9.1 — ERP-sourced PullItem fields surfaced via vw_TransactionsJournal
+    // (db/025). Optional on the row because PullItems values default to NULL
+    // until ERP push fills them. The Transactions Excel export writes them as
+    // columns 24..30; on-screen drawer / transactions page ignore them.
+    // PullLocation + PullPhase are aliased in the view to dodge name collisions.
+    public string? ProductFamily { get; set; }
+    public string? FromSubInventory { get; set; }
+    public string? ToSubInventory { get; set; }
+    public string? SpecialControl { get; set; }
+    public string? TrailId { get; set; }
+    public string? PullLocation { get; set; }
+    public string? PullPhase { get; set; }
 }
