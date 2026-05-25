@@ -72,10 +72,15 @@ OK "Mutex + controller surface present"
 # ----------------------------------------------------------------------------
 Step "ErpSyncJob exposes RunAsync + RunForWarehouseAsync"
 $jobBody = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs')
-foreach ($needle in @('Task RunAsync()', 'Task RunForWarehouseAsync(Guid warehouseId, int backfillDays)',
-                       '_mutex.TryAcquire()', '_mutex.Release()')) {
+if ($jobBody -notmatch 'Task RunAsync\(\)') {
+    Fail "ErpSyncJob missing parameterless RunAsync() entry point"
+}
+if ($jobBody -notmatch 'Task RunForWarehouseAsync\(Guid warehouseId, int backfillDays') {
+    Fail "ErpSyncJob missing RunForWarehouseAsync(Guid, int, ...) entry point"
+}
+foreach ($needle in @('_mutex.TryAcquire()', '_mutex.Release()')) {
     if ($jobBody -notmatch [regex]::Escape($needle)) {
-        Fail "ErpSyncJob missing: '$needle'"
+        Fail "ErpSyncJob missing mutex call: '$needle'"
     }
 }
 OK "Both entry points use the singleton mutex"

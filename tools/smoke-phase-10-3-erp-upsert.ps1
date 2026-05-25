@@ -45,7 +45,7 @@ Step "ErpUpsertResult + IErpUpsertService + ErpUpsertService present"
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpUpsertResult.cs') 'public class ErpUpsertResult'
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpUpsertResult.cs') 'public class PullOutcome'
 AssertFile (Join-Path $webRoot 'Services\ErpSync\IErpUpsertService.cs') 'public interface IErpUpsertService'
-AssertFile (Join-Path $webRoot 'Services\ErpSync\IErpUpsertService.cs') 'UpsertAsync(ErpSyncDraft'
+AssertFile (Join-Path $webRoot 'Services\ErpSync\IErpUpsertService.cs') 'Task<ErpUpsertResult> UpsertAsync('
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpUpsertService.cs') 'public class ErpUpsertService : IErpUpsertService'
 OK "All three components present"
 
@@ -55,10 +55,12 @@ OK "All three components present"
 Step "ErpSyncJob calls UpsertAsync after ReadAndTransformAsync"
 $jobBody = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs')
 if ($jobBody -notmatch 'IErpUpsertService') { Fail "ErpSyncJob does not inject IErpUpsertService" }
-if ($jobBody -notmatch 'UpsertAsync\(draft\)') { Fail "ErpSyncJob does not call UpsertAsync(draft)" }
-# Order matters — read before upsert (compile order doesn't enforce it, source order is the contract).
-$readPos = $jobBody.IndexOf('ReadAndTransformAsync')
-$upsertPos = $jobBody.IndexOf('UpsertAsync')
+if ($jobBody -notmatch 'UpsertAsync\(draft') { Fail "ErpSyncJob does not call UpsertAsync(draft, …)" }
+# Order matters — read before upsert. Anchor on the call site
+# ("await _read.ReadAndTransformAsync(" / "await _upsert.UpsertAsync(") so
+# XML-doc comments mentioning the methods don't false-positive.
+$readPos = $jobBody.IndexOf('await _read.ReadAndTransformAsync(')
+$upsertPos = $jobBody.IndexOf('await _upsert.UpsertAsync(')
 if ($readPos -lt 0 -or $upsertPos -lt 0 -or $readPos -gt $upsertPos) {
     Fail "ErpSyncJob must call ReadAndTransformAsync BEFORE UpsertAsync"
 }
