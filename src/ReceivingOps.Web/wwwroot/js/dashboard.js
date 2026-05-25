@@ -807,7 +807,7 @@
         erp(it.productFamily) +
         erp(it.fromSubInventory) +
         erp(it.toSubInventory) +
-        erp(it.trailId) +
+        erp(it.trialId) +
         erp(it.location) +
         erp(it.phase) +
         erp(it.specialControl) +
@@ -1009,7 +1009,7 @@
     document.getElementById('iefm-product-family').value  = it.productFamily    || '';
     document.getElementById('iefm-from-sub').value        = it.fromSubInventory || '';
     document.getElementById('iefm-to-sub').value          = it.toSubInventory   || '';
-    document.getElementById('iefm-trail-id').value        = it.trailId          || '';
+    document.getElementById('iefm-trial-id').value        = it.trialId          || '';
     document.getElementById('iefm-location').value        = it.location         || '';
     document.getElementById('iefm-phase').value           = it.phase            || '';
     document.getElementById('iefm-special-control').value = it.specialControl   || '';
@@ -1030,7 +1030,7 @@
       fromSubInventory: v('iefm-from-sub'),
       toSubInventory:   v('iefm-to-sub'),
       specialControl:   v('iefm-special-control'),
-      trailId:          v('iefm-trail-id'),
+      trialId:          v('iefm-trial-id'),
       location:         v('iefm-location'),
       phase:            v('iefm-phase'),
     };
