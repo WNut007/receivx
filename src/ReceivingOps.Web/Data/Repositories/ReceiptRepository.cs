@@ -19,7 +19,7 @@ public class ReceiptRepository : IReceiptRepository
                 ReceivedBy, ReceivedByName, ReceivedAt,
                 ReversesReceiptId, ReversedById, CancelReason, Kind,
                 ProductFamily, FromSubInventory, ToSubInventory, SpecialControl,
-                TrailId, PullLocation, PullPhase
+                TrialId, PullLocation, PullPhase
         FROM    dbo.vw_TransactionsJournal ";
 
     private readonly IDbConnectionFactory _factory;

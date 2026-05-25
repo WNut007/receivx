@@ -152,7 +152,7 @@ public class ReceiptJournalRow
     public string? FromSubInventory { get; set; }
     public string? ToSubInventory { get; set; }
     public string? SpecialControl { get; set; }
-    public string? TrailId { get; set; }
+    public string? TrialId { get; set; }
     public string? PullLocation { get; set; }
     public string? PullPhase { get; set; }
 }

@@ -160,7 +160,7 @@ public class PullRepository : IPullRepository
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
-                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
+                    pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -199,7 +199,7 @@ public class PullRepository : IPullRepository
                     FromSubInventory = r.FromSubInventory,
                     ToSubInventory = r.ToSubInventory,
                     SpecialControl = r.SpecialControl,
-                    TrailId = r.TrailId,
+                    TrialId = r.TrialId,
                     Location = r.Location,
                     Phase = r.Phase,
                 };
@@ -332,7 +332,7 @@ public class PullRepository : IPullRepository
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
-                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
+                    pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -351,7 +351,7 @@ public class PullRepository : IPullRepository
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
-                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
+                    pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -378,7 +378,7 @@ public class PullRepository : IPullRepository
                    FromSubInventory = @FromSubInventory,
                    ToSubInventory   = @ToSubInventory,
                    SpecialControl   = @SpecialControl,
-                   TrailId          = @TrailId,
+                   TrialId          = @TrialId,
                    Location         = @Location,
                    [Phase]          = @Phase
              WHERE Id = @ItemId;";
@@ -391,7 +391,7 @@ public class PullRepository : IPullRepository
             req.FromSubInventory,
             req.ToSubInventory,
             req.SpecialControl,
-            req.TrailId,
+            req.TrialId,
             req.Location,
             req.Phase,
         }, cancellationToken: ct));
@@ -419,7 +419,7 @@ public class PullRepository : IPullRepository
                     FromSubInventory = r.FromSubInventory,
                     ToSubInventory = r.ToSubInventory,
                     SpecialControl = r.SpecialControl,
-                    TrailId = r.TrailId,
+                    TrialId = r.TrialId,
                     Location = r.Location,
                     Phase = r.Phase,
                 };
@@ -453,7 +453,7 @@ public class PullRepository : IPullRepository
         public string? FromSubInventory { get; set; }
         public string? ToSubInventory { get; set; }
         public string? SpecialControl { get; set; }
-        public string? TrailId { get; set; }
+        public string? TrialId { get; set; }
         public string? Location { get; set; }
         public string? Phase { get; set; }
         public byte? HourOfDay { get; set; }

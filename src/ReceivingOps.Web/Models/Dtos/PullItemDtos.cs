@@ -91,7 +91,7 @@ public class PullItemExtendedFieldsUpdateRequest
     public string? FromSubInventory { get; set; }
     public string? ToSubInventory { get; set; }
     public string? SpecialControl { get; set; }
-    public string? TrailId { get; set; }
+    public string? TrialId { get; set; }
     public string? Location { get; set; }
     public string? Phase { get; set; }
 }

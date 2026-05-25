@@ -363,7 +363,7 @@ public class PullItemAdminService : IPullItemAdminService
                        FromSubInventory = @FromSubInventory,
                        ToSubInventory   = @ToSubInventory,
                        SpecialControl   = @SpecialControl,
-                       TrailId          = @TrailId,
+                       TrialId          = @TrialId,
                        Location         = @Location,
                        [Phase]          = @Phase
                  WHERE Id = @Id;",
@@ -374,7 +374,7 @@ public class PullItemAdminService : IPullItemAdminService
                     req.FromSubInventory,
                     req.ToSubInventory,
                     req.SpecialControl,
-                    req.TrailId,
+                    req.TrialId,
                     req.Location,
                     req.Phase,
                 }, transaction: tx, cancellationToken: ct));
@@ -473,7 +473,7 @@ public class PullItemAdminService : IPullItemAdminService
         Check(req.FromSubInventory, nameof(req.FromSubInventory));
         Check(req.ToSubInventory,   nameof(req.ToSubInventory));
         Check(req.SpecialControl,   nameof(req.SpecialControl));
-        Check(req.TrailId,          nameof(req.TrailId));
+        Check(req.TrialId,          nameof(req.TrialId));
         Check(req.Location,         nameof(req.Location));
         Check(req.Phase,            nameof(req.Phase));
 
