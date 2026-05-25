@@ -10,6 +10,54 @@ for fine-grained authorship.
 
 ---
 
+## [2.3.1] — 2026-05-25 — Phase 9.1: 7 ERP-sourced PullItem fields
+
+### Added
+- Migration `db/024` — 7 nullable `NVARCHAR(50)` columns on `dbo.PullItems`:
+  `ProductFamily`, `FromSubInventory`, `ToSubInventory`, `SpecialControl`,
+  `TrailId`, `Location`, `[Phase]`. Same idempotent per-column
+  `COL_LENGTH` pattern as `db/021`.
+- Migration `db/025` — `CREATE OR ALTER vw_TransactionsJournal` appending
+  the 7 PullItem fields. `pi.Location` aliased `PullLocation` to avoid
+  collision with the Phase 9 `PurchaseOrderLines.Location` column;
+  `pi.[Phase]` aliased `PullPhase` so readers don't bracket-escape too.
+- `PullItem` entity + `PullItemDto` (read shape) + nested `PullItemRow`
+  projection all gain 7 new nullable properties; `PullRepository`'s 3
+  item-grained SELECTs (`GetByIdAsync`, `GetItemsAsync`,
+  `GetItemByIdAsync`) project them.
+- New DTO `PullItemExtendedFieldsUpdateRequest` (bulk-overwrite shape).
+- New endpoint **PUT `/api/pulls/{id}/items/{itemId}/extended-fields`** —
+  `CanManagePulls` policy (admin OR supervisor); refuses closed pulls
+  with 409; writes one audit row per call. Service layer reuses the
+  existing `LockPullAsync` → `RefuseClosed` → `LockItemOnPullAsync`
+  pattern so concurrency semantics match the rest of the items surface.
+- Dashboard drawer items table grows 7 visually-grouped ERP columns
+  (`Family`, `From Sub`, `To Sub`, `Trail`, `Loc`, `Phase`, `Special`)
+  with `--surface-2` background tint + mono 11px font + ellipsis-clamp
+  at 110px + left border separator. Tag icon in actions opens the new
+  `itemExtendedFieldsModal`. Blank inputs save as `NULL` to keep the
+  ERP-vs-Receivx value comparison clean for the Phase 10 push.
+- `ReceiptJournalRow` DTO + `JournalSelect` SQL extend with 7 new
+  columns; `TransactionsExportJob` writes them as columns 24..30 in
+  the XLSX (`SpecialControl`-last ordering matches the drawer band).
+- Smoke `smoke-phase-9-1-pull-extended-fields.ps1` covers 9 paths:
+  schema (db/024) · view (db/025) · API round-trip (PUT + GET) ·
+  operator-blocked 403 · closed-pull 409 · audit row written · XLSX
+  headers · XLSX marker value via PullItem JOIN · cleanup. Picks an
+  open pull dynamically (no hard-coded fixture) so it's rerunnable.
+- `WaitForFile` smoke helper hardened: waits for non-zero size AND
+  exclusive-open success, sidestepping a Hangfire-mid-write race the
+  original 0-byte path-exists check fell into.
+
+### Notes
+- **Editable by operators**, unlike the Phase 9 PO Line fields: the
+  ERP push isn't a hard prerequisite — supervisor/admin can fill in
+  the gap by paper/email until Phase 10 lands.
+- No indexes — same policy as `db/021`/Phase 9; observe before adding.
+- Battery: **42/42 PASS** (Phase 9.1 smoke added to default battery).
+
+---
+
 ## [2.3] — 2026-05-25 — Phase 9: 20 ERP-sourced PO Line fields
 
 ### Added

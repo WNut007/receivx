@@ -2,9 +2,44 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.3 shipped on `main` (2026-05-25, tag `v2.3`). v2.3 ships
-**Phase 9** — schema + display + Excel prep for the Phase 10 ERP
-integration. Migration `db/021` adds 20 nullable columns to
+**Status:** v2.3.1 shipped on `main` (2026-05-25, tag `v2.3.1`). v2.3.1
+ships **Phase 9.1** — 7 ERP-sourced fields on `dbo.PullItems`:
+`ProductFamily`, `FromSubInventory`, `ToSubInventory`, `SpecialControl`,
+`TrailId`, `Location`, `[Phase]` (all `NVARCHAR(50) NULL`). Migration
+`db/024` adds the columns with the same idempotent per-column
+`COL_LENGTH` pattern as `db/021`. Migration `db/025`
+`CREATE OR ALTER vw_TransactionsJournal` to append the 7 PullItem
+fields — `pi.Location` aliased `PullLocation` to dodge collision
+with the Phase 9 `PurchaseOrderLines.Location`; `pi.[Phase]` aliased
+`PullPhase`. **Unlike Phase 9, these fields are editable in-app**:
+operators (admin + supervisor, gated by `CanManagePulls`) can fill
+the gap until the Phase 10 ERP push lands. New endpoint **PUT
+`/api/pulls/{id}/items/{itemId}/extended-fields`** — bulk-overwrite
+DTO `PullItemExtendedFieldsUpdateRequest`; refuses closed pulls with
+409; writes one audit row per call; reuses the existing service-layer
+`LockPullAsync` → `RefuseClosed` → `LockItemOnPullAsync` pattern so
+concurrency semantics match the rest of the items surface. Dashboard
+drawer's items table grows 7 visually-grouped ERP columns
+(`Family`/`From Sub`/`To Sub`/`Trail`/`Loc`/`Phase`/`Special`) with
+`--surface-2` bg + mono 11px + ellipsis-clamp 110px + left border
+separator. Tag icon in the actions column opens new
+`itemExtendedFieldsModal`. Blank inputs save as NULL so the
+ERP-vs-Receivx value comparison stays clean for Phase 10. Excel
+export: `ReceiptJournalRow` DTO + `JournalSelect` SQL extend with 7
+new columns; `TransactionsExportJob` writes them as cols 24..30
+(SpecialControl-last to match the drawer band). View JOIN does all
+the work — no separate repo method or join at export time.
+Smoke `smoke-phase-9-1-pull-extended-fields` covers 9 paths: schema
+(db/024), view (db/025), API round-trip (PUT + GET), operator
+blocked (403), closed pull rejected (409), audit row, XLSX headers,
+XLSX marker value end-to-end via PullItem JOIN, cleanup.
+`WaitForFile` helper hardened to wait for non-zero-size +
+exclusive-open success (avoids Hangfire-mid-write race).
+**Battery: 42/42 PASS** at v2.3.1 tip.
+
+v2.3 lineage: shipped **Phase 9** — schema + display + Excel prep
+for the Phase 10 ERP integration. Migration `db/021` adds 20
+nullable columns to
 `PurchaseOrderLines`: 10 tracking IDs (`InvoiceNo`, `KanbanNo`,
 `AsnNo`, `PCCNo`, `BatchNo`, `ManufacturingControlNo`,
 `ManufacturingReferenceNo`, `CustomerReferenceNo`,
@@ -433,8 +468,29 @@ See BUILD_PROMPT.md §14.
 
 # Session handoff — 2026-05-25
 
-Latest tag: v2.3 (Phase 9 close — 20 ERP-sourced PO Line fields)
-Battery: 41/41 PASS · main = origin/main · all clean
+Latest tag: v2.3.1 (Phase 9.1 close — 7 ERP-sourced PullItem fields)
+Battery: 42/42 PASS · main 6 commits ahead of origin/main · all clean
+
+## Phase 9.1 — Done
+
+- ✅ Migration db/024 — 7 nullable ERP columns on PullItems
+  (ProductFamily, FromSubInventory, ToSubInventory, SpecialControl,
+   TrailId, Location, [Phase])
+- ✅ Migration db/025 — CREATE OR ALTER vw_TransactionsJournal appends
+  the 7 fields (PullLocation + PullPhase aliased)
+- ✅ PullItem entity + PullItemDto + PullItemRow extended
+- ✅ PullRepository.UpdateExtendedFieldsAsync + 3 SELECTs project new cols
+- ✅ PullItemExtendedFieldsUpdateRequest DTO + service +
+  PUT /api/pulls/{id}/items/{itemId}/extended-fields (CanManagePulls)
+- ✅ Dashboard drawer items table: 7 visually-grouped ERP columns +
+  itemExtendedFieldsModal + tag-icon action
+- ✅ ReceiptJournalRow + JournalSelect + TransactionsExportJob extended
+  for XLSX (cols 24..30, SpecialControl-last)
+- ✅ Smoke smoke-phase-9-1-pull-extended-fields covers 9 paths
+  (schema/view/API/operator-403/closed-409/audit/XLSX headers/XLSX
+  marker via PullItem JOIN/cleanup)
+- ✅ WaitForFile helper hardened (non-zero size + exclusive-open)
+- ✅ Tag v2.3.1 — Phase 9.1 milestone closed
 
 ## Phase 9 — Done
 
