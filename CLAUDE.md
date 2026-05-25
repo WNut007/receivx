@@ -2,10 +2,35 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.3.1 shipped on `main` (2026-05-25, tag `v2.3.1`). v2.3.1
+**Status:** v2.3.2 shipped on `main` (2026-05-25, tag `v2.3.2`). v2.3.2
+is a typo fix on v2.3.1 — the Phase 9.1 column shipped as `TrailId`
+(T-R-A-I-L) but is actually a manufacturing **trial** identifier
+(T-R-I-A-L). Migration `db/026` `sp_rename`s
+`dbo.PullItems.TrailId` → `TrialId` (idempotent — no-ops if already
+applied; throws if neither column exists). Migration `db/027`
+re-`CREATE OR ALTER`s `vw_TransactionsJournal` against `pi.TrialId`
+(sp_rename doesn't update view bindings, so the view's SELECT would
+be invalid between db/026 and db/027 — they're designed to run
+together). Rename also propagated to: `PullItem` entity, `PullItemDto`,
+`PullItemExtendedFieldsUpdateRequest`, `ReceiptJournalRow`,
+`PullRepository` (3 SELECTs + UPDATE + `PullItemRow`),
+`ReceiptRepository.JournalSelect`, `PullItemAdminService`,
+`TransactionsExportJob` (XLSX col 27 header + cell), dashboard
+drawer items-table "Trail" → "Trial" column header,
+`iefm-trail-id` → `iefm-trial-id` input id, "Trail ID" → "Trial ID"
+label, `dashboard.js` row render + modal load + save payload. Smoke
+`smoke-phase-9-1-pull-extended-fields` updated end-to-end: payload
+key, GET assertion, XLSX header check, cleanup SQL, marker value
+`P91-TRAIL` → `P91-TRIAL`. No data migration needed (`sp_rename`
+preserves values). Historical `db/024` + `db/025` left untouched —
+fresh installs run `024 → 025 → 026 → 027` and land in the
+corrected end-state. **Battery: 42/42 PASS** at v2.3.2 tip.
+
+v2.3.1 lineage:
 ships **Phase 9.1** — 7 ERP-sourced fields on `dbo.PullItems`:
 `ProductFamily`, `FromSubInventory`, `ToSubInventory`, `SpecialControl`,
-`TrailId`, `Location`, `[Phase]` (all `NVARCHAR(50) NULL`). Migration
+`TrialId` (renamed from `TrailId` in v2.3.2),
+`Location`, `[Phase]` (all `NVARCHAR(50) NULL`). Migration
 `db/024` adds the columns with the same idempotent per-column
 `COL_LENGTH` pattern as `db/021`. Migration `db/025`
 `CREATE OR ALTER vw_TransactionsJournal` to append the 7 PullItem
@@ -20,7 +45,7 @@ DTO `PullItemExtendedFieldsUpdateRequest`; refuses closed pulls with
 `LockPullAsync` → `RefuseClosed` → `LockItemOnPullAsync` pattern so
 concurrency semantics match the rest of the items surface. Dashboard
 drawer's items table grows 7 visually-grouped ERP columns
-(`Family`/`From Sub`/`To Sub`/`Trail`/`Loc`/`Phase`/`Special`) with
+(`Family`/`From Sub`/`To Sub`/`Trial`/`Loc`/`Phase`/`Special`) with
 `--surface-2` bg + mono 11px + ellipsis-clamp 110px + left border
 separator. Tag icon in the actions column opens new
 `itemExtendedFieldsModal`. Blank inputs save as NULL so the
@@ -35,7 +60,7 @@ blocked (403), closed pull rejected (409), audit row, XLSX headers,
 XLSX marker value end-to-end via PullItem JOIN, cleanup.
 `WaitForFile` helper hardened to wait for non-zero-size +
 exclusive-open success (avoids Hangfire-mid-write race).
-**Battery: 42/42 PASS** at v2.3.1 tip.
+**Battery: 42/42 PASS** at v2.3.1 tip (re-verified at v2.3.2 after rename).
 
 v2.3 lineage: shipped **Phase 9** — schema + display + Excel prep
 for the Phase 10 ERP integration. Migration `db/021` adds 20

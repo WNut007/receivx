@@ -10,6 +10,46 @@ for fine-grained authorship.
 
 ---
 
+## [2.3.2] — 2026-05-25 — Typo fix: `TrailId` → `TrialId`
+
+### Changed
+- Migration `db/026` — `sp_rename dbo.PullItems.TrailId` → `TrialId`.
+  Phase 9.1 (`db/024`) shipped the column as `TrailId` (T-R-A-I-L);
+  the field is actually a manufacturing **trial** identifier
+  (T-R-I-A-L), so the spelling was wrong. Rename is idempotent
+  (no-ops if already renamed; throws if neither column exists so
+  the operator runs `db/024` first).
+- Migration `db/027` — `CREATE OR ALTER vw_TransactionsJournal` to
+  reference `pi.TrialId` after the rename. The two migrations are
+  designed to run together; running `db/026` without `db/027`
+  leaves the view invalid until `db/027` re-defines it.
+- Rename propagated everywhere `TrailId` appeared: `PullItem` entity,
+  `PullItemDto`, `PullItemExtendedFieldsUpdateRequest`,
+  `ReceiptJournalRow`, `PullRepository` (3 SELECTs + UPDATE +
+  `PullItemRow` private), `ReceiptRepository.JournalSelect`,
+  `PullItemAdminService` (SQL + validation), `TransactionsExportJob`
+  (XLSX header + cell write), `Dashboard/Index.cshtml` (drawer
+  items-table "Trail" column + `iefm-trail-id` → `iefm-trial-id` +
+  "Trail ID" label → "Trial ID"), `dashboard.js` (modal load + save +
+  row render). Smoke `smoke-phase-9-1-pull-extended-fields`
+  updated: payload key, GET assertion, XLSX header check, cleanup
+  SQL, plus marker value `P91-TRAIL` → `P91-TRIAL` for consistency.
+- No data migration needed — `sp_rename` preserves all stored values.
+
+### Notes
+- Historical migrations `db/024` + `db/025` are NOT edited (they
+  stay as their original shipped form). Fresh installs run the
+  sequence `024 (create TrailId) → 025 (view w/ TrailId) → 026
+  (rename) → 027 (view w/ TrialId)` and land in the corrected
+  end-state.
+- Wire format / JSON keys flip: clients sending `trailId` will be
+  silently ignored (ASP.NET binder skips unknown keys) — the Phase
+  9.1 modal/API only just shipped at v2.3.1 so no external integrations
+  exist yet.
+- Battery: 42/42 PASS.
+
+---
+
 ## [2.3.1] — 2026-05-25 — Phase 9.1: 7 ERP-sourced PullItem fields
 
 ### Added
