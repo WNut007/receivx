@@ -77,3 +77,21 @@ public class PullItemWindowUpdateRequest
 {
     public int ExpectedQty { get; set; }
 }
+
+/// <summary>
+/// Phase 9.1 — PUT /api/pulls/{id}/items/{itemId}/extended-fields body.
+/// All 7 fields are nullable strings (NVARCHAR(50) at the DB); blanks
+/// from the UI are coerced to null at the controller. The endpoint
+/// always overwrites the full set (no partial PATCH) so the request
+/// shape matches what an ERP push will eventually send.
+/// </summary>
+public class PullItemExtendedFieldsUpdateRequest
+{
+    public string? ProductFamily { get; set; }
+    public string? FromSubInventory { get; set; }
+    public string? ToSubInventory { get; set; }
+    public string? SpecialControl { get; set; }
+    public string? TrailId { get; set; }
+    public string? Location { get; set; }
+    public string? Phase { get; set; }
+}

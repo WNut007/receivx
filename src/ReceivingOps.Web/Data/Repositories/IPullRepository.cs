@@ -31,4 +31,10 @@ public interface IPullRepository
     // dropped by HAVING). Ordered by (PoNumber, PoLineNumber, ItemCode) so
     // the service can group sequentially.
     Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default);
+
+    // Phase 9.1 — bulk overwrite of the 7 ERP-sourced PullItem fields. Used by
+    // the service-layer UpdateExtendedFieldsAsync; raw row count returned so
+    // the service can distinguish "no such item" (0) from "updated" (1).
+    Task<int> UpdateExtendedFieldsAsync(
+        Guid itemId, PullItemExtendedFieldsUpdateRequest req, CancellationToken ct = default);
 }

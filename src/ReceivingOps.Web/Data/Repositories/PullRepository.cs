@@ -159,6 +159,8 @@ public class PullRepository : IPullRepository
         const string itemsSql = @"
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
+                    pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
+                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -193,6 +195,13 @@ public class PullRepository : IPullRepository
                     Status = r.Status,
                     Remark = r.Remark,
                     SortOrder = r.SortOrder,
+                    ProductFamily = r.ProductFamily,
+                    FromSubInventory = r.FromSubInventory,
+                    ToSubInventory = r.ToSubInventory,
+                    SpecialControl = r.SpecialControl,
+                    TrailId = r.TrailId,
+                    Location = r.Location,
+                    Phase = r.Phase,
                 };
                 itemsByGuid.Add(r.Id, item);
             }
@@ -322,6 +331,8 @@ public class PullRepository : IPullRepository
         const string sql = @"
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
+                    pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
+                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -339,6 +350,8 @@ public class PullRepository : IPullRepository
         const string sql = @"
             SELECT  pi.Id, pi.ItemCode, pi.Description, pi.VendorCode, pi.VendorName,
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
+                    pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
+                    pi.SpecialControl, pi.TrailId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
@@ -349,6 +362,39 @@ public class PullRepository : IPullRepository
         var rows = await conn.QueryAsync<PullItemRow>(
             new CommandDefinition(sql, new { PullId = pullId, ItemId = itemId }, cancellationToken: ct));
         return AssembleItems(rows).FirstOrDefault();
+    }
+
+    // Phase 9.1 — overwrite the 7 ERP-sourced fields on one PullItem. Pull
+    // closed-state + role gating happens in the service layer; this is a
+    // direct SQL UPDATE that returns the affected row count so the service
+    // can map 0 → 404. [Phase] is bracketed because the column name shadows
+    // the T-SQL PHASE keyword in some grammar contexts.
+    public async Task<int> UpdateExtendedFieldsAsync(
+        Guid itemId, PullItemExtendedFieldsUpdateRequest req, CancellationToken ct = default)
+    {
+        const string sql = @"
+            UPDATE dbo.PullItems
+               SET ProductFamily    = @ProductFamily,
+                   FromSubInventory = @FromSubInventory,
+                   ToSubInventory   = @ToSubInventory,
+                   SpecialControl   = @SpecialControl,
+                   TrailId          = @TrailId,
+                   Location         = @Location,
+                   [Phase]          = @Phase
+             WHERE Id = @ItemId;";
+
+        using var conn = _factory.Create();
+        return await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            ItemId = itemId,
+            req.ProductFamily,
+            req.FromSubInventory,
+            req.ToSubInventory,
+            req.SpecialControl,
+            req.TrailId,
+            req.Location,
+            req.Phase,
+        }, cancellationToken: ct));
     }
 
     private static IEnumerable<PullItemDto> AssembleItems(IEnumerable<PullItemRow> rows)
@@ -369,6 +415,13 @@ public class PullRepository : IPullRepository
                     Status = r.Status,
                     Remark = r.Remark,
                     SortOrder = r.SortOrder,
+                    ProductFamily = r.ProductFamily,
+                    FromSubInventory = r.FromSubInventory,
+                    ToSubInventory = r.ToSubInventory,
+                    SpecialControl = r.SpecialControl,
+                    TrailId = r.TrailId,
+                    Location = r.Location,
+                    Phase = r.Phase,
                 };
                 byGuid.Add(r.Id, item);
             }
@@ -396,6 +449,13 @@ public class PullRepository : IPullRepository
         public string Status { get; set; } = "normal";
         public string? Remark { get; set; }
         public int SortOrder { get; set; }
+        public string? ProductFamily { get; set; }
+        public string? FromSubInventory { get; set; }
+        public string? ToSubInventory { get; set; }
+        public string? SpecialControl { get; set; }
+        public string? TrailId { get; set; }
+        public string? Location { get; set; }
+        public string? Phase { get; set; }
         public byte? HourOfDay { get; set; }
         public int? ExpectedQty { get; set; }
         public int? ReceivedQty { get; set; }

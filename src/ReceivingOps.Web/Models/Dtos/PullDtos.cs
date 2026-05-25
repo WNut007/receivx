@@ -64,6 +64,18 @@ public class PullItemDto
     public string? Remark { get; set; }
     public int SortOrder { get; set; }
     public List<PullItemWindowDto> Windows { get; set; } = new();
+
+    // Phase 9.1 — ERP-sourced extended fields. All nullable; editable via the
+    // PUT /api/pulls/{id}/items/{itemId}/extended-fields endpoint when ERP
+    // hasn't pushed them yet. JSON keys ride the project's camelCase
+    // serializer (productFamily, fromSubInventory, ...).
+    public string? ProductFamily { get; set; }
+    public string? FromSubInventory { get; set; }
+    public string? ToSubInventory { get; set; }
+    public string? SpecialControl { get; set; }
+    public string? TrailId { get; set; }
+    public string? Location { get; set; }
+    public string? Phase { get; set; }
 }
 
 public class PullItemWindowDto
