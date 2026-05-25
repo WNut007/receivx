@@ -6,10 +6,9 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// <summary>
 /// Phase 10 — Hangfire-scheduled ETL pull from the ERP source DB.
 ///
-/// <para>10.1 stubbed this as <c>SELECT @@VERSION</c>; 10.2 replaces the
-/// body with a real read+transform via <see cref="IErpSyncService"/>.
-/// Persistence (the upsert into Pulls / PullItems / PullItemWindows)
-/// lands in 10.3.</para>
+/// <para>Read → transform (10.2) → upsert (10.3). End-to-end flow in
+/// one method so the [DisableConcurrentExecution] mutex covers everything
+/// from the ERP SELECT through the last Pulls table commit.</para>
 ///
 /// <para>WarehouseId resolution: BPI_PRS has no warehouse column. The
 /// recurring path uses <see cref="ErpSyncOptions.DefaultWarehouseId"/>;
@@ -27,16 +26,19 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// </summary>
 public class ErpSyncJob
 {
-    private readonly IErpSyncService _service;
+    private readonly IErpSyncService _read;
+    private readonly IErpUpsertService _upsert;
     private readonly ErpSyncOptions _opts;
     private readonly ILogger<ErpSyncJob> _log;
 
     public ErpSyncJob(
-        IErpSyncService service,
+        IErpSyncService read,
+        IErpUpsertService upsert,
         IOptions<ErpSyncOptions> opts,
         ILogger<ErpSyncJob> log)
     {
-        _service = service;
+        _read = read;
+        _upsert = upsert;
         _opts = opts.Value;
         _log = log;
     }
@@ -57,15 +59,29 @@ public class ErpSyncJob
             "ErpSync recurring starting — warehouse={Wh}, backfillDays={Days}",
             _opts.DefaultWarehouseId, _opts.BackfillDays);
 
-        var draft = await _service.ReadAndTransformAsync(
+        var draft = await _read.ReadAndTransformAsync(
             _opts.DefaultWarehouseId, _opts.BackfillDays);
 
         _log.LogInformation(
-            "ErpSync recurring transform complete — source={Src}, skipped={Skip}, " +
+            "ErpSync transform — source={Src}, skipped={Skip}, " +
             "pulls={Pulls}, items={Items}, totalExpected={Exp}",
             draft.SourceRowCount, draft.SkippedRowCount,
             draft.Pulls.Count, draft.ItemCount, draft.TotalExpected);
 
-        // 10.3 will pass this draft to an IErpUpsertService here.
+        if (draft.Pulls.Count == 0)
+        {
+            _log.LogInformation("ErpSync transform produced no pulls — skipping upsert.");
+            return;
+        }
+
+        var outcome = await _upsert.UpsertAsync(draft);
+        _log.LogInformation(
+            "ErpSync upsert — created={Created}, updated={Updated}, " +
+            "skippedClosed={Skipped}, errors={Errors}, " +
+            "itemsAdded={Added}, itemsCanceled={Canceled}",
+            outcome.Created, outcome.Updated, outcome.SkippedClosed,
+            outcome.Errors, outcome.ItemsAdded, outcome.ItemsCanceled);
+
+        // 10.5 will persist `outcome.PullOutcomes` as per-pull audit rows.
     }
 }
