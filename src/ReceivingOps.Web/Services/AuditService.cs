@@ -65,6 +65,48 @@ public class AuditService : IAuditService
         }
     }
 
+    public async Task WriteSystemAsync(IDbConnection conn, IDbTransaction? tx,
+        string actorName, string actionType, string? entityType, string? entityId,
+        string message, CancellationToken ct = default)
+    {
+        try
+        {
+            await conn.ExecuteAsync(new CommandDefinition(InsertSql,
+                new
+                {
+                    ActionType = actionType,
+                    EntityType = entityType,
+                    EntityId = entityId,
+                    Message = message,
+                    ActorUserId = (Guid?)null,
+                    ActorName = actorName,
+                    IpAddress = (string?)null,
+                },
+                transaction: tx,
+                cancellationToken: ct));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "System audit write failed: {ActionType} {EntityType}/{EntityId}",
+                actionType, entityType, entityId);
+        }
+    }
+
+    public async Task WriteSystemAsync(string actorName, string actionType,
+        string? entityType, string? entityId, string message,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var conn = _factory.Create();
+            await WriteSystemAsync(conn, null, actorName, actionType, entityType, entityId, message, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Standalone system audit write failed: {ActionType}", actionType);
+        }
+    }
+
     private (Guid? actorId, string? actorName, string? ip) ResolveActor()
     {
         var ctx = _httpContext.HttpContext;
