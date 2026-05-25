@@ -102,10 +102,21 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             LEFT  JOIN dbo.Pulls      p  ON p.Id  = po.PullId
             WHERE   po.Id = @Id;";
 
+        // Phase 9 (db/021) added 20 ERP-sourced columns. Selected here so the
+        // PO Detail page + Excel export get them without a second round trip;
+        // the 15 non-displayed fields cost ~zero on a per-PO query (one PO
+        // rarely has hundreds of lines), so always-select wins over
+        // shape-juggling DTOs.
         const string linesSql = @"
             SELECT  Id, PurchaseOrderId, LineNumber, ItemCode, Description,
                     OrderedQty, ReceivedQty,
-                    (OrderedQty - ReceivedQty) AS RemainingQty
+                    (OrderedQty - ReceivedQty) AS RemainingQty,
+                    InvoiceNo, KanbanNo, AsnNo, PCCNo, BatchNo,
+                    ManufacturingControlNo, ManufacturingReferenceNo,
+                    CustomerReferenceNo, ExportDeclarationNo, VendorItem,
+                    PalletId, VmiPalletId, Location, Building,
+                    SubInventory, ToLocation, ProductionLine, OrderRound,
+                    DeliveryDate, Note
             FROM    dbo.PurchaseOrderLines
             WHERE   PurchaseOrderId = @Id
             ORDER BY LineNumber;";

@@ -35,6 +35,31 @@ public class PoLineRow
     public int OrderedQty { get; set; }
     public int ReceivedQty { get; set; }
     public int RemainingQty { get; set; }    // OrderedQty - ReceivedQty
+
+    // Phase 9 — ERP-sourced fields (migration db/021). All nullable; populated
+    // by Phase 10's POST /api/erp/pos. The PO Detail UI surfaces 5 of these
+    // (InvoiceNo, SubInventory, ToLocation, PalletId, VmiPalletId); the other
+    // 15 are API + Excel-export only.
+    public string? InvoiceNo { get; set; }
+    public string? KanbanNo { get; set; }
+    public string? AsnNo { get; set; }
+    public string? PCCNo { get; set; }
+    public string? BatchNo { get; set; }
+    public string? ManufacturingControlNo { get; set; }
+    public string? ManufacturingReferenceNo { get; set; }
+    public string? CustomerReferenceNo { get; set; }
+    public string? ExportDeclarationNo { get; set; }
+    public string? VendorItem { get; set; }
+    public string? PalletId { get; set; }
+    public string? VmiPalletId { get; set; }
+    public string? Location { get; set; }
+    public string? Building { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+    public string? ProductionLine { get; set; }
+    public string? OrderRound { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+    public string? Note { get; set; }
 }
 
 /// <summary>GET /api/pos/{id}: header + lines + recent receipts referencing each line.</summary>
