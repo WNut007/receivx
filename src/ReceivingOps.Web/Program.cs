@@ -14,6 +14,7 @@ using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
 using ReceivingOps.Web.Services.Email;
+using ReceivingOps.Web.Services.ErpSync;
 using ReceivingOps.Web.Services.Exports;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -91,6 +92,11 @@ builder.Services.AddAuthorization(opts =>
 
 // ---- Data + repositories + services ----
 builder.Services.AddScoped<IDbConnectionFactory, SqlConnectionFactory>();
+// v3.x Phase 10.1 — ERP source DB connection factory (separate from the
+// Receivx DB factory above: different host, read-only credentials, optional
+// in dev). Throws at Create() time when ErpDb:ConnectionString isn't set,
+// so startup stays healthy even with ERP integration disabled.
+builder.Services.AddScoped<IErpDbConnectionFactory, ErpSqlConnectionFactory>();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IWarehouseRepository, WarehouseRepository>();
@@ -131,6 +137,13 @@ builder.Services.AddScoped<PosExportJob>();
 builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
 
+// ---- v3.x Phase 10.1 — ERP sync pipeline ----
+// ErpSyncOptions: kill-switch + cron expression. ErpSyncJob: Hangfire-
+// scheduled stub that opens the ERP DB connection and runs SELECT @@VERSION.
+// 10.2+ fleshes out the actual ETL transform + upsert logic.
+builder.Services.Configure<ErpSyncOptions>(builder.Configuration.GetSection("ErpSync"));
+builder.Services.AddScoped<ErpSyncJob>();
+
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
 // consumed by the DO report header (Phase 7.3+) via IOptions<CompanyInfo>.
@@ -167,7 +180,10 @@ builder.Services.AddHangfire(cfg => cfg
 builder.Services.AddHangfireServer(opts =>
 {
     opts.WorkerCount = 2;
-    opts.Queues = new[] { "exports", "default" };
+    // Phase 10.1 adds the "erp-sync" queue. Order matters: Hangfire scans
+    // queues left-to-right when picking the next job, so put time-sensitive
+    // user-facing work (exports) ahead of the background ETL.
+    opts.Queues = new[] { "exports", "erp-sync", "default" };
 });
 
 var app = builder.Build();
@@ -196,6 +212,29 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
     Authorization = new[] { new HangfireDashboardAuth() },
     DashboardTitle = "ReceivingOps — Background Jobs",
 });
+
+// ---- v3.x Phase 10.1 — ErpSync recurring registration ----
+// Conditional: register only when ErpSync:Enabled is true. The else
+// branch explicitly removes the schedule so toggling Enabled=false at
+// config time (and restarting) actually disables the recurring fire —
+// otherwise a stale entry would survive in [HangFire].[Set] forever.
+using (var scope = app.Services.CreateScope())
+{
+    var erpOpts = scope.ServiceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<ErpSyncOptions>>().Value;
+    if (erpOpts.Enabled)
+    {
+        RecurringJob.AddOrUpdate<ErpSyncJob>(
+            "erp-sync-hourly",
+            "erp-sync",
+            job => job.RunAsync(),
+            erpOpts.CronExpression);
+    }
+    else
+    {
+        RecurringJob.RemoveIfExists("erp-sync-hourly");
+    }
+}
 
 app.MapControllerRoute(
     name: "default",
