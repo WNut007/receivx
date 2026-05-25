@@ -42,4 +42,13 @@ public interface IPullItemAdminService
 
     /// <summary>Deletes the hour window. Refuses 409 if it has any ReceivedQty.</summary>
     Task DeleteWindowAsync(Guid pullId, Guid itemId, byte hourOfDay, CancellationToken ct = default);
+
+    /// <summary>
+    /// Phase 9.1 — bulk overwrite of the 7 ERP-sourced PullItem fields.
+    /// Refuses 409 on closed pull (same rule as the other write paths).
+    /// 404 if the item doesn't exist on the supplied pull. Audits one row
+    /// per call so changes are attributable.
+    /// </summary>
+    Task UpdateExtendedFieldsAsync(
+        Guid pullId, Guid itemId, PullItemExtendedFieldsUpdateRequest req, CancellationToken ct = default);
 }

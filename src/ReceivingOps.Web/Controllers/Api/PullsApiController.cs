@@ -235,6 +235,27 @@ public class PullsApiController : ControllerBase
         catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
     }
 
+    // Phase 9.1 — PUT /api/pulls/{id}/items/{itemId}/extended-fields
+    // Bulk overwrite of the 7 ERP-sourced fields. Same CanManagePulls gate as
+    // the other item writes (admin or supervisor); the pull's warehouse scope
+    // is implicit via the service's pull lookup. Returns the refreshed item
+    // so the client can re-render without an extra GET round trip.
+    [HttpPut("{id:guid}/items/{itemId:guid}/extended-fields")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PullItemDto>> UpdateItemExtendedFields(
+        Guid id, Guid itemId, [FromBody] PullItemExtendedFieldsUpdateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            await _itemsAdmin.UpdateExtendedFieldsAsync(id, itemId, req, ct);
+            var item = await _pulls.GetItemByIdAsync(id, itemId, ct);
+            return Ok(item);
+        }
+        catch (ValidationException ex) { return Problem(title: ex.Message, statusCode: 400); }
+        catch (NotFoundException ex)   { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
     // ========================================================================
     // v2.1 Phase 6.2 — PullItem windows sub-resource
     // ========================================================================

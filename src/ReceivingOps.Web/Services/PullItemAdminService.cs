@@ -341,6 +341,57 @@ public class PullItemAdminService : IPullItemAdminService
     }
 
     // ========================================================================
+    // UPDATE EXTENDED FIELDS (Phase 9.1)
+    // ========================================================================
+    public async Task UpdateExtendedFieldsAsync(
+        Guid pullId, Guid itemId, PullItemExtendedFieldsUpdateRequest req, CancellationToken ct = default)
+    {
+        ValidateExtendedFields(req);
+
+        using var conn = _factory.Create();
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            var pull = await LockPullAsync(conn, tx, pullId, ct);
+            RefuseClosed(pull);
+            var item = await LockItemOnPullAsync(conn, tx, pullId, itemId, ct);
+
+            await conn.ExecuteAsync(new CommandDefinition(@"
+                UPDATE dbo.PullItems
+                   SET ProductFamily    = @ProductFamily,
+                       FromSubInventory = @FromSubInventory,
+                       ToSubInventory   = @ToSubInventory,
+                       SpecialControl   = @SpecialControl,
+                       TrailId          = @TrailId,
+                       Location         = @Location,
+                       [Phase]          = @Phase
+                 WHERE Id = @Id;",
+                new
+                {
+                    Id = itemId,
+                    req.ProductFamily,
+                    req.FromSubInventory,
+                    req.ToSubInventory,
+                    req.SpecialControl,
+                    req.TrailId,
+                    req.Location,
+                    req.Phase,
+                }, transaction: tx, cancellationToken: ct));
+
+            await _audit.WriteAsync(conn, tx, "update", "PullItem", itemId.ToString(),
+                $"Updated extended fields on item {item.ItemCode} in pull {pull.PullNumber}", ct);
+
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
+    // ========================================================================
     // helpers
     // ========================================================================
     private static async Task<PullLockRow> LockPullAsync(
@@ -411,6 +462,26 @@ public class PullItemAdminService : IPullItemAdminService
     {
         if (hourOfDay > 23)
             throw new ValidationException($"HourOfDay {hourOfDay} out of range (0..23)");
+    }
+
+    // Phase 9.1 — DB column width is NVARCHAR(50); reject anything that wouldn't
+    // round-trip silently. We don't enforce a min length (null is a valid value
+    // for "ERP hasn't filled this in yet").
+    private static void ValidateExtendedFields(PullItemExtendedFieldsUpdateRequest req)
+    {
+        Check(req.ProductFamily,    nameof(req.ProductFamily));
+        Check(req.FromSubInventory, nameof(req.FromSubInventory));
+        Check(req.ToSubInventory,   nameof(req.ToSubInventory));
+        Check(req.SpecialControl,   nameof(req.SpecialControl));
+        Check(req.TrailId,          nameof(req.TrailId));
+        Check(req.Location,         nameof(req.Location));
+        Check(req.Phase,            nameof(req.Phase));
+
+        static void Check(string? v, string name)
+        {
+            if (v is not null && v.Length > 50)
+                throw new ValidationException($"{name} is too long (≤ 50 chars)");
+        }
     }
 
     // Used by Phase 6.2 window endpoints — confirms (pullId, itemId) is a real
