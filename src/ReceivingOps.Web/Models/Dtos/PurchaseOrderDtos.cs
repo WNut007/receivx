@@ -88,6 +88,66 @@ public class PoDetail
     public List<PoLineRow> Lines { get; set; } = new();
 }
 
+/// <summary>
+/// Phase 9 — line-level export row. One row per PO line for the
+/// PosExportJob "Lines" sheet, with PO header context inlined so the
+/// XLSX is human-readable without cross-sheet lookups. Carries all 20
+/// ERP-sourced fields from <see cref="PoLineRow"/> verbatim plus the
+/// PO header bits operators need to identify which PO a line belongs
+/// to (PoNumber, OrderDate, Vendor*, WarehouseCode, Status).
+/// </summary>
+public class PoLineExportRow
+{
+    // PO header context
+    public Guid PurchaseOrderId { get; set; }
+    public string PoNumber { get; set; } = "";
+    public DateTime OrderDate { get; set; }
+    public DateTime? ExpectedDate { get; set; }
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
+    public string WarehouseCode { get; set; } = "";
+    public string PoStatus { get; set; } = "open";
+
+    // Line basic
+    public Guid LineId { get; set; }
+    public int LineNumber { get; set; }
+    public string ItemCode { get; set; } = "";
+    public string Description { get; set; } = "";
+    public int OrderedQty { get; set; }
+    public int ReceivedQty { get; set; }
+    public int RemainingQty { get; set; }
+
+    // ERP-sourced — Tracking IDs (10)
+    public string? InvoiceNo { get; set; }
+    public string? KanbanNo { get; set; }
+    public string? AsnNo { get; set; }
+    public string? PCCNo { get; set; }
+    public string? BatchNo { get; set; }
+    public string? ManufacturingControlNo { get; set; }
+    public string? ManufacturingReferenceNo { get; set; }
+    public string? CustomerReferenceNo { get; set; }
+    public string? ExportDeclarationNo { get; set; }
+    public string? VendorItem { get; set; }
+
+    // ERP-sourced — Location (6)
+    public string? PalletId { get; set; }
+    public string? VmiPalletId { get; set; }
+    public string? Location { get; set; }
+    public string? Building { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+
+    // ERP-sourced — Operations (2)
+    public string? ProductionLine { get; set; }
+    public string? OrderRound { get; set; }
+
+    // ERP-sourced — Dates (1)
+    public DateTime? DeliveryDate { get; set; }
+
+    // ERP-sourced — Note (1)
+    public string? Note { get; set; }
+}
+
 /// <summary>One row from vw_PurchaseOrderAvailability — FIFO-ordered open lines.</summary>
 public class PoAvailabilityRow
 {

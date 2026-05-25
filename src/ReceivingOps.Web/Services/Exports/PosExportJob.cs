@@ -55,8 +55,15 @@ public class PosExportJob
                 skip: 0, take: Math.Max(1, request.MaxRows));
             _log.LogInformation("Pos export job {JobId} fetched {Count} of {Total} rows", jobId, items.Count, total);
 
+            // Phase 9 — line-level rows for the new "Lines" sheet (20 ERP fields
+            // from db/021 + PO header context). Single round trip joining lines
+            // → PO header → warehouse for the PO set we just paged.
+            var lineRows = await _pos.GetLinesForPosAsync(items.Select(i => i.Id).ToList());
+            _log.LogInformation("Pos export job {JobId} fetched {LineCount} line-level rows for ERP detail sheet",
+                jobId, lineRows.Count);
+
             var (filePath, fileName) = ResolveFilePath(jobId);
-            WriteWorkbook(filePath, items, total, request);
+            WriteWorkbook(filePath, items, total, request, lineRows);
 
             var expiresAt = DateTime.UtcNow.Add(_opts.FileLifetime);
             var token = _tokens.Issue(jobId, expiresAt);
@@ -89,7 +96,8 @@ public class PosExportJob
         return (Path.GetFullPath(Path.Combine(dir, fileName)), fileName);
     }
 
-    private static void WriteWorkbook(string path, IReadOnlyList<PoListRow> rows, int total, PosExportRequest req)
+    private static void WriteWorkbook(string path, IReadOnlyList<PoListRow> rows, int total,
+        PosExportRequest req, IReadOnlyList<PoLineExportRow> lineRows)
     {
         using var wb = new XLWorkbook();
 
@@ -153,7 +161,92 @@ public class PosExportJob
             ws.Cell(x, 14).Value = row.PullNumber ?? "";
         }
 
+        // Phase 9 — Lines sheet: one row per PO line × (PO context + line basic
+        // + 20 ERP fields from db/021). Separate from the PO-summary sheet so
+        // operators relying on header-level aggregates aren't affected; this
+        // sheet is purely additive. Grouped columns logically (Tracking IDs /
+        // Location / Operations / Dates / Note) to match the field-redistribution
+        // discussion in db/021.
+        WriteLinesSheet(wb, lineRows);
+
         wb.SaveAs(path);
+    }
+
+    private static void WriteLinesSheet(XLWorkbook wb, IReadOnlyList<PoLineExportRow> rows)
+    {
+        var ws = wb.Worksheets.Add("Lines");
+
+        var headers = new[]
+        {
+            // PO context (8)
+            "PoNumber", "OrderDate", "ExpectedDate", "VendorCode", "VendorName",
+            "WarehouseCode", "PoStatus",
+            "LineNumber",
+            // Line basic (5)
+            "ItemCode", "Description", "OrderedQty", "ReceivedQty", "RemainingQty",
+            // ERP — Tracking IDs (10)
+            "InvoiceNo", "KanbanNo", "AsnNo", "PCCNo", "BatchNo",
+            "ManufacturingControlNo", "ManufacturingReferenceNo",
+            "CustomerReferenceNo", "ExportDeclarationNo", "VendorItem",
+            // ERP — Location (6)
+            "PalletId", "VmiPalletId", "Location", "Building",
+            "SubInventory", "ToLocation",
+            // ERP — Operations (2)
+            "ProductionLine", "OrderRound",
+            // ERP — Dates (1)
+            "DeliveryDate",
+            // ERP — Note (1)
+            "Note",
+        };
+        for (int c = 0; c < headers.Length; c++)
+            ws.Cell(1, c + 1).Value = headers[c];
+        ws.Range(1, 1, 1, headers.Length).Style.Font.Bold = true;
+        ws.SheetView.FreezeRows(1);
+
+        for (int r = 0; r < rows.Count; r++)
+        {
+            var row = rows[r];
+            var x = r + 2;
+            int c = 1;
+            ws.Cell(x, c++).Value = row.PoNumber;
+            ws.Cell(x, c++).Value = row.OrderDate;
+            ws.Cell(x, c++).Value = row.ExpectedDate.HasValue ? (XLCellValue)row.ExpectedDate.Value : "";
+            ws.Cell(x, c++).Value = row.VendorCode ?? "";
+            ws.Cell(x, c++).Value = row.VendorName ?? "";
+            ws.Cell(x, c++).Value = row.WarehouseCode;
+            ws.Cell(x, c++).Value = row.PoStatus;
+            ws.Cell(x, c++).Value = row.LineNumber;
+            ws.Cell(x, c++).Value = row.ItemCode;
+            ws.Cell(x, c++).Value = row.Description;
+            ws.Cell(x, c++).Value = row.OrderedQty;
+            ws.Cell(x, c++).Value = row.ReceivedQty;
+            ws.Cell(x, c++).Value = row.RemainingQty;
+            // ERP — Tracking IDs
+            ws.Cell(x, c++).Value = row.InvoiceNo ?? "";
+            ws.Cell(x, c++).Value = row.KanbanNo ?? "";
+            ws.Cell(x, c++).Value = row.AsnNo ?? "";
+            ws.Cell(x, c++).Value = row.PCCNo ?? "";
+            ws.Cell(x, c++).Value = row.BatchNo ?? "";
+            ws.Cell(x, c++).Value = row.ManufacturingControlNo ?? "";
+            ws.Cell(x, c++).Value = row.ManufacturingReferenceNo ?? "";
+            ws.Cell(x, c++).Value = row.CustomerReferenceNo ?? "";
+            ws.Cell(x, c++).Value = row.ExportDeclarationNo ?? "";
+            ws.Cell(x, c++).Value = row.VendorItem ?? "";
+            // ERP — Location
+            ws.Cell(x, c++).Value = row.PalletId ?? "";
+            ws.Cell(x, c++).Value = row.VmiPalletId ?? "";
+            ws.Cell(x, c++).Value = row.Location ?? "";
+            ws.Cell(x, c++).Value = row.Building ?? "";
+            ws.Cell(x, c++).Value = row.SubInventory ?? "";
+            ws.Cell(x, c++).Value = row.ToLocation ?? "";
+            // ERP — Operations
+            ws.Cell(x, c++).Value = row.ProductionLine ?? "";
+            ws.Cell(x, c++).Value = row.OrderRound ?? "";
+            // ERP — Dates
+            ws.Cell(x, c++).Value = row.DeliveryDate.HasValue ? (XLCellValue)row.DeliveryDate.Value : "";
+            // ERP — Note
+            ws.Cell(x, c++).Value = row.Note ?? "";
+        }
     }
 
     private static string BuildEmailBody(string requesterName, int total, int exported, DateTime expiresAt, string downloadUrl)

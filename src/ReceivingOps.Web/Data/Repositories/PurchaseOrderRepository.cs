@@ -151,4 +151,41 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             new { WarehouseId = warehouseId, ItemCode = itemCode }, cancellationToken: ct));
         return rows.AsList();
     }
+
+    public async Task<IReadOnlyList<PoLineExportRow>> GetLinesForPosAsync(
+        IReadOnlyList<Guid> poIds, CancellationToken ct = default)
+    {
+        if (poIds is null || poIds.Count == 0)
+            return Array.Empty<PoLineExportRow>();
+
+        // Single round trip: join PO header onto each line. The PO ID list
+        // is bound as a Dapper parameter (driver expands it to IN(@p0,@p1,...)).
+        // Page caps live in the caller (PosExportJob.MaxRows clamps PO count);
+        // line count is unbounded but practical PO sets stay well under XLSX
+        // limits even with hundreds of lines per PO.
+        const string sql = @"
+            SELECT  pol.PurchaseOrderId, po.PoNumber, po.OrderDate, po.ExpectedDate,
+                    po.VendorCode, po.VendorName, w.Code AS WarehouseCode,
+                    po.Status AS PoStatus,
+                    pol.Id AS LineId, pol.LineNumber, pol.ItemCode, pol.Description,
+                    pol.OrderedQty, pol.ReceivedQty,
+                    (pol.OrderedQty - pol.ReceivedQty) AS RemainingQty,
+                    pol.InvoiceNo, pol.KanbanNo, pol.AsnNo, pol.PCCNo, pol.BatchNo,
+                    pol.ManufacturingControlNo, pol.ManufacturingReferenceNo,
+                    pol.CustomerReferenceNo, pol.ExportDeclarationNo, pol.VendorItem,
+                    pol.PalletId, pol.VmiPalletId, pol.Location, pol.Building,
+                    pol.SubInventory, pol.ToLocation,
+                    pol.ProductionLine, pol.OrderRound,
+                    pol.DeliveryDate, pol.Note
+            FROM    dbo.PurchaseOrderLines pol
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+            INNER JOIN dbo.Warehouses w      ON w.Id  = po.WarehouseId
+            WHERE   pol.PurchaseOrderId IN @PoIds
+            ORDER BY po.PoNumber, pol.LineNumber;";
+
+        using var conn = _factory.Create();
+        var rows = await conn.QueryAsync<PoLineExportRow>(new CommandDefinition(
+            sql, new { PoIds = poIds }, cancellationToken: ct));
+        return rows.AsList();
+    }
 }

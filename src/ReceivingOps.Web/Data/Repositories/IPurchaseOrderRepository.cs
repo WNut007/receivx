@@ -31,4 +31,16 @@ public interface IPurchaseOrderRepository
     /// </summary>
     Task<IReadOnlyList<PoAvailabilityRow>> GetAvailabilityAsync(
         Guid warehouseId, string itemCode, CancellationToken ct = default);
+
+    /// <summary>
+    /// Phase 9 — line-level rows for a set of POs, used by PosExportJob's
+    /// "Lines" sheet. Returns one row per PurchaseOrderLine with PO header
+    /// context (PoNumber, OrderDate, Vendor*, WarehouseCode, Status)
+    /// inlined plus all 20 ERP-sourced columns from db/021. Ordered by
+    /// (PoNumber, LineNumber) so the export is human-scannable.
+    ///
+    /// Empty input → empty result (no SQL issued).
+    /// </summary>
+    Task<IReadOnlyList<PoLineExportRow>> GetLinesForPosAsync(
+        IReadOnlyList<Guid> poIds, CancellationToken ct = default);
 }
