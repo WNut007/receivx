@@ -74,6 +74,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-10-2-erp-read-transform.ps1'
         'smoke-phase-10-3-erp-upsert.ps1'
         'smoke-phase-10-4-erp-trigger.ps1'
+        'smoke-phase-10-5-erp-audit.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
