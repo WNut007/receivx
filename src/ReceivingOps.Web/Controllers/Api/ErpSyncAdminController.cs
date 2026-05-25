@@ -3,6 +3,9 @@ using Hangfire.States;
 using Hangfire.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services.ErpSync;
 
 namespace ReceivingOps.Web.Controllers.Api;
@@ -27,15 +30,18 @@ public class ErpSyncAdminController : ControllerBase
 {
     private readonly IBackgroundJobClient _bgClient;
     private readonly ErpSyncMutex _mutex;
+    private readonly IErpSyncLogRepository _logRepo;
     private readonly ILogger<ErpSyncAdminController> _log;
 
     public ErpSyncAdminController(
         IBackgroundJobClient bgClient,
         ErpSyncMutex mutex,
+        IErpSyncLogRepository logRepo,
         ILogger<ErpSyncAdminController> log)
     {
         _bgClient = bgClient;
         _mutex = mutex;
+        _logRepo = logRepo;
         _log = log;
     }
 
@@ -151,4 +157,43 @@ public class ErpSyncAdminController : ControllerBase
     // "terminal" states without hardcoding the Hangfire string literals.
     public static readonly HashSet<string> TerminalStates =
         new(StringComparer.OrdinalIgnoreCase) { SucceededState.StateName, FailedState.StateName, DeletedState.StateName };
+
+    // ------------------------------------------------------------------
+    // Phase 10.6 — sync history (denormalized run-level summaries).
+    // The audit-log-level per-pull detail is a future drill-down endpoint;
+    // for now the status page lists runs only.
+    // ------------------------------------------------------------------
+
+    /// <summary>GET /api/admin/erp-sync/log?page=1&amp;pageSize=50 — paginated history.</summary>
+    [HttpGet("log")]
+    public async Task<ActionResult<PaginatedResponse<ErpSyncLogRow>>> ListLog(
+        [FromQuery] PaginatedRequest req, CancellationToken ct)
+    {
+        var (items, total) = await _logRepo.QueryPagedAsync(req.Skip, req.Take, ct);
+        return Ok(new PaginatedResponse<ErpSyncLogRow>
+        {
+            Items = items,
+            Page = req.Page,
+            PageSize = req.Take,
+            Total = total,
+        });
+    }
+
+    /// <summary>GET /api/admin/erp-sync/log/{runId} — single-row drill-down.</summary>
+    [HttpGet("log/{runId:guid}")]
+    public async Task<ActionResult<ErpSyncLogRow>> GetLogRow(Guid runId, CancellationToken ct)
+    {
+        var row = await _logRepo.GetByRunIdAsync(runId, ct);
+        return row is null ? NotFound() : Ok(row);
+    }
+
+    /// <summary>
+    /// GET /api/admin/erp-sync/state — lightweight UI helper: is a sync
+    /// currently running? Used by the status page's "Sync now" button
+    /// to disable itself while in-flight (separate from the per-job
+    /// poll which only sees a single run).
+    /// </summary>
+    [HttpGet("state")]
+    public IActionResult GetState()
+        => Ok(new { isRunning = _mutex.IsRunning });
 }
