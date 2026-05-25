@@ -11,15 +11,18 @@ public class ErpUpsertService : IErpUpsertService
     private const int PullNumberMaxLength = 32;
 
     private readonly IDbConnectionFactory _factory;
+    private readonly IAuditService _audit;
     private readonly ILogger<ErpUpsertService> _log;
 
-    public ErpUpsertService(IDbConnectionFactory factory, ILogger<ErpUpsertService> log)
+    public ErpUpsertService(IDbConnectionFactory factory, IAuditService audit, ILogger<ErpUpsertService> log)
     {
         _factory = factory;
+        _audit = audit;
         _log = log;
     }
 
-    public async Task<ErpUpsertResult> UpsertAsync(ErpSyncDraft draft, CancellationToken ct = default)
+    public async Task<ErpUpsertResult> UpsertAsync(
+        ErpSyncDraft draft, Guid runId, string actorName, CancellationToken ct = default)
     {
         var result = new ErpUpsertResult();
 
@@ -30,19 +33,24 @@ public class ErpUpsertService : IErpUpsertService
             if (string.IsNullOrWhiteSpace(pull.PullNumber) ||
                 pull.PullNumber.Length > PullNumberMaxLength)
             {
+                var detail = $"PullNumber is blank or exceeds {PullNumberMaxLength} chars";
                 result.Errors++;
                 result.PullOutcomes.Add(new PullOutcome
                 {
                     PullNumber = pull.PullNumber ?? "(blank)",
                     Outcome = "error",
-                    Detail = $"PullNumber is blank or exceeds {PullNumberMaxLength} chars",
+                    Detail = detail,
                 });
+                // Audit standalone (no tx) — never mutated anything.
+                await _audit.WriteSystemAsync(actorName, "etl-error", "Pull",
+                    pull.PullNumber ?? null,
+                    $"[run {runId}] {detail}", ct);
                 continue;
             }
 
             try
             {
-                await UpsertOneAsync(pull, result, ct);
+                await UpsertOneAsync(pull, result, runId, actorName, ct);
             }
             catch (Exception ex)
             {
@@ -51,12 +59,17 @@ public class ErpUpsertService : IErpUpsertService
                 // list keeps a short summary suitable for audit + UI.
                 _log.LogWarning(ex, "Upsert failed for pull {PullNumber}", pull.PullNumber);
                 result.Errors++;
+                var detail = ex.GetType().Name + ": " + ex.Message;
                 result.PullOutcomes.Add(new PullOutcome
                 {
                     PullNumber = pull.PullNumber,
                     Outcome = "error",
-                    Detail = ex.GetType().Name + ": " + ex.Message,
+                    Detail = detail,
                 });
+                // Audit outside the (rolled-back) tx so the error is visible
+                // regardless of mutation state.
+                await _audit.WriteSystemAsync(actorName, "etl-error", "Pull",
+                    pull.PullNumber, $"[run {runId}] {Truncate(detail, 900)}", ct);
             }
         }
 
@@ -71,8 +84,13 @@ public class ErpUpsertService : IErpUpsertService
 
     // ------------------------------------------------------------------
     // One pull, one transaction. Either fully applied or rolled back.
+    // Audit row for created/updated is written INSIDE the tx so it commits
+    // or rolls back with the business mutation. For skipped-closed the
+    // audit row is written standalone — the tx was rolled back since no
+    // mutation happened, but the SKIP event itself should still be visible.
     // ------------------------------------------------------------------
-    private async Task UpsertOneAsync(PullDraft pull, ErpUpsertResult result, CancellationToken ct)
+    private async Task UpsertOneAsync(
+        PullDraft pull, ErpUpsertResult result, Guid runId, string actorName, CancellationToken ct)
     {
         using var conn = _factory.Create();
         conn.Open();
@@ -91,6 +109,10 @@ public class ErpUpsertService : IErpUpsertService
         if (existing is null)
         {
             await InsertPullAsync(conn, tx, pull, ct);
+            await _audit.WriteSystemAsync(conn, tx, actorName, "etl-create", "Pull",
+                pull.PullNumber,
+                $"[run {runId}] Created from BPI_PRS — items={pull.Items.Count}, " +
+                $"totalExpected={pull.Items.Sum(i => i.Windows.Sum(w => w.ExpectedQty))}", ct);
             tx.Commit();
             result.Created++;
             result.PullOutcomes.Add(new PullOutcome
@@ -105,8 +127,12 @@ public class ErpUpsertService : IErpUpsertService
         if (string.Equals(existing.Status, "closed", StringComparison.Ordinal))
         {
             // ERP cannot retroactively revise a signed pull. Roll back the
-            // open transaction (no writes happened) and record the skip.
+            // open transaction (no writes happened) and record the skip
+            // via a standalone audit write.
             tx.Rollback();
+            await _audit.WriteSystemAsync(actorName, "etl-skip", "Pull",
+                pull.PullNumber,
+                $"[run {runId}] Skipped — pull is closed; ERP cannot revise signed pulls.", ct);
             result.SkippedClosed++;
             result.PullOutcomes.Add(new PullOutcome
             {
@@ -117,7 +143,15 @@ public class ErpUpsertService : IErpUpsertService
             return;
         }
 
+        var preItemsAdded = result.ItemsAdded;
+        var preItemsCanceled = result.ItemsCanceled;
         await UpdatePullAsync(conn, tx, pull, existing.Id, result, ct);
+        var deltaAdded = result.ItemsAdded - preItemsAdded;
+        var deltaCanceled = result.ItemsCanceled - preItemsCanceled;
+        await _audit.WriteSystemAsync(conn, tx, actorName, "etl-update", "Pull",
+            pull.PullNumber,
+            $"[run {runId}] Updated from BPI_PRS — items={pull.Items.Count}, " +
+            $"itemsAdded={deltaAdded}, itemsCanceled={deltaCanceled}", ct);
         tx.Commit();
         result.Updated++;
         result.PullOutcomes.Add(new PullOutcome
@@ -127,6 +161,9 @@ public class ErpUpsertService : IErpUpsertService
             Detail = $"items={pull.Items.Count}",
         });
     }
+
+    private static string Truncate(string s, int max)
+        => s.Length <= max ? s : s.Substring(0, max) + "…";
 
     // ------------------------------------------------------------------
     // INSERT path — brand new pull. All draft items + windows are inserted.

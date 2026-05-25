@@ -21,5 +21,12 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// </summary>
 public interface IErpUpsertService
 {
-    Task<ErpUpsertResult> UpsertAsync(ErpSyncDraft draft, CancellationToken ct = default);
+    /// <param name="runId">Correlation id stamped into every per-pull audit
+    /// row's message so the 10.6 status page can join start/end/per-pull
+    /// rows for one run.</param>
+    /// <param name="actorName"><c>"[system]"</c> for the recurring path or
+    /// the operator's display name for the manual path. Recorded as the
+    /// AuditLog actor on every row written by this service.</param>
+    Task<ErpUpsertResult> UpsertAsync(
+        ErpSyncDraft draft, Guid runId, string actorName, CancellationToken ct = default);
 }
