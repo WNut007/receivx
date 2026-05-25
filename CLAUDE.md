@@ -2,8 +2,58 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.2 shipped on `main` (2026-05-25, tag `v2.2`). v2.2 closes
-Phase 8 with the documentation set + retroactive changelog: new
+**Status:** v2.3 shipped on `main` (2026-05-25, tag `v2.3`). v2.3 ships
+**Phase 9** — schema + display + Excel prep for the Phase 10 ERP
+integration. Migration `db/021` adds 20 nullable columns to
+`PurchaseOrderLines`: 10 tracking IDs (`InvoiceNo`, `KanbanNo`,
+`AsnNo`, `PCCNo`, `BatchNo`, `ManufacturingControlNo`,
+`ManufacturingReferenceNo`, `CustomerReferenceNo`,
+`ExportDeclarationNo`, `VendorItem`), 6 location fields (`PalletId`,
+`VmiPalletId`, `Location`, `Building`, `SubInventory`, `ToLocation`),
+2 operations (`ProductionLine`, `OrderRound`), 1 date (`DeliveryDate`
+DATE), 1 free-text (`Note` NVARCHAR(500)). Per-column COL_LENGTH
+guards match project's idempotent convention. **No indexes** —
+deferred to Phase 10 when ERP query patterns are observed; speculative
+indexes waste write throughput on cold paths. **No write API** — these
+fields are ERP-source-of-truth, populated by Phase 10's
+`POST /api/erp/pos`. Existing `PoCreateRequest` / `PoUpdateRequest`
+DTOs intentionally don't mention them. Field redistribution from the
+original 24-field design: SKIPPED 3 duplicates (`OrderDate` on PO
+header, `CreatedAt` audit, `ReceivedDate` on Receipts), RENAMED
+`Round → OrderRound` (SQL reserved word), SIZED `Note` to 500 chars
+(matches `PurchaseOrders.Notes`). `PoLineRow` DTO carries all 20; repo
+`GetDetailAsync.linesSql` selects them so `GET /api/pos/{id}` surfaces
+the full set without extra round trip. PO Detail page shows **5
+priority ERP columns** (`Invoice`, `SubInv`, `ToLoc`, `Pallet`, `VMI
+Pallet`) to the right of `Remaining`, visually grouped via
+`--surface-2` bg tint + `--border` left separator; mono 11px font
+matches the convention for machine-sourced identifiers; nulls render
+as muted em-dash. Other 15 fields = API + Excel only (PO detail is
+already wide). Excel export gets a new **third "Lines" sheet** (33
+cols: 8 PO context + 5 line basic + 20 ERP) via new repo method
+`GetLinesForPosAsync(poIds[])` — single SQL JOIN of lines → PO header
+→ warehouse, ordered by (PoNumber, LineNumber). Existing
+"Purchase Orders" header-summary sheet is unchanged so operators
+relying on aggregated `LineCount`/`TotalOrdered`/`TotalReceived` view
+aren't affected — purely additive. Smoke `smoke-phase-9-extended-fields`
+covers schema (20 cols, Note=500, DeliveryDate=DATE), API round-trip
+(8 fields incl. hidden ones — `kanbanNo`, `note`, `deliveryDate`
+verified surface in JSON), and XLSX content (Lines sheet exists, 10
+sampled ERP headers present, test marker value reaches sheet body).
+**Phase 10 spec doc** `docs/phase-10-erp-integration.md` captures the
+endpoint design (POST /api/erp/pos, upsert by PoNumber, line upsert by
+(PoId, LineNumber), Receivx-managed fields write-protected → 422,
+closed/canceled POs → 409), auth recommendation (start with
+X-ERP-Api-Key, migrate to OAuth later), open questions for ERP team,
+and sub-phase breakdown 10.1–10.7 (~8–12 hr, target tag v3.0).
+**Battery: 41/41 PASS** — one pre-existing drift cleanup applied as
+part of getting to green (rogue PL-DOR-* test pull deleted; 3 PO line
+ReceivedQty caches recomputed from `SUM(Receipts.QtyReceived)` truth).
+Both fixes are within CLAUDE.md conventions (the ReceivedQty cache is
+explicitly denormalized/reproducible; the deleted pull had 0 receipts
+and was a crashed-smoke artifact).
+
+v2.2 lineage: closes Phase 8 with the documentation set + retroactive changelog: new
 `docs/deployment.md` (env reqs, migration order incl. db/021 reserved
 for Phase 9, user-secrets block, Hangfire dashboard auth, file-
 lifecycle gap with operational janitor recipe, hardening checklist),
@@ -383,8 +433,30 @@ See BUILD_PROMPT.md §14.
 
 # Session handoff — 2026-05-25
 
-Latest tag: v2.2 (Phase 8 close — docs + CHANGELOG + pill-tabs cosmetic)
-Battery: 40/40 PASS · main = origin/main · all clean
+Latest tag: v2.3 (Phase 9 close — 20 ERP-sourced PO Line fields)
+Battery: 41/41 PASS · main = origin/main · all clean
+
+## Phase 9 — Done
+
+- ✅ Migration db/021 — 20 nullable ERP columns on PurchaseOrderLines
+- ✅ PoLineRow DTO + GetDetailAsync SELECT extended
+- ✅ PO Detail page shows 5 priority ERP columns
+- ✅ Excel export gains "Lines" sheet (33 cols incl. all 20 ERP)
+- ✅ Smoke smoke-phase-9-extended-fields covers schema + API + XLSX
+- ✅ docs/phase-10-erp-integration.md spec doc (planning only)
+- ✅ Tag v2.3 — Phase 9 milestone closed
+
+## Operational gap addressed during Phase 9 ship
+
+- **Test-data drift cleanup** — one rogue `PL-DOR-*` test pull (no
+  receipts, crashed-smoke artifact) deleted; 3 PO line `ReceivedQty`
+  caches recomputed from `SUM(Receipts.QtyReceived)` truth. Both
+  within CLAUDE.md conventions: the cache is documented as
+  denormalized/reproducible, and the deleted pull had no receipts so
+  the append-only invariant on Receipts wasn't touched. **Root cause
+  unfixed:** smoke teardowns that create receipts then DELETE them
+  don't recompute the cache. Worth a janitorial pass in a future
+  slice (low priority — only affects smoke reruns against a dev DB).
 
 ## Phase 8 — Done
 

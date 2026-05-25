@@ -10,6 +10,49 @@ for fine-grained authorship.
 
 ---
 
+## [2.3] — 2026-05-25 — Phase 9: 20 ERP-sourced PO Line fields
+
+### Added
+- Migration `db/021` — 20 nullable columns on `PurchaseOrderLines`
+  for ERP-sourced metadata: 10 tracking IDs (`InvoiceNo`, `KanbanNo`,
+  `AsnNo`, `PCCNo`, `BatchNo`, `ManufacturingControlNo`,
+  `ManufacturingReferenceNo`, `CustomerReferenceNo`,
+  `ExportDeclarationNo`, `VendorItem`), 6 location (`PalletId`,
+  `VmiPalletId`, `Location`, `Building`, `SubInventory`, `ToLocation`),
+  2 operations (`ProductionLine`, `OrderRound`), 1 date
+  (`DeliveryDate` DATE), 1 free-text (`Note` NVARCHAR(500)).
+- `PoLineRow` DTO carries all 20 fields; `GET /api/pos/{id}` surfaces
+  them in JSON.
+- New repo method `GetLinesForPosAsync(poIds[])` — single SQL JOIN of
+  lines → PO header → warehouse for the export pipeline.
+- New DTO `PoLineExportRow` with inlined PO header context.
+- PO Detail page shows **5 priority ERP columns** (`Invoice`,
+  `SubInv`, `ToLoc`, `Pallet`, `VMI Pallet`) with visual grouping
+  (`--surface-2` bg tint + `--border` left separator); nulls render
+  as muted em-dash with hover-recoverable title tooltip.
+- PO Excel export gains a third **"Lines" sheet** (33 cols: PO
+  context + line basic + all 20 ERP fields). Existing
+  "Purchase Orders" header-summary sheet unchanged — purely additive.
+- Smoke `smoke-phase-9-extended-fields.ps1` covers schema, API
+  round-trip (visible + hidden fields), and XLSX content verification.
+- Planning doc `docs/phase-10-erp-integration.md` — endpoint design,
+  upsert semantics, Receivx-managed-field protection, auth options,
+  open questions, sub-phase breakdown 10.1–10.7 (~8–12 hr).
+
+### Notes
+- **No write API** for these fields — they're ERP-source-of-truth.
+  Phase 10 (target tag v3.0) ships `POST /api/erp/pos`.
+- **No indexes** — deferred to Phase 10 when ERP query patterns are
+  observed.
+- Field redistribution from the original 24-field design: SKIPPED 3
+  duplicates (`OrderDate`, `CreatedAt`, `ReceivedDate`); RENAMED
+  `Round → OrderRound` (SQL reserved word); SIZED `Note` to 500 chars.
+- Battery: **41/41 PASS** after pre-existing test-data drift cleanup
+  (rogue `PL-DOR-*` smoke artifact deleted, 3 `ReceivedQty` caches
+  recomputed from truth).
+
+---
+
 ## [2.2] — 2026-05-25 — Phase 8 close
 
 ### Added
