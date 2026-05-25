@@ -56,7 +56,9 @@ AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpSyncOptions.cs') 'public str
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs') 'public class ErpSyncJob'
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs') '[DisableConcurrentExecution(timeoutInSeconds: 600)]'
 AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs') '[Queue("erp-sync")]'
-AssertFile (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs') 'SELECT @@VERSION'
+# (The 10.1 stub body was SELECT @@VERSION; 10.2 replaced it with the
+# service call. Assertion deliberately stops at the attributes — the
+# behavioral check moved to smoke-phase-10-2/10-3.)
 OK "ErpSyncOptions defaults + ErpSyncJob attributes present"
 
 # ----------------------------------------------------------------------------
