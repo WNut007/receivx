@@ -226,6 +226,14 @@
                             <th>Tag</th>
                             <th>Status</th>
                             <th class="text-end">Windows</th>
+                            @* Phase 9.1 — ERP-sourced extended fields. Visually grouped via .erp-col (subtle bg + left border on first). *@
+                            <th class="erp-col">Family</th>
+                            <th class="erp-col">From Sub</th>
+                            <th class="erp-col">To Sub</th>
+                            <th class="erp-col">Trail</th>
+                            <th class="erp-col">Loc</th>
+                            <th class="erp-col">Phase</th>
+                            <th class="erp-col">Special</th>
                             <th class="actions-col"></th>
                         </tr>
                     </thead>
@@ -522,6 +530,60 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="iem-save">Save changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ PHASE 9.1 — EDIT EXTENDED (ERP) FIELDS MODAL ============ -->
+<!-- 7 ERP-sourced metadata fields. Populated from the ERP push (Phase 10) -->
+<!-- when available; the modal exists for the gap-fill case where the      -->
+<!-- operator gets the data via paper/email before the ERP sync runs.      -->
+<div class="modal fade" id="itemExtendedFieldsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-tag me-2"></i>
+                    ERP fields for <code id="iefm-code-label">—</code>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Product Family</label>
+                        <input type="text" class="form-control" id="iefm-product-family" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Trail ID</label>
+                        <input type="text" class="form-control" id="iefm-trail-id" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">From SubInventory</label>
+                        <input type="text" class="form-control" id="iefm-from-sub" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">To SubInventory</label>
+                        <input type="text" class="form-control" id="iefm-to-sub" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Location</label>
+                        <input type="text" class="form-control" id="iefm-location" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Phase</label>
+                        <input type="text" class="form-control" id="iefm-phase" maxlength="50">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted text-uppercase fw-semibold" style="letter-spacing: 0.1em;">Special Control</label>
+                        <input type="text" class="form-control" id="iefm-special-control" maxlength="50">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="iefm-save">Save changes</button>
             </div>
         </div>
     </div>

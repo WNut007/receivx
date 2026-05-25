@@ -791,6 +791,11 @@
       const tagCell = it.tag
         ? '<span class="badge tag-' + esc(it.tag) + '">' + esc(it.tag) + '</span>'
         : '<span class="text-muted">—</span>';
+      // Phase 9.1 — title attr exposes the full value for truncated cells (since
+      // .erp-col is ellipsis-clamped at 110px); empty values render an em-dash.
+      const erp = (v) => v
+        ? '<td class="erp-col" title="' + esc(v) + '">' + esc(v) + '</td>'
+        : '<td class="erp-col"><span class="empty">—</span></td>';
       return '<tr data-item-id="' + esc(it.id) + '">' +
         '<td><code>' + esc(it.itemCode) + '</code></td>' +
         '<td>' + esc(it.description) + '</td>' +
@@ -799,8 +804,16 @@
         '<td><span class="status-' + esc(it.status) + '">' + esc(it.status) + '</span></td>' +
         '<td class="text-end"><small>' + windows.length + ' · ' +
           exp.toLocaleString() + ' exp · ' + rcv.toLocaleString() + ' rcv</small></td>' +
+        erp(it.productFamily) +
+        erp(it.fromSubInventory) +
+        erp(it.toSubInventory) +
+        erp(it.trailId) +
+        erp(it.location) +
+        erp(it.phase) +
+        erp(it.specialControl) +
         '<td class="actions-col">' +
           '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
+          '<button class="btn btn-link" data-act="erp" title="Edit ERP fields"><i class="bi bi-tag"></i></button>' +
           '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
           '<button class="btn btn-link text-danger" data-act="delete" title="Delete item"><i class="bi bi-trash"></i></button>' +
         '</td>' +
@@ -819,6 +832,7 @@
     if (act === 'edit') openEditItemModal(itemId);
     else if (act === 'delete') deleteItem(itemId);
     else if (act === 'windows') openWindowsModal(itemId);
+    else if (act === 'erp') openExtendedFieldsModal(itemId);
   });
 
   // ---- Add Item modal ----------------------------------------------------
@@ -977,6 +991,78 @@
   }
 
   document.getElementById('iem-save')?.addEventListener('click', saveEditItem);
+
+  // ---- Phase 9.1 — Extended (ERP) fields modal ---------------------------
+  // Same edit-cycle pattern as itemEditModal: open populates, save PUTs +
+  // refreshes drawer + items table. Modal is created lazily on first use
+  // to keep cold-start cost on the page minimal.
+  const itemExtModalEl = document.getElementById('itemExtendedFieldsModal');
+  const itemExtModal   = itemExtModalEl ? new bootstrap.Modal(itemExtModalEl) : null;
+  let extEditingItemId = null;
+
+  function openExtendedFieldsModal(itemId) {
+    if (!itemExtModal) return;
+    const it = drawerItems.find(x => x.id === itemId);
+    if (!it) return;
+    extEditingItemId = itemId;
+    document.getElementById('iefm-code-label').textContent = it.itemCode;
+    document.getElementById('iefm-product-family').value  = it.productFamily    || '';
+    document.getElementById('iefm-from-sub').value        = it.fromSubInventory || '';
+    document.getElementById('iefm-to-sub').value          = it.toSubInventory   || '';
+    document.getElementById('iefm-trail-id').value        = it.trailId          || '';
+    document.getElementById('iefm-location').value        = it.location         || '';
+    document.getElementById('iefm-phase').value           = it.phase            || '';
+    document.getElementById('iefm-special-control').value = it.specialControl   || '';
+    itemExtModal.show();
+  }
+
+  async function saveExtendedFields() {
+    if (!drawerPullIdForItems || !extEditingItemId) return;
+    // Empty input → null; we want the column NULL'd when the operator clears it,
+    // not stored as an empty string (which would confuse the ERP-vs-Receivx
+    // value comparison the Phase 10 push relies on).
+    const v = (id) => {
+      const t = document.getElementById(id).value.trim();
+      return t.length ? t : null;
+    };
+    const body = {
+      productFamily:    v('iefm-product-family'),
+      fromSubInventory: v('iefm-from-sub'),
+      toSubInventory:   v('iefm-to-sub'),
+      specialControl:   v('iefm-special-control'),
+      trailId:          v('iefm-trail-id'),
+      location:         v('iefm-location'),
+      phase:            v('iefm-phase'),
+    };
+
+    const btn = document.getElementById('iefm-save');
+    btn.disabled = true;
+    try {
+      const r = await fetch(
+        '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
+        '/items/' + encodeURIComponent(extEditingItemId) +
+        '/extended-fields',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+      if (!r.ok) {
+        let title = 'Save failed (' + r.status + ')';
+        try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+        showToast('Could not save ERP fields', title);
+        return;
+      }
+      itemExtModal.hide();
+      showToast('ERP fields updated', '');
+      await refreshPullDetailDrawer(drawerPullIdForItems);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('iefm-save')?.addEventListener('click', saveExtendedFields);
 
   // ---- Delete item -------------------------------------------------------
   async function deleteItem(itemId) {

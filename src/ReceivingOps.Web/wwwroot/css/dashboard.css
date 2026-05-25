@@ -753,6 +753,21 @@
     padding: 8px 10px;
   }
   .items-table .actions-col { width: 110px; text-align: right; white-space: nowrap; }
+  /* Phase 9.1 — ERP-sourced columns sit in a visually grouped band so they
+     read as "external metadata" rather than another row of operator inputs. */
+  .items-table th.erp-col,
+  .items-table td.erp-col {
+    background: var(--surface-2);
+    font-family: "Roboto Mono", ui-monospace, monospace;
+    font-size: 11px;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .items-table th.erp-col:first-of-type,
+  .items-table td.erp-col:first-of-type { border-left: 1px solid var(--border); }
+  .items-table td.erp-col .empty { color: var(--text-muted); font-family: inherit; }
   .items-table code {
     background: var(--surface-2);
     padding: 1px 6px;
