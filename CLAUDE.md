@@ -2,8 +2,33 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.1.13 shipped on `main` (2026-05-24, tag `v2.1.13`,
-pushed to origin). v2.1.13 splits **/Exports into Pending /
+**Status:** v2.2 shipped on `main` (2026-05-25, tag `v2.2`). v2.2 closes
+Phase 8 with the documentation set + retroactive changelog: new
+`docs/deployment.md` (env reqs, migration order incl. db/021 reserved
+for Phase 9, user-secrets block, Hangfire dashboard auth, file-
+lifecycle gap with operational janitor recipe, hardening checklist),
+`docs/api-pagination.md` (PaginatedRequest 1-based + 500-row cap +
+PaginatedResponse<T> with computed TotalPages/HasMore, JSON vs
+server-rendered surfaces, mountPagination + _Pagination.cshtml,
+filter-changes-reset-page-1 convention), `docs/exports.md` (3 job
+types + permission matrix, enqueue→run→email→download lifecycle,
+HMAC-SHA256 token format `base64url(payload).base64url(HMAC)` with
+24h expiry, 2-tab UI, status state machine incl. derived `expired`,
+Hangfire retry policy `[AutomaticRetry(Attempts=3, DelaysInSeconds={30,120,600})]`,
+troubleshooting matrix), and `CHANGELOG.md` (Keep a Changelog format,
+v2.0 → v2.2 retroactively consolidated from this status footer + git
+tag history). Also: `/Exports` pill-style tabs replace underline tabs
+(visual-only CSS refactor — `.exports-tabs` becomes a tight inline-
+flex container with `--surface` bg + 10px radius, `.exports-tab`
+pills with `--accent` fill on active state; midnight theme gets a
+dark-overlay override for the in-pill badge since `--accent-fg`
+flips to near-black there; JS untouched — all selectors survive).
+Battery: 40/40 PASS. **Operational gaps documented** (not fixed): no
+recurring file-cleanup job exists — `docs/deployment.md §5` ships a
+host-cron recipe as the interim. Phase 8 closed; Phase 9 (ERP-sourced
+PurchaseOrderLines columns) is next, migration slot `db/021` reserved.
+
+v2.1.13 lineage: splits **/Exports into Pending /
 Downloaded tabs**. Migration `db/023` adds
 `ExportJobsLog.DownloadedAt` (nullable) + filtered index
 `IX_ExportJobsLog_UserPending` (WHERE Status='succeeded' AND
@@ -358,30 +383,27 @@ See BUILD_PROMPT.md §14.
 
 # Session handoff — 2026-05-25
 
-Latest tag: v2.1.10 (Hangfire export wired to Transactions + Pos + Audit Log)
-Battery: 37/37 PASS · main = origin/main · all clean
+Latest tag: v2.2 (Phase 8 close — docs + CHANGELOG + pill-tabs cosmetic)
+Battery: 40/40 PASS · main = origin/main · all clean
 
-## Phase 8 — Remaining (to ship v2.2 milestone)
+## Phase 8 — Done
 
-- **My Exports page** — visibility UI for export job status (~5 hr)
-  - User clicks Export → currently silent until email arrives
-  - Need: /Exports page with status badges + auto-refresh polling
-  - Spec: per-user view + admin sees all + privacy enforced
-  - Data: new table ExportJobsLog (migration db/020)
-  
-- **Phase 8.5 load test** — validate at scale (~2 hr)
-  - Seed 100K receipts
-  - Measure pagination P95 < 500ms
-  - Measure export job timing (100K rows)
-  - Verify indexes (IX_Pulls_ClosedAt, IX_Receipts_WhWhen, IX_PO_OrderDate) hit
-  
-- **Phase 8.6 docs + deployment guide** — production readiness (~1 hr)
-  - docs/deployment.md (user-secrets setup, migrations, Hangfire startup)
-  - docs/api-pagination.md (contract reference)
-  - docs/exports.md (feature documentation)
-  - CHANGELOG.md v2.2 entry
-  
-- **Tag v2.2** — Phase 8 milestone close
+- ✅ My Exports page (v2.1.11) — ExportJobsLog + auto-refresh + admin see-all
+- ✅ Phase 8.5 load test (validated at scale)
+- ✅ Phase 8.6 docs (this slice):
+  - `docs/deployment.md` — env, migrations, user-secrets, Hangfire, file lifecycle, hardening
+  - `docs/api-pagination.md` — PaginatedRequest/Response contract + surfaces
+  - `docs/exports.md` — feature doc, lifecycle, HMAC, status states, API ref
+  - `CHANGELOG.md` — v2.0 → v2.2 retroactively consolidated
+- ✅ Tag v2.2 — Phase 8 milestone closed
+
+## Operational gap noted (not blocking v2.2 ship)
+
+- **No recurring file-cleanup job.** Generated XLSX files live at
+  `exports/` (project root, NOT wwwroot) and stay indefinitely.
+  Token expires in 24h but the bytes remain. `docs/deployment.md §5`
+  ships a host-cron recipe (7-day sweep) as the interim until a
+  Hangfire recurring job is added.
 
 ## Phase 9 — Designed, ready to implement (~5 hr)
 

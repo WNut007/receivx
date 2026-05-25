@@ -108,33 +108,39 @@
   }
   .see-all-toggle[hidden] { display: none; }
 
-  /* Phase 8.4 ext — Pending / Downloaded tabs above the section card */
+  /* Phase 8.4 ext — Pending / Downloaded pill tabs (GitHub-style segmented
+     control). Container wraps pills inline; active pill fills with accent,
+     inactive pills are transparent and tint on hover. */
   .exports-tabs {
-    display: flex; align-items: stretch; gap: 4px;
-    margin-bottom: 0;
-    padding: 0 6px;
-    border-bottom: 1px solid var(--border);
+    display: inline-flex; align-items: center;
+    gap: 2px;
+    margin-bottom: 16px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
   }
   .exports-tab {
-    display: inline-flex; align-items: center; gap: 8px;
-    background: none; border: none;
-    padding: 12px 18px;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: transparent; border: none;
+    padding: 7px 14px;
     font: inherit; font-size: 13px; color: var(--text-dim);
     cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+    border-radius: 7px;
+    transition: background 140ms ease, color 140ms ease;
   }
   .exports-tab:hover { color: var(--text); background: var(--surface-2); }
-  .exports-tab i { font-size: 15px; }
-  .exports-tab.is-active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
+  .exports-tab i { font-size: 14px; }
+  .exports-tab.is-active,
+  .exports-tab.is-active:hover {
+    background: var(--accent);
+    color: var(--accent-fg);
     font-weight: 500;
   }
   .tab-count {
     display: inline-flex; align-items: center; justify-content: center;
-    min-width: 20px; padding: 1px 8px;
+    min-width: 18px; padding: 1px 7px;
     border-radius: 100px;
     font-family: 'Roboto Mono', monospace;
     font-size: 10px; font-weight: 600;
@@ -142,10 +148,18 @@
     line-height: 1.4;
   }
   .tab-count[hidden] { display: none; }
-  .tab-count-active { background: var(--accent); color: var(--accent-fg); }
-  .tab-count-muted  { background: var(--surface-3); color: var(--text-muted); }
-  .exports-tab.is-active .tab-count-muted {
-    background: var(--accent-bg); color: var(--accent);
+  /* Inactive parent: pending count tinted with accent-bg, downloaded muted */
+  .tab-count-active { background: var(--accent-bg); color: var(--accent); }
+  .tab-count-muted  { background: transparent;     color: var(--text-muted); padding: 1px 4px; }
+  /* Active parent: badge must contrast against the accent fill — light tint
+     works on light/slate (white --accent-fg), dark tint on midnight where
+     --accent-fg flips to near-black. */
+  .exports-tab.is-active .tab-count {
+    background: rgba(255, 255, 255, 0.22);
+    color: var(--accent-fg);
+  }
+  [data-theme="midnight"] .exports-tab.is-active .tab-count {
+    background: rgba(0, 0, 0, 0.18);
   }
 
   /* Section + table reuse the pos.css/transactions.css conventions */
