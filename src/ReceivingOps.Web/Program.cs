@@ -142,6 +142,7 @@ builder.Services.AddScoped<IExportService, ExportService>();
 // scheduled stub that opens the ERP DB connection and runs SELECT @@VERSION.
 // 10.2+ fleshes out the actual ETL transform + upsert logic.
 builder.Services.Configure<ErpSyncOptions>(builder.Configuration.GetSection("ErpSync"));
+builder.Services.AddScoped<IErpSyncService, ErpSyncService>();
 builder.Services.AddScoped<ErpSyncJob>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----

@@ -25,4 +25,21 @@ public class ErpSyncOptions
     public bool Enabled { get; set; } = false;
     public string CronExpression { get; set; } = "0 * * * *";
     public int TimeoutSeconds { get; set; } = 600;
+
+    /// <summary>
+    /// Phase 10.2 — target warehouse for the recurring sync.
+    /// BPI_PRS has no warehouse column so the caller must pick one.
+    /// Empty Guid means "no default" — the recurring job logs and
+    /// skips. Manual triggers (10.4) will pass an operator-chosen
+    /// warehouse and bypass this option.
+    /// </summary>
+    public Guid DefaultWarehouseId { get; set; } = Guid.Empty;
+
+    /// <summary>
+    /// How many days back from today to include in the BPI_PRS read
+    /// (filtered by DeliveryDate). Default 30 — most ERP planning
+    /// windows are weeks not months, and going further drags in
+    /// historical pulls every run for no gain.
+    /// </summary>
+    public int BackfillDays { get; set; } = 30;
 }
