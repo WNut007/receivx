@@ -71,6 +71,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-9-extended-fields.ps1'
         'smoke-phase-9-1-pull-extended-fields.ps1'
         'smoke-phase-10-1-erp-connection.ps1'
+        'smoke-phase-10-2-erp-read-transform.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
