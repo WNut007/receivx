@@ -102,7 +102,7 @@ function ReadXlsxText($xlsxPath) {
 # 1. Schema — 7 columns on PullItems (db/024)
 # ----------------------------------------------------------------------------
 Step "Schema: 7 ERP-sourced columns on PullItems"
-$colCount = (Sql "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PullItems' AND COLUMN_NAME IN ('ProductFamily','FromSubInventory','ToSubInventory','SpecialControl','TrailId','Location','Phase');") -join '' -replace '\s',''
+$colCount = (Sql "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PullItems' AND COLUMN_NAME IN ('ProductFamily','FromSubInventory','ToSubInventory','SpecialControl','TrialId','Location','Phase');") -join '' -replace '\s',''
 if ($colCount -ne '7') { Fail "Expected 7 new columns on PullItems, found '$colCount'" }
 OK "All 7 PullItems columns present (db/024)"
 
@@ -110,7 +110,7 @@ OK "All 7 PullItems columns present (db/024)"
 # 2. View — 7 columns appended to vw_TransactionsJournal (db/025)
 # ----------------------------------------------------------------------------
 Step "View: 7 columns appended to vw_TransactionsJournal"
-$viewCount = (Sql "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vw_TransactionsJournal' AND COLUMN_NAME IN ('ProductFamily','FromSubInventory','ToSubInventory','SpecialControl','TrailId','PullLocation','PullPhase');") -join '' -replace '\s',''
+$viewCount = (Sql "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vw_TransactionsJournal' AND COLUMN_NAME IN ('ProductFamily','FromSubInventory','ToSubInventory','SpecialControl','TrialId','PullLocation','PullPhase');") -join '' -replace '\s',''
 if ($viewCount -ne '7') { Fail "Expected 7 ERP columns on view, found '$viewCount'" }
 OK "All 7 view columns present (db/025; PullLocation/PullPhase aliased)"
 
@@ -153,7 +153,7 @@ $payload = @{
     fromSubInventory = 'P91-FROM'
     toSubInventory   = 'P91-TO'
     specialControl   = 'P91-SC'
-    trailId          = 'P91-TRAIL'
+    trialId          = 'P91-TRIAL'
     location         = 'P91-LOC'
     phase            = 'P91-PHASE'
 } | ConvertTo-Json
@@ -165,7 +165,7 @@ OK "PUT returned refreshed item"
 # Echo-from-PUT-response check (cheaper than a follow-up GET, but we still do GET below
 # to prove the SELECT path includes the new columns).
 if ($resp.productFamily -ne 'P91-FAM') { Fail "PUT response productFamily='$($resp.productFamily)'" }
-if ($resp.trailId       -ne 'P91-TRAIL') { Fail "PUT response trailId='$($resp.trailId)'" }
+if ($resp.trialId       -ne 'P91-TRIAL') { Fail "PUT response trialId='$($resp.trialId)'" }
 OK "PUT response carries 2 sampled fields"
 
 # ----------------------------------------------------------------------------
@@ -180,7 +180,7 @@ $pairs = @{
     fromSubInventory = 'P91-FROM'
     toSubInventory   = 'P91-TO'
     specialControl   = 'P91-SC'
-    trailId          = 'P91-TRAIL'
+    trialId          = 'P91-TRIAL'
     location         = 'P91-LOC'
     phase            = 'P91-PHASE'
 }
@@ -253,7 +253,7 @@ OK "Export file written: $((Get-Item $file).Length) bytes"
 
 Step "XLSX contains 7 new ERP column headers"
 $haystack = ReadXlsxText $file
-$mustContain = @('ProductFamily','FromSubInventory','ToSubInventory','TrailId','PullLocation','PullPhase','SpecialControl')
+$mustContain = @('ProductFamily','FromSubInventory','ToSubInventory','TrialId','PullLocation','PullPhase','SpecialControl')
 foreach ($needle in $mustContain) {
     if ($haystack -notmatch [regex]::Escape($needle)) {
         Fail "XLSX missing expected header '$needle' — server may be on pre-Phase-9.1 code"
@@ -262,10 +262,10 @@ foreach ($needle in $mustContain) {
 OK "All 7 ERP column headers present"
 
 Step "XLSX body carries the test marker through the PullItem JOIN"
-if ($haystack -notmatch [regex]::Escape('P91-TRAIL')) {
-    Fail "Transactions sheet missing test marker 'P91-TRAIL' — PullItem ERP fields did not reach the export"
+if ($haystack -notmatch [regex]::Escape('P91-TRIAL')) {
+    Fail "Transactions sheet missing test marker 'P91-TRIAL' — PullItem ERP fields did not reach the export"
 }
-OK "Test marker 'P91-TRAIL' present — full data path verified"
+OK "Test marker 'P91-TRIAL' present — full data path verified"
 
 Remove-Item $file -Force -ErrorAction SilentlyContinue
 
@@ -276,7 +276,7 @@ Step "Cleanup: NULL the test ERP fields"
 $cleanup = @"
 UPDATE dbo.PullItems SET
     ProductFamily = NULL, FromSubInventory = NULL, ToSubInventory = NULL,
-    SpecialControl = NULL, TrailId = NULL, Location = NULL, [Phase] = NULL
+    SpecialControl = NULL, TrialId = NULL, Location = NULL, [Phase] = NULL
 WHERE Id = '$itemId';
 "@
 Sql $cleanup | Out-Null
