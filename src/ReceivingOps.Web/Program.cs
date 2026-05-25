@@ -106,6 +106,7 @@ builder.Services.AddScoped<IReceiptRepository, ReceiptRepository>();
 builder.Services.AddScoped<IPurchaseOrderRepository, PurchaseOrderRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<IExportJobLogRepository, ExportJobLogRepository>();
+builder.Services.AddScoped<IErpSyncLogRepository, ErpSyncLogRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
 
 builder.Services.AddScoped<IAuditService, AuditService>();

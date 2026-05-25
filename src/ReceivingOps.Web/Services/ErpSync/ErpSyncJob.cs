@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Hangfire;
 using Microsoft.Extensions.Options;
+using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
 namespace ReceivingOps.Web.Services.ErpSync;
@@ -29,6 +31,7 @@ public class ErpSyncJob
     private readonly IErpSyncService _read;
     private readonly IErpUpsertService _upsert;
     private readonly IAuditService _audit;
+    private readonly IErpSyncLogRepository _logRepo;
     private readonly ErpSyncOptions _opts;
     private readonly ErpSyncMutex _mutex;
     private readonly ILogger<ErpSyncJob> _log;
@@ -37,6 +40,7 @@ public class ErpSyncJob
         IErpSyncService read,
         IErpUpsertService upsert,
         IAuditService audit,
+        IErpSyncLogRepository logRepo,
         IOptions<ErpSyncOptions> opts,
         ErpSyncMutex mutex,
         ILogger<ErpSyncJob> log)
@@ -44,6 +48,7 @@ public class ErpSyncJob
         _read = read;
         _upsert = upsert;
         _audit = audit;
+        _logRepo = logRepo;
         _opts = opts.Value;
         _mutex = mutex;
         _log = log;
@@ -113,6 +118,12 @@ public class ErpSyncJob
 
         var runId = Guid.NewGuid();
         var sw = Stopwatch.StartNew();
+
+        // 10.6 — denormalized summary row for the status page list. INSERT
+        // BEFORE the start-audit so the row's CreatedAt sequence is
+        // log-then-audit; failures hereafter still leave a visible row.
+        await _logRepo.InsertStartAsync(runId, trigger, actorName, warehouseId, backfillDays);
+
         await _audit.WriteSystemAsync(actorName, "etl-start", "ErpSync",
             runId.ToString(),
             $"[run {runId}] Triggered by {trigger} — warehouse={warehouseId}, backfillDays={backfillDays}");
@@ -149,6 +160,17 @@ public class ErpSyncJob
             }
 
             sw.Stop();
+            await _logRepo.MarkSucceededAsync(runId, new ErpSyncLogTotals
+            {
+                SourceRowCount = draft.SourceRowCount,
+                DraftPullCount = draft.Pulls.Count,
+                Created        = outcome.Created,
+                Updated        = outcome.Updated,
+                SkippedClosed  = outcome.SkippedClosed,
+                Errors         = outcome.Errors,
+                ItemsAdded     = outcome.ItemsAdded,
+                ItemsCanceled  = outcome.ItemsCanceled,
+            }, (int)sw.ElapsedMilliseconds);
             await _audit.WriteSystemAsync(actorName, "etl-end", "ErpSync",
                 runId.ToString(),
                 $"[run {runId}] Completed in {sw.ElapsedMilliseconds}ms — " +
@@ -160,9 +182,13 @@ public class ErpSyncJob
         catch (Exception ex)
         {
             sw.Stop();
-            // Audit the run-level failure standalone — the per-pull catchall
-            // inside UpsertAsync handles per-row failures, but this catches
-            // catastrophic errors (read failure, DB unreachable, etc.).
+            // Mark the summary row failed first so the status page reflects
+            // the catastrophic outcome even if the audit write below also
+            // fails for some reason (rare, but the swallow-on-failure audit
+            // semantic means we shouldn't depend on it landing).
+            await _logRepo.MarkFailedAsync(runId,
+                $"{ex.GetType().Name}: {ex.Message}",
+                (int)sw.ElapsedMilliseconds);
             await _audit.WriteSystemAsync(actorName, "etl-error", "ErpSync",
                 runId.ToString(),
                 $"[run {runId}] Run failed after {sw.ElapsedMilliseconds}ms — " +
