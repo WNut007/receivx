@@ -1,9 +1,22 @@
 # Phase 10 — ERP Integration (PULL / ETL design)
 
-Status: **ready to implement — Phase 10.1 next.**
-Target tag: **v3.0** (major release — first external integration).
+Status: **SHIPPED at v3.0 (2026-05-26).**
 Spec source: design conversations on 2026-05-25; this doc supersedes
 the earlier PUSH design that lived at this path through v2.3.x.
+
+> **Operators + ops:** the day-to-day usage guide is
+> `docs/erp-integration.md` (architecture, configuration, status
+> page, audit drill-down, troubleshooting). That doc is the one to
+> bookmark — this one captures the design + open questions that
+> drove the implementation, and stays for archaeology.
+>
+> **Deploy:** see `docs/deployment.md` §7 "Phase 10 ERP-integration
+> deploy blockers" — `ErpDb:ConnectionString` set, ERP user
+> read-only, "Pocket" placeholder rotated, firewall/VPN open, etc.
+>
+> **What landed for v3.0:** all sub-phases 10.1 through 10.8.
+> Battery 49/49 PASS. See `CHANGELOG.md` `[3.0.0]` entry for the
+> full change list.
 
 > **History note (2026-05-25):** Phase 10 was originally specced as
 > a PUSH integration (ERP POSTs to `/api/erp/pos`, `X-ERP-Api-Key`

@@ -1,13 +1,75 @@
 # ReceivingOps — Project Context
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
-**Currently on v2** of the spec (PO-driven receiving with FIFO allocation).
-**Status:** v2.3.2 shipped on `main` (2026-05-25, tag `v2.3.2`). v2.3.2
-is a typo fix on v2.3.1 — the Phase 9.1 column shipped as `TrailId`
+**Currently on v3** of the spec (PO-driven receiving with FIFO allocation
++ Phase 10 ERP integration).
+**Status:** v3.0 shipped on `main` (2026-05-26, tag `v3.0`). v3.0
+closes **Phase 10** — first external-system integration. Receivx
+pulls planning data from an upstream ERP (`BPI_PRS` source table at
+`103.13.229.21`) on an hourly Hangfire schedule + on-demand via the
+admin "Sync ERP" button (dashboard) or the new `/Admin/ErpSync`
+status page. Integration is **PULL** (one-way; Receivx owns the
+schedule + failure handling); the earlier PUSH variant was abandoned
+mid-planning and lives in git history at `v2.3.2`'s commit of the
+spec doc. Concurrency invariants enforced by belt-and-braces:
+`[DisableConcurrentExecution(600)]` blocks Hangfire-level recurring
+overlap, and the singleton `ErpSyncMutex` (Interlocked-based)
+excludes the recurring vs manual paths from each other since
+Hangfire's lock scopes per-method. Endpoint pre-flight 409 on
+`_mutex.IsRunning` gives operators instant feedback before enqueueing
+a phantom job. **Sources of truth:** ERP owns planning fields
+(PullDate, item codes, expected qtys, the 7 Phase 9.1 metadata
+fields); Receivx owns operational state (Status, signatures,
+ReceivedQty, lock flags, Notes, ETA). Per-pull upsert is
+transactional — closed pulls SKIP (audit-only, no mutation; behavior
+proven by `smoke-phase-10-7-integration.ps1` §2 via a sentinel
+PullDate fixture); items missing from a draft flip to
+`Status='canceled'` (never DELETE — receipts may FK them).
+Migration `db/028` adds `dbo.ErpSyncLog` — the summary table the
+status page reads (PK RunId + `IX_ErpSyncLog_StartedAt` covering
+index). 18 columns including 8 outcome totals + ElapsedMs +
+ErrorMessage; lifecycle is `InsertStartAsync` ('running') →
+`MarkSucceededAsync` (totals) or `MarkFailedAsync` (truncated error).
+Per-pull detail lives in `dbo.AuditLog` (Phase 10.5) keyed by
+`PullNumber`, with `[run <runId>]` correlation in every message:
+`etl-create` / `etl-update` inside the pull's tx (commit/rollback
+together), `etl-skip` / `etl-error` standalone (visible regardless
+of mutation state), `etl-start` / `etl-end` brackets at the run
+level. `IAuditService.WriteSystemAsync` overloads pass actor name
+explicitly so Hangfire worker threads can attribute rows to
+`[system]` (recurring) or the operator's displayName (manual — the
+controller captures it before `Enqueue` since HttpContext is gone
+on the worker thread). Hangfire worker queues now `["exports",
+"erp-sync", "default"]` — exports outrank ETL. New
+`ErpSyncAdminController` exposes `POST /trigger` (admin-only, 202+
+jobId or 409), `GET /jobs/{jobId}` (Hangfire monitoring), `GET /log`
+(paginated `PaginatedResponse<ErpSyncLogRow>`), `GET /log/{runId}`
+(drill-down), `GET /state` (`isRunning` for UI auto-disable).
+`/Admin/ErpSync` Razor page polls `/state` every 5s + auto-refreshes
+the list on running→idle transitions; reuses the `mountPagination`
+component from Phase 8. Dashboard gains a JS-revealed admin-only
+"Sync ERP" button mirroring the same modal pattern. New doc
+`docs/erp-integration.md` is the operator + ops guide
+(architecture, configuration, status page, audit drill-down,
+troubleshooting, BPI_PRS mapping, security). `docs/deployment.md`
+adds the Phase 10 deploy-blocker section (rotate "Pocket"
+placeholder password, lock ERP user to read-only with explicit
+DENY, firewall/VPN to `103.13.229.21:1433`, set
+`ErpSync:DefaultWarehouseId` before flipping `Enabled=true`). 7
+new smokes (`smoke-phase-10-1-erp-connection.ps1` through
+`smoke-phase-10-7-integration.ps1`) all skip cleanly via a 2-second
+TCP probe when ERP is unreachable so dev battery stays green
+without VPN. 10.7 verifies cross-table consistency (ErpSyncLog
+counters reconcile with per-pull AuditLog row counts; e.g.
+`10+449+0+0 == 459`), closed-pull skip BEHAVIOR (sentinel PullDate
+held), and mutex 409 under live contention. **Battery: 49/49 PASS**
+at v3.0 tip.
+
+v2.3.2 lineage:
+typo fix on v2.3.1 — the Phase 9.1 column shipped as `TrailId`
 (T-R-A-I-L) but is actually a manufacturing **trial** identifier
 (T-R-I-A-L). Migration `db/026` `sp_rename`s
-`dbo.PullItems.TrailId` → `TrialId` (idempotent — no-ops if already
-applied; throws if neither column exists). Migration `db/027`
+`dbo.PullItems.TrailId` → `TrialId` (idempotent). Migration `db/027`
 re-`CREATE OR ALTER`s `vw_TransactionsJournal` against `pi.TrialId`
 (sp_rename doesn't update view bindings, so the view's SELECT would
 be invalid between db/026 and db/027 — they're designed to run
@@ -24,7 +86,7 @@ key, GET assertion, XLSX header check, cleanup SQL, marker value
 `P91-TRAIL` → `P91-TRIAL`. No data migration needed (`sp_rename`
 preserves values). Historical `db/024` + `db/025` left untouched —
 fresh installs run `024 → 025 → 026 → 027` and land in the
-corrected end-state. **Battery: 42/42 PASS** at v2.3.2 tip.
+corrected end-state. Battery: 42/42 PASS at v2.3.2 tip.
 
 v2.3.1 lineage:
 ships **Phase 9.1** — 7 ERP-sourced fields on `dbo.PullItems`:

@@ -1,6 +1,6 @@
 # Production deployment guide
 
-Last updated: v2.2 (Phase 8 close).
+Last updated: v3.0 (Phase 10 close — ERP integration).
 Audience: whoever stands up a non-local ReceivingOps instance.
 Scope: configuration, migrations, background-job runtime, operational
 gaps. Not a step-by-step "ship to Azure" tutorial — those details depend
@@ -16,7 +16,8 @@ on your hosting target.
 | SQL Server | 2019+ | Tested on local SQL Server. Earlier 2017 may work but `dbo.PurchaseOrderLines` uses computed columns + filtered indexes that were tightened in 2019. |
 | SMTP relay | TLS 1.2+ on port 587 | Default config assumes Gmail SMTP with an app password. Any STARTTLS-capable relay works (MailKit picks the right auth). |
 | Disk | ~1 GB headroom under app root | XLSX exports land in `exports/` (sibling of `wwwroot/`). Files persist indefinitely — see §6. |
-| Outbound network | port 587 to SMTP host, port 1433 to SQL | If running behind a corporate firewall, allow both before first start or Hangfire jobs will pile up failed retries. |
+| Outbound network | port 587 to SMTP host, port 1433 to Receivx SQL, port 1433 to ERP SQL | The ERP host is whatever `ErpDb:ConnectionString` points at (Phase 10). If running behind a corporate firewall, allow all three before first start or Hangfire jobs will pile up failed retries. |
+| ERP SQL access | Read-only login on the ERP DB | Phase 10 pull-style integration. `BPI_PRS` (and any joined tables) must be readable by the connection-string user. See §3 + `docs/erp-integration.md` §4.3. |
 
 The Hangfire dashboard and the export download endpoint are served by
 the same web process — no separate worker is required.
@@ -64,9 +65,14 @@ db/017_add_lockhourcap.sql          -- v2.1 per-pull hour-cap flag
 db/018_pulls_reference_number.sql   -- Phase 7.1 reference number
 db/019_pagination_indexes.sql       -- Phase 8.1 indexes for /Pos + /Reports
 db/020_export_jobs_log.sql          -- Phase 8.4 ExportJobsLog table
-                                    -- (021 reserved for Phase 9 — see §7)
+db/021_po_lines_extended_fields.sql -- Phase 9 — 20 ERP-sourced PO line columns
 db/022_export_jobs_log_read_at.sql  -- v2.1.12 nav-bar unread badge
 db/023_export_jobs_log_downloaded_at.sql  -- v2.1.13 Pending/Downloaded tabs
+db/024_pull_items_extended_fields.sql     -- Phase 9.1 — 7 ERP-sourced PullItem cols
+db/025_vw_transactions_journal_pull_item_erp.sql  -- view extends with the 7 cols
+db/026_rename_trailid_to_trialid.sql      -- v2.3.2 — typo fix on PullItems.TrialId
+db/027_vw_transactions_journal_trialid.sql -- view re-alter post-rename
+db/028_erp_sync_log.sql             -- Phase 10.6 — ErpSyncLog summary table
 ```
 
 Skip seed scripts (`003`–`007`, `014`, `016`) in production — they
@@ -84,7 +90,7 @@ Then assign that admin to at least one warehouse via `dbo.WarehouseAssignments`.
 ### 2.3 Verify
 
 ```sql
--- Should list ExportJobsLog as most-recent
+-- Should list ErpSyncLog as most-recent (Phase 10.6, db/028)
 SELECT TOP 10 name, create_date
 FROM sys.tables
 WHERE schema_id = SCHEMA_ID('dbo')
@@ -95,6 +101,16 @@ SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_NAME = 'ExportJobsLog'
 ORDER BY ORDINAL_POSITION;
+
+-- Confirms Phase 10.6 ErpSyncLog (18 cols incl. RunId PK + IX_StartedAt)
+SELECT COUNT(*) AS columns FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'ErpSyncLog';  -- 18
+
+-- Confirms Phase 9.1 PullItems extended fields (post-v2.3.2 rename: TrialId not TrailId)
+SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'PullItems'
+  AND COLUMN_NAME IN ('ProductFamily', 'FromSubInventory', 'ToSubInventory',
+                       'SpecialControl', 'TrialId', 'Location', 'Phase');
 ```
 
 ### 2.4 Backup
@@ -138,6 +154,15 @@ dotnet user-secrets set "Smtp:UseStartTls" "true" --project src/ReceivingOps.Web
 dotnet user-secrets set "Smtp:Username" "<gmail address>" --project src/ReceivingOps.Web
 dotnet user-secrets set "Smtp:Password" "<16-char app password>" --project src/ReceivingOps.Web
 dotnet user-secrets set "Smtp:FromAddress" "<gmail address>" --project src/ReceivingOps.Web
+
+# Phase 10 — ERP integration. Required if you want the recurring sync
+# or the manual-trigger UI to work. See docs/erp-integration.md §4.
+dotnet user-secrets set "ErpDb:ConnectionString" `
+    "Server=<erp-host>;Database=<db>;User Id=<readonly-user>;Password=<strong>;TrustServerCertificate=true" `
+    --project src/ReceivingOps.Web
+# Optional — flip recurring on once DefaultWarehouseId is set
+# dotnet user-secrets set "ErpSync:Enabled" "true" --project src/ReceivingOps.Web
+# dotnet user-secrets set "ErpSync:DefaultWarehouseId" "<warehouse-guid>" --project src/ReceivingOps.Web
 ```
 
 ### Verify config landed
@@ -156,6 +181,9 @@ baked into the page).
 | `Smtp:Host` | Email service no-ops gracefully — logs the would-be email body. Useful for staging without a relay; **not** what you want in prod. |
 | `Exports:SigningKey` | Falls back to the literal dev placeholder string. Anyone who reads the source can forge download tokens. **Set this before exposing the app externally.** |
 | `Exports:BaseUrl` | Defaults to `http://localhost:5213`. Email links will point to localhost — recipients can't open them. |
+| `ErpDb:ConnectionString` | App starts fine; `ErpSqlConnectionFactory.Create()` throws on first sync attempt. Manual trigger surfaces it as HTTP 500. Set this if you want any ERP sync at all. |
+| `ErpSync:DefaultWarehouseId` | Recurring fires per schedule but logs "no default — skipping" and exits without touching ERP. Manual triggers (with operator-picked warehouse) still work. |
+| `ErpSync:Enabled` (false) | Recurring is unregistered on startup (`RecurringJob.RemoveIfExists`). Manual triggers still work. Safe default for staging. |
 
 ---
 
@@ -164,9 +192,11 @@ baked into the page).
 ### 4.1 What runs in-process
 
 The web tier registers `AddHangfireServer` with 2 workers on queues
-`exports` + `default`. Export jobs are queued onto `exports`; nothing
-else uses Hangfire yet. For the current export volume (a handful per
-day per operator), this is plenty.
+`exports`, `erp-sync`, and `default` (in that priority order — user-
+facing exports outrank background ETL). Export jobs are queued onto
+`exports`; the ERP sync goes to `erp-sync`. For the current volume
+(a handful of exports per day per operator + one ERP sync per hour),
+this is plenty.
 
 If exports start contending with request threads (long-running XLSX
 generation blocks a worker), the next step is splitting Hangfire into
@@ -245,7 +275,7 @@ DB via tunneled connection string — your call):
 pwsh -File tools/run-smokes.ps1
 ```
 
-Expected at v2.2: **40/40 PASS**.
+Expected at v3.0: **49/49 PASS**.
 
 Production-relevant subset if you can't run the full battery:
 
@@ -256,6 +286,15 @@ Production-relevant subset if you can't run the full battery:
 | `smoke-my-exports.ps1` | `/Exports` listing + admin see-all privacy boundary |
 | `smoke-exports-2tab.ps1` | Pending/Downloaded split + idempotency + cross-user privacy |
 | `smoke-email-test.ps1` | Admin email diagnostic + SMTP config metadata |
+| `smoke-phase-10-1-erp-connection.ps1` | ERP connection factory + TCP/SQL reachability |
+| `smoke-phase-10-4-erp-trigger.ps1` | Manual ERP sync end-to-end (Hangfire → upsert) |
+| `smoke-phase-10-6-erp-sync-page.ps1` | `/Admin/ErpSync` status page + `ErpSyncLog` writes |
+| `smoke-phase-10-7-integration.ps1` | Cross-table consistency + closed-pull skip + mutex 409 |
+
+The ERP smokes (`10-*`) skip cleanly when the ERP host is unreachable
+(2s TCP probe), so they don't break the battery on a dev box without
+VPN. To exercise them fully against the prod ERP DB, run them from
+the deployed host with `ErpDb:ConnectionString` set.
 
 ---
 
@@ -277,8 +316,35 @@ Tick before exposing the app externally:
 - [ ] Cron janitor in place per §5 (or accept unbounded disk growth
       and live with it).
 
-### Reserved migration slot
+### Phase 10 ERP-integration deploy blockers (v3.0)
 
-`db/021` is intentionally reserved for **Phase 9** (ERP-sourced
-PurchaseOrderLines columns — see CLAUDE.md "v2.x backlog"). Don't
-fill the gap with an unrelated migration — Phase 9's seed expects it.
+Add to the checklist if you're enabling the ERP sync:
+
+- [ ] `ErpDb:ConnectionString` set via user-secret / env var (never
+      committed to `appsettings.json`).
+- [ ] ERP DB user is **read-only** — explicitly DENY
+      INSERT/UPDATE/DELETE/EXECUTE on the schema, even if the role
+      shouldn't grant them. Recipe in `docs/erp-integration.md` §4.3.
+- [ ] Placeholder password (the dev secret used `"Pocket007"`) has
+      been rotated to a strong production credential.
+- [ ] Firewall / VPN allows outbound TCP from the app host to the ERP
+      SQL host on port 1433 (or your `ErpDb:ConnectionString` port).
+- [ ] For recurring runs: `ErpSync:Enabled = true` AND
+      `ErpSync:DefaultWarehouseId = <your warehouse Guid>` both set —
+      without DefaultWarehouseId the recurring fires but no-ops.
+- [ ] `dbo.ErpSyncLog` and `dbo.AuditLog` retention plan in place if
+      you expect the integration to run for years (the per-pull audit
+      rows accumulate at ~N pulls × M syncs/day).
+- [ ] Smoke `smoke-phase-10-1-erp-connection.ps1` passes from the
+      deployed host (proves credentials + network are good).
+- [ ] One-shot manual load probe per `docs/erp-integration.md` §8 to
+      confirm wall-clock is acceptable at full backfill on first run.
+
+### Migration slot policy
+
+Future migrations append at the next `db/0NN`. Past gaps:
+- `db/021` was reserved for Phase 9 (PurchaseOrderLines ERP cols);
+  filled at v2.3.
+- `db/024–025` filled at v2.3.1 (PullItems ERP cols + view).
+- `db/026–027` filled at v2.3.2 (TrialId rename + view re-alter).
+- `db/028` filled at v3.0 (ErpSyncLog).
