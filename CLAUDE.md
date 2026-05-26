@@ -2,10 +2,105 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
-+ Phase 10 ERP integration).
-**Status:** v3.0 shipped on `main` (2026-05-26, tag `v3.0`). v3.0
-closes **Phase 10** — first external-system integration. Receivx
-pulls planning data from an upstream ERP (`BPI_PRS` source table at
++ Phase 10 ERP integration + Phase 11 admin config editor).
+**Status:** v3.1 shipped on `main` (2026-05-26, tag `v3.1`, pushed to
+origin). v3.1 closes **Phase 11** — admin-editable configuration with
+encrypted secrets storage, split across two interim tags: `v3.0.5`
+(Phase 11.1 — encryption + storage foundation) and `v3.1` (Phase 11.2
+— tabbed UI editor). Admins now edit `Smtp:*`, `ErpDb:*`, `ErpSync:*`,
+and `Exports:*` via `/Config` → new admin-only "Configuration" section
+(replaces the v2.1.9 Email-test diagnostic) without touching
+appsettings.json or user-secrets. Migration `db/029` adds
+`dbo.AppSettings` ([Key] PK + [Value] NVARCHAR(MAX) NULL +
+EncryptedValue VARBINARY(MAX) NULL + IsSecret BIT + UpdatedAt +
+UpdatedBy + PreviousValueHash SHA-256 hex) with
+`CK_AppSettings_ValueOrEncrypted` enforcing Value XOR EncryptedValue
+per IsSecret (both-NULL allowed for cleared rows so the IsSecret flag
+survives a temporary unset). Encryption via ASP.NET Data Protection
+API (purpose `AppSettings.v1`, 90-day auto-rotated keys, persisted to
+`.dp-keys/` under `ContentRootPath` — gitignored, MUST move with the
+DB on backup/restore or every encrypted secret becomes
+unrecoverable). `IAppSettingsService` is Singleton (encryption
+protector + IConfiguration fallback) and bridges to scoped
+`IAppSettingsRepository` + `IAuditService` via `IServiceScopeFactory`
+on each call. Read precedence: **env vars > DB > user-secrets >
+appsettings.json**. Known secrets (encrypted): `Smtp:Password`,
+`ErpDb:ConnectionString`, `Exports:SigningKey`. Bootstrap exclusions
+NEVER stored in DB (chicken-and-egg): `ConnectionStrings:Default`,
+`DataProtection:KeyDirectory`, `ASPNETCORE_ENVIRONMENT`. Options
+binding refactored from `Configure<T>(GetSection())` to
+`AddOptions<T>().Configure(...).Configure<IAppSettingsService>(...)`
+— two-stage: IConfiguration defaults first, then DB overlay (which
+itself resolves env > DB > IConfiguration internally, so the binding
+honors the full precedence chain). **Restart-required** — IOptions<T>
+binds once at first resolution; no live reload (rejected to keep the
+encryption layer + Hangfire worker caching simple). `AppSettingsSeeder`
+runs at startup, idempotent (no-op if rows exist); on first boot it
+copies the 4 owned sections from IConfiguration into the DB so the
+editor has a baseline. Startup health check probes a known encrypted
+key; CryptographicException → LogCritical + continue (don't crash —
+let admin UI prompt for re-entry). Phase 11.2 UI: `/Config` extended
+with admin-only `<section data-admin-only>` containing pill-style
+tabs (`.config-tab` mirrors `.exports-tab` from Phase 8.4) — Email /
+ERP Connection / Sync Schedule / Exports. Endpoints all
+`[Authorize(Roles="admin")]` under `/api/admin/config/`: `GET sections`
+(tab metadata + isSecret flags), `GET sections/{name}` (values with
+secrets masked as `"***"`), `PUT sections/{name}` (rejects secret
+keys → 400 with helpful "use POST .../secret" message), `POST
+sections/{name}/secret` (single-secret update; rejects non-secret
+keys), `DELETE sections/{name}` (reset to defaults — seeder
+re-hydrates on next restart), `POST exports/regenerate-signing-key`
+(32-byte `RandomNumberGenerator.GetBytes` → base64 → encrypted),
+`POST test/erp` (live `IErpDbConnectionFactory.Create()` + SELECT
+@@VERSION with 5s timeout). SMTP test send REUSES existing
+`/api/admin/email-test` (Phase 8.4, unchanged). Per-key validation:
+Port 1-65535, UseStartTls bool, FromAddress `MailAddress.TryCreate`,
+Enabled bool, CronExpression `NCrontab.CrontabSchedule.TryParse`,
+TimeoutSeconds 60-3600, BackfillDays 1-365, DefaultWarehouseId Guid +
+`IWarehouseRepository.GetListRowAsync` existence check, BaseUrl
+`Uri.TryCreate(absolute http/https)`. Errors return `{key, error}`
+shape so the UI can highlight the offending field. DefaultWarehouseId
+renders as `<select>` populated from `GET /api/warehouses` (existing
+authenticated endpoint). Secret display: masked `"***"` + explicit
+"Change" workflow (inline reveal of real input + Save/Cancel —
+never modal indirection). Signing key has "Regenerate" only (no
+operator-entered value — system-generated). Restart banner appears
+on every successful save, persistent in session until Dismiss /
+F5. JS architecture: 5 files — `config-editor.js` (shell + api
+helpers + tab switching + `window.registerConfigTabRenderer`
+extension point) + one renderer per tab (`config-editor-{smtp,erpdb,
+erpsync,exports}.js`). The 5 native `confirm()` sites in renderers
+swapped to `confirmAction({title, message, icon, danger,
+confirmLabel})` per `smoke-confirm-modal.ps1` convention. Audit:
+every set/delete writes `dbo.AuditLog` (ActionType `config-set` /
+`config-delete`, EntityType `AppSettings`, EntityId = the key);
+secret messages redact value (`Set Smtp:Password (secret value —
+not logged) (prior hash: a3f5...)`). `PreviousValueHash` column on
+AppSettings stores SHA-256 of prior bytes for tamper-evident audit
+chaining without exposing plaintext. `IAppSettingsService.SetAsync`
+takes `updatedBy` explicitly so the seeder can attribute
+`[system-seed]` rows and the controllers can attribute admin
+displayName. NuGet: + `NCrontab 3.3.3` (MIT, 30KB, single
+transitive — no Cronos since Hangfire doesn't expose its parser).
+New docs: `docs/security.md` (key custody, bootstrap exclusions,
+threat model summary), `docs/configuration.md` (precedence chain,
+restart-required workflow, full UI surface in §7). 2 new smokes:
+`smoke-phase-11-1-app-settings.ps1` (10 steps — schema/wiring/
+seeder/encrypt-decrypt/audit/.dp-keys/end-to-end-via-smtp-config)
++ `smoke-phase-11-2-config-ui.ps1` (19 steps — GET endpoints,
+PUT non-secret, PUT rejects secret, POST secret + plaintext-leak
+grep against AuditLog, validation per field, regenerate, DELETE
+reset, ERP test, operator 403 at all 7 endpoints, bootstrap
+exclusions absent from listings). 4 deployment items from Phase 10
+deploy-blocker checklist are NOW operator-self-service via `/Config`
+instead of requiring a redeploy: `ErpSync:DefaultWarehouseId`,
+`Smtp:*`, `Exports:BaseUrl`, `Exports:SigningKey`. **Battery:
+51/51 PASS** at v3.1 tip.
+
+v3.0 lineage:
+v3.0 shipped on `main` (2026-05-26, tag `v3.0`). v3.0 closes
+**Phase 10** — first external-system integration. Receivx pulls
+planning data from an upstream ERP (`BPI_PRS` source table at
 `103.13.229.21`) on an hourly Hangfire schedule + on-demand via the
 admin "Sync ERP" button (dashboard) or the new `/Admin/ErpSync`
 status page. Integration is **PULL** (one-way; Receivx owns the
@@ -62,7 +157,7 @@ TCP probe when ERP is unreachable so dev battery stays green
 without VPN. 10.7 verifies cross-table consistency (ErpSyncLog
 counters reconcile with per-pull AuditLog row counts; e.g.
 `10+449+0+0 == 459`), closed-pull skip BEHAVIOR (sentinel PullDate
-held), and mutex 409 under live contention. **Battery: 49/49 PASS**
+held), and mutex 409 under live contention. Battery: 49/49 PASS
 at v3.0 tip.
 
 v2.3.2 lineage:
@@ -553,130 +648,75 @@ hardcoded SQL login.
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
 
-# Session handoff — 2026-05-25
+# Session handoff — 2026-05-26
 
-Latest tag: v2.3.1 (Phase 9.1 close — 7 ERP-sourced PullItem fields)
-Battery: 42/42 PASS · main 6 commits ahead of origin/main · all clean
+Latest tag: **v3.1** (Phase 11.2 close — admin config UI). Pushed to origin.
+Battery: **51/51 PASS** · `main` at `3185b86` · clean
 
-## Phase 9.1 — Done
+## Phase 11 — Done (v3.0.5 + v3.1)
 
-- ✅ Migration db/024 — 7 nullable ERP columns on PullItems
-  (ProductFamily, FromSubInventory, ToSubInventory, SpecialControl,
-   TrailId, Location, [Phase])
-- ✅ Migration db/025 — CREATE OR ALTER vw_TransactionsJournal appends
-  the 7 fields (PullLocation + PullPhase aliased)
-- ✅ PullItem entity + PullItemDto + PullItemRow extended
-- ✅ PullRepository.UpdateExtendedFieldsAsync + 3 SELECTs project new cols
-- ✅ PullItemExtendedFieldsUpdateRequest DTO + service +
-  PUT /api/pulls/{id}/items/{itemId}/extended-fields (CanManagePulls)
-- ✅ Dashboard drawer items table: 7 visually-grouped ERP columns +
-  itemExtendedFieldsModal + tag-icon action
-- ✅ ReceiptJournalRow + JournalSelect + TransactionsExportJob extended
-  for XLSX (cols 24..30, SpecialControl-last)
-- ✅ Smoke smoke-phase-9-1-pull-extended-fields covers 9 paths
-  (schema/view/API/operator-403/closed-409/audit/XLSX headers/XLSX
-  marker via PullItem JOIN/cleanup)
-- ✅ WaitForFile helper hardened (non-zero size + exclusive-open)
-- ✅ Tag v2.3.1 — Phase 9.1 milestone closed
+### Phase 11.1 (tag v3.0.5, interim) — encryption foundation
 
-## Phase 9 — Done
+- ✅ Migration `db/029` — `dbo.AppSettings` table with Value-XOR-EncryptedValue CHECK
+- ✅ ASP.NET Data Protection wired (purpose `AppSettings.v1`, 90-day key lifetime, `.dp-keys/` gitignored)
+- ✅ `IAppSettingsService` (Singleton + IServiceScopeFactory bridge) + `IAppSettingsRepository` (Scoped, Dapper MERGE upsert)
+- ✅ `AppSettingsSeeder` — idempotent IConfiguration → DB hydration on first start
+- ✅ Options binding refactored: SmtpOptions / ExportOptions / ErpSyncOptions through `AddOptions<T>().Configure<IAppSettingsService>(...)`
+- ✅ Precedence: env vars > DB > user-secrets > appsettings.json
+- ✅ Startup health check (CryptographicException → LogCritical, don't crash)
+- ✅ `docs/security.md` (key custody, threat model) + `docs/configuration.md` (precedence + bootstrap exclusions)
+- ✅ Smoke `smoke-phase-11-1-app-settings.ps1` (10 steps)
 
-- ✅ Migration db/021 — 20 nullable ERP columns on PurchaseOrderLines
-- ✅ PoLineRow DTO + GetDetailAsync SELECT extended
-- ✅ PO Detail page shows 5 priority ERP columns
-- ✅ Excel export gains "Lines" sheet (33 cols incl. all 20 ERP)
-- ✅ Smoke smoke-phase-9-extended-fields covers schema + API + XLSX
-- ✅ docs/phase-10-erp-integration.md spec doc (planning only)
-- ✅ Tag v2.3 — Phase 9 milestone closed
+### Phase 11.2 (tag v3.1) — tabbed UI editor
 
-## Operational gap addressed during Phase 9 ship
+- ✅ `ConfigController` (GET sections + GET sections/{name}) + `ConfigWriteController` (PUT/POST secret/DELETE reset/regenerate signing key/test ERP)
+- ✅ Per-key validation: NCrontab for cron, MailAddress for from, Uri.TryCreate for BaseUrl, range checks, warehouse existence
+- ✅ `/Config` admin section replaced: 4 pill-style tabs (Email / ERP Connection / Sync Schedule / Exports)
+- ✅ 5 JS files: `config-editor.js` (shell) + `config-editor-{smtp,erpdb,erpsync,exports}.js` (renderers via `registerConfigTabRenderer`)
+- ✅ Secrets masked `"***"`; "Change" workflow (inline reveal) for password/connection string; "Regenerate" only for signing key
+- ✅ DefaultWarehouseId `<select>` populated from `/api/warehouses`
+- ✅ Restart banner appears on save (session-persistent until Dismiss)
+- ✅ All 5 confirm() sites swapped to `confirmAction(...)` per smoke-confirm-modal convention
+- ✅ + `NCrontab 3.3.3` NuGet
+- ✅ Smoke `smoke-phase-11-2-config-ui.ps1` (19 steps: GETs/PUTs/POST secret/validation/regenerate/DELETE reset/ERP test/operator 403 at all 7 endpoints/bootstrap exclusions absent)
+- ✅ Tag v3.0.5 (Phase 11.1) + v3.1 (Phase 11.2)
 
-- **Test-data drift cleanup** — one rogue `PL-DOR-*` test pull (no
-  receipts, crashed-smoke artifact) deleted; 3 PO line `ReceivedQty`
-  caches recomputed from `SUM(Receipts.QtyReceived)` truth. Both
-  within CLAUDE.md conventions: the cache is documented as
-  denormalized/reproducible, and the deleted pull had no receipts so
-  the append-only invariant on Receipts wasn't touched. **Root cause
-  unfixed:** smoke teardowns that create receipts then DELETE them
-  don't recompute the cache. Worth a janitorial pass in a future
-  slice (low priority — only affects smoke reruns against a dev DB).
+## Production blockers — UI-editable now
 
-## Phase 8 — Done
+These 4 items used to require `dotnet user-secrets set ... + redeploy`. With
+v3.1 they are operator-self-service via `/Config`:
 
-- ✅ My Exports page (v2.1.11) — ExportJobsLog + auto-refresh + admin see-all
-- ✅ Phase 8.5 load test (validated at scale)
-- ✅ Phase 8.6 docs (this slice):
-  - `docs/deployment.md` — env, migrations, user-secrets, Hangfire, file lifecycle, hardening
-  - `docs/api-pagination.md` — PaginatedRequest/Response contract + surfaces
-  - `docs/exports.md` — feature doc, lifecycle, HMAC, status states, API ref
-  - `CHANGELOG.md` — v2.0 → v2.2 retroactively consolidated
-- ✅ Tag v2.2 — Phase 8 milestone closed
+- `ErpSync:DefaultWarehouseId` (was GUID-of-zeros) → Sync Schedule tab
+- `Smtp:Host` / `Port` / `Username` / `FromAddress` / `Password` → Email tab
+- `ErpDb:ConnectionString` (rotate the placeholder password) → ERP Connection tab
+- `Exports:BaseUrl` / `SigningKey` (32-byte random) → Exports tab
 
-## Operational gap noted (not blocking v2.2 ship)
+Still strictly deployment-side (NOT in AppSettings — bootstrap exclusions):
 
-- **No recurring file-cleanup job.** Generated XLSX files live at
-  `exports/` (project root, NOT wwwroot) and stay indefinitely.
-  Token expires in 24h but the bytes remain. `docs/deployment.md §5`
-  ships a host-cron recipe (7-day sweep) as the interim until a
-  Hangfire recurring job is added.
+- `ConnectionStrings:Default` — opens the DB that holds AppSettings
+- `DataProtection:KeyDirectory` — needed to decrypt anything
+- `ASPNETCORE_ENVIRONMENT`
 
-## Phase 9 — Designed, ready to implement (~5 hr)
+**`.dp-keys/` custody is now a deploy concern.** Lose the directory →
+every encrypted secret in DB is unrecoverable. Back up alongside the DB.
+`docs/security.md` is the operator guide.
 
-Spec confirmed:
-- Add 20 ERP-sourced fields to PurchaseOrderLines (migration db/021)
-- Field list (renamed/sized):
-  InvoiceNo, Location, PalletId, VmiPalletId, ProductionLine, Building,
-  KanbanNo, AsnNo, OrderRound (renamed from Round), SubInventory, ToLocation,
-  PCCNo, ManufacturingControlNo, BatchNo, ExportDeclarationNo,
-  CustomerReferenceNo, ManufacturingReferenceNo, VendorItem, DeliveryDate (DATE),
-  Note (NVARCHAR(500))
-- SKIP: OrderDate, CreatedAt, ReceivedDate (duplicates)
-- NO indexes (defer to Phase 10)
-- NO edit form (data from ERP)
-- NO search (defer to Phase 10)
-
-UI display:
-- PO Detail line table adds 5 visible columns:
-  Invoice, SubInventory, ToLocation, PalletId, VmiPalletId
-- Other 15 fields: API + Excel export only
-
-Excel export: all 20 fields included
-
-Tag: v2.3
-
-## Phase 10 — Final phase, spec doc only
-
-ERP integration (POST /api/erp/pos):
-- Vendor system pushes PO data → Receivx ingests
-- Auth: API key (or OAuth client credentials)
-- Upsert by PoNumber (idempotent)
-- Preserve Receivx-managed fields (PullId, lock states, ReceivedQty)
-- Add search indexes after observing usage patterns
-
-Tag: v3.0 (major release — external integration)
-
-## Production blockers (before deploy)
-
-Run before any non-local deployment:
-
-```powershell
-dotnet user-secrets set Exports:BaseUrl https://your.public.host --project src/ReceivingOps.Web
-dotnet user-secrets set Exports:SigningKey <random-32-char-string> --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:Host smtp.gmail.com --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:Port 587 --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:UseStartTls true --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:Username <gmail> --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:Password <16-char-gmail-app-password> --project src/ReceivingOps.Web
-dotnet user-secrets set Smtp:FromAddress <gmail> --project src/ReceivingOps.Web
-```
-
-Currently configured: dev placeholder values
-
-## v2.x backlog (defer)
+## v3.x backlog (defer)
 
 - closeNote vertical slice (~150-200 LOC) — drawer hook ready in renderCloseAuth
+- Exports cleanup Hangfire job (file purge 7-day; host-cron recipe in `docs/deployment.md §5` is the interim)
 - Profile editor + Help page (restore dropdown when destinations exist)
 - Item-search typeahead in Add-Line modal (when catalog grows)
 - Operator-dropdown source for /Transactions (janitorial)
 - Audit retention policy (design decision needed)
-- CHANGELOG.md consolidation (retroactive v2.0 → v2.1.10)
+- Phase 11.2 "re-import from config files" admin button (alternative to manual `DELETE FROM dbo.AppSettings` + restart)
+- Phase 12: PO data source — Phase 9's 20 ERP-sourced PurchaseOrderLines columns currently have no writer; either extend the BPI_PRS pull or add a vendor PUSH endpoint
+
+## Known flakes (pre-existing; pass standalone)
+
+- `smoke-phase-8.4-exports.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Battery is reliably green after one retry, never had genuine regressions across Phases 10 + 11.
+
+## Dev-environment notes
+
+- Run smoke battery with `dotnet run --launch-profile http` (NOT `https`). The https profile activates `UseHttpsRedirection` which returns 307 instead of 302 on auth redirects, breaking `smoke-phase-5c`.
+- `.dp-keys/` lives under `src/ReceivingOps.Web/.dp-keys/` in dev (under `ContentRootPath`). Already gitignored at both `/` and `src/ReceivingOps.Web/` paths.
