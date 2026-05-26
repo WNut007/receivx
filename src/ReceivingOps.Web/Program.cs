@@ -151,16 +151,49 @@ builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
 builder.Services.AddScoped<AppSettingsSeeder>();
 
 // ---- v2.x Phase 8.4 — email transport (Gmail SMTP via MailKit) ----
-// SmtpOptions binds from the "Smtp" section — typically user-secrets in
-// dev, env vars in prod. Empty Host disables real sending (the service
-// logs the would-be email instead) so dev without SMTP doesn't crash.
-builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+// SmtpOptions used to bind directly from "Smtp" (appsettings + user-secrets).
+// Phase 11.1 routes it through IAppSettingsService instead — the bind below
+// first pulls IConfiguration defaults, then overlays DB / env-var resolution.
+// Precedence: env vars > DB > user-secrets > appsettings.json.
+builder.Services.AddOptions<SmtpOptions>()
+    .Configure(opts => builder.Configuration.GetSection("Smtp").Bind(opts))
+    .Configure<IAppSettingsService>((opts, settings) =>
+    {
+        var host = settings.GetAsync("Smtp:Host").GetAwaiter().GetResult();
+        if (host is not null) opts.Host = host;
+        if (int.TryParse(settings.GetAsync("Smtp:Port").GetAwaiter().GetResult(), out var port))
+            opts.Port = port;
+        if (bool.TryParse(settings.GetAsync("Smtp:UseStartTls").GetAwaiter().GetResult(), out var tls))
+            opts.UseStartTls = tls;
+        var user = settings.GetAsync("Smtp:Username").GetAwaiter().GetResult();
+        if (user is not null) opts.Username = user;
+        var pass = settings.GetAsync("Smtp:Password").GetAwaiter().GetResult();
+        if (pass is not null) opts.Password = pass;
+        var from = settings.GetAsync("Smtp:FromAddress").GetAwaiter().GetResult();
+        if (from is not null) opts.FromAddress = from;
+        var fromName = settings.GetAsync("Smtp:FromName").GetAwaiter().GetResult();
+        if (fromName is not null) opts.FromName = fromName;
+    });
 builder.Services.AddSingleton<IEmailService, MailKitEmailService>();
 
 // ---- v2.x Phase 8.4 — export pipeline ----
 // ExportOptions: storage root + signing key + base URL for download links
-// + file lifetime. Production deploys must override SigningKey via secret.
-builder.Services.Configure<ExportOptions>(builder.Configuration.GetSection("Exports"));
+// + file lifetime. Same precedence as Smtp — DB rows from AppSettings beat
+// user-secrets / appsettings.json defaults, env vars beat DB.
+builder.Services.AddOptions<ExportOptions>()
+    .Configure(opts => builder.Configuration.GetSection("Exports").Bind(opts))
+    .Configure<IAppSettingsService>((opts, settings) =>
+    {
+        var root = settings.GetAsync("Exports:StorageRoot").GetAwaiter().GetResult();
+        if (root is not null) opts.StorageRoot = root;
+        var key = settings.GetAsync("Exports:SigningKey").GetAwaiter().GetResult();
+        if (key is not null) opts.SigningKey = key;
+        var baseUrl = settings.GetAsync("Exports:BaseUrl").GetAwaiter().GetResult();
+        if (baseUrl is not null) opts.BaseUrl = baseUrl;
+        var lifetime = settings.GetAsync("Exports:FileLifetime").GetAwaiter().GetResult();
+        if (lifetime is not null && TimeSpan.TryParse(lifetime, out var span))
+            opts.FileLifetime = span;
+    });
 builder.Services.AddSingleton<ExportTokenService>();
 builder.Services.AddScoped<TransactionsExportJob>();
 builder.Services.AddScoped<PosExportJob>();
@@ -168,10 +201,25 @@ builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
 
 // ---- v3.x Phase 10.1 — ERP sync pipeline ----
-// ErpSyncOptions: kill-switch + cron expression. ErpSyncJob: Hangfire-
-// scheduled stub that opens the ERP DB connection and runs SELECT @@VERSION.
-// 10.2+ fleshes out the actual ETL transform + upsert logic.
-builder.Services.Configure<ErpSyncOptions>(builder.Configuration.GetSection("ErpSync"));
+// ErpSyncOptions: kill-switch + cron expression + warehouse default +
+// backfill window. Phase 11.1 routes through IAppSettingsService —
+// admins flip Enabled / DefaultWarehouseId via the config UI without
+// touching appsettings.json.
+builder.Services.AddOptions<ErpSyncOptions>()
+    .Configure(opts => builder.Configuration.GetSection("ErpSync").Bind(opts))
+    .Configure<IAppSettingsService>((opts, settings) =>
+    {
+        if (bool.TryParse(settings.GetAsync("ErpSync:Enabled").GetAwaiter().GetResult(), out var en))
+            opts.Enabled = en;
+        var cron = settings.GetAsync("ErpSync:CronExpression").GetAwaiter().GetResult();
+        if (cron is not null) opts.CronExpression = cron;
+        if (int.TryParse(settings.GetAsync("ErpSync:TimeoutSeconds").GetAwaiter().GetResult(), out var t))
+            opts.TimeoutSeconds = t;
+        if (Guid.TryParse(settings.GetAsync("ErpSync:DefaultWarehouseId").GetAwaiter().GetResult(), out var wh))
+            opts.DefaultWarehouseId = wh;
+        if (int.TryParse(settings.GetAsync("ErpSync:BackfillDays").GetAwaiter().GetResult(), out var bd))
+            opts.BackfillDays = bd;
+    });
 builder.Services.AddScoped<IErpSyncService, ErpSyncService>();
 builder.Services.AddScoped<IErpUpsertService, ErpUpsertService>();
 builder.Services.AddScoped<ErpSyncJob>();
