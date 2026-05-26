@@ -257,6 +257,92 @@ try {
 OK "Unknown warehouse rejected with 400"
 
 # ----------------------------------------------------------------------------
+# 14b. v3.1.1 gap 1 — POST /api/admin/config/test/smtp wrapper exists
+# ----------------------------------------------------------------------------
+Step "POST test/smtp wrapper (gap 1)"
+$smtpBody = @{ recipientEmail = 'phase-11-2-smoke@example.com' } | ConvertTo-Json
+try {
+    $resp = Invoke-RestMethod -Uri "$base/api/admin/config/test/smtp" -Method POST `
+        -Body $smtpBody -ContentType 'application/json' -WebSession $admin
+    if ($null -eq $resp.sent) { Fail "test/smtp response missing 'sent' field" }
+    # sent=true (real SMTP configured + recipient accepted) or sent=false
+    # (creds rejected against the throwaway address) — both are valid
+    # signals that the wrapper is wired.
+    OK "test/smtp returned sent=$($resp.sent)$(if ($resp.error) { ' (error: ' + $resp.error.Split([char]10)[0] + ')' })"
+} catch {
+    $s = [int]$_.Exception.Response.StatusCode
+    Fail "POST test/smtp returned $s — wrapper not wired?"
+}
+
+# Bad recipient → 400
+try {
+    $badEmail = @{ recipientEmail = 'not-an-email' } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$base/api/admin/config/test/smtp" -Method POST `
+        -Body $badEmail -ContentType 'application/json' -WebSession $admin | Out-Null
+    Fail "Invalid recipient email should have been rejected"
+} catch {
+    $s = [int]$_.Exception.Response.StatusCode
+    if ($s -ne 400) { Fail "Expected 400, got $s" }
+}
+OK "test/smtp rejects malformed email with 400"
+
+# ----------------------------------------------------------------------------
+# 14c. v3.1.1 gap 7 — ErpDb connection string format validation
+# ----------------------------------------------------------------------------
+Step "ErpDb connection string format (gap 7)"
+# Bad — missing Server= and Database=
+try {
+    $bad = @{ key='ErpDb:ConnectionString'; value='not a connection string' } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$base/api/admin/config/sections/ErpDb/secret" -Method POST `
+        -Body $bad -ContentType 'application/json' -WebSession $admin | Out-Null
+    Fail "Bad ErpDb connection string should have been rejected"
+} catch {
+    $s = [int]$_.Exception.Response.StatusCode
+    if ($s -ne 400) { Fail "Expected 400, got $s" }
+    $msg = $_.ErrorDetails.Message
+    if ($msg -notmatch 'Server=' -or $msg -notmatch 'Database=') {
+        Fail "Error message doesn't mention required tokens: $msg"
+    }
+}
+OK "Bad ErpDb connection string rejected with 400 + helpful error"
+
+# Good
+$good = @{ key='ErpDb:ConnectionString'; value='Server=localhost;Database=test;User Id=u;Password=p' } | ConvertTo-Json
+$goodRes = Invoke-RestMethod -Uri "$base/api/admin/config/sections/ErpDb/secret" -Method POST `
+    -Body $good -ContentType 'application/json' -WebSession $admin
+if (-not $goodRes.updated) { Fail "Good ErpDb connection string should have been accepted" }
+OK "Valid ErpDb connection string accepted"
+
+# ----------------------------------------------------------------------------
+# 14d. v3.1.1 gap 9 — SigningKey minimum 32 chars (in POST /secret)
+# ----------------------------------------------------------------------------
+Step "Exports:SigningKey min length (gap 9)"
+# Short — 8 chars
+try {
+    $short = @{ key='Exports:SigningKey'; value='tooshort' } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$base/api/admin/config/sections/Exports/secret" -Method POST `
+        -Body $short -ContentType 'application/json' -WebSession $admin | Out-Null
+    Fail "Short SigningKey should have been rejected"
+} catch {
+    $s = [int]$_.Exception.Response.StatusCode
+    if ($s -ne 400) { Fail "Expected 400, got $s" }
+    $msg = $_.ErrorDetails.Message
+    if ($msg -notmatch '32') { Fail "Error message doesn't mention min length: $msg" }
+}
+OK "Short SigningKey (< 32 chars) rejected with 400"
+
+# Exactly 32 chars — accepted
+$ok32 = @{ key='Exports:SigningKey'; value=('a' * 32) } | ConvertTo-Json
+$okRes = Invoke-RestMethod -Uri "$base/api/admin/config/sections/Exports/secret" -Method POST `
+    -Body $ok32 -ContentType 'application/json' -WebSession $admin
+if (-not $okRes.updated) { Fail "32-char SigningKey should have been accepted" }
+OK "Exactly 32-char SigningKey accepted"
+
+# Note: v3.1.1 gap 8 (BaseUrl https-only in Production) needs
+# ASPNETCORE_ENVIRONMENT=Production at startup; not exercised here.
+# Manual verify: set env, restart, PUT http://... → expect 400.
+
+# ----------------------------------------------------------------------------
 # 15. POST regenerate-signing-key
 # ----------------------------------------------------------------------------
 Step "POST exports/regenerate-signing-key"
