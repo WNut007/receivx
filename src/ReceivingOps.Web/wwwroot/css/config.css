@@ -651,6 +651,37 @@
     font-size: 11px; color: var(--error); margin: 0;
   }
 
+  /* v3.1.2 — indented sub-section under a preset dropdown's "Custom" branch.
+     Reused name (not erpsync-specific) in case other tabs add similar
+     reveal-on-Custom patterns later. */
+  .config-field-secondary {
+    margin-top: 10px;
+    padding-left: 12px;
+    border-left: 2px solid var(--border);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .config-field-secondary[hidden] { display: none; }
+  .config-field-secondary label {
+    font-size: 11px; font-weight: 500; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .config-field-secondary input[type="text"] {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 12px;
+    font: inherit; font-size: 13px; color: var(--text);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .config-field-secondary input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  .config-field-secondary .config-hint {
+    font-size: 11px; color: var(--text-muted); margin: 0;
+  }
+  .config-field-secondary .config-hint a {
+    color: var(--accent); text-decoration: underline;
+  }
+
   /* Secret rows render a masked input + Change button side-by-side. */
   .config-secret-row {
     display: flex; gap: 8px; align-items: stretch;

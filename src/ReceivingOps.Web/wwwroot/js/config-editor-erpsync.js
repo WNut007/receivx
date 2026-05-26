@@ -6,10 +6,31 @@
 //   ErpSync:TimeoutSeconds       int        60–3600
 //   ErpSync:BackfillDays         int        1–365
 //   ErpSync:DefaultWarehouseId   Guid       <select> populated from /api/warehouses
+//
+// v3.1.2 — cron now renders as a preset dropdown + a "Custom (advanced)"
+// escape hatch. The hidden input #erpsync-CronExpression is the
+// data-key source of truth that the save loop still picks up.
 
 (function () {
   const { api, showRestartBanner, setAlert, clearAlert } = window.__configEditor || {};
   if (!api) return;
+
+  // 10 presets — keep this list aligned with the v3.1.2 spec. The
+  // dropdown renders these in order; the order doubles as a rough
+  // "frequency descending" gradient (sub-hourly → hourly → daily).
+  const SCHEDULE_PRESETS = [
+    { label: 'Every 15 minutes',    cron: '*/15 * * * *' },
+    { label: 'Every 30 minutes',    cron: '*/30 * * * *' },
+    { label: 'Every hour (at :00)', cron: '0 * * * *' },
+    { label: 'Every 2 hours',       cron: '0 */2 * * *' },
+    { label: 'Every 4 hours',       cron: '0 */4 * * *' },
+    { label: 'Every 6 hours',       cron: '0 */6 * * *' },
+    { label: 'Every 12 hours',      cron: '0 */12 * * *' },
+    { label: 'Daily at midnight',   cron: '0 0 * * *' },
+    { label: 'Daily at 2 AM',       cron: '0 2 * * *' },
+    { label: 'Daily at 8 AM',       cron: '0 8 * * *' },
+  ];
+  const CUSTOM = '__custom__';
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -25,6 +46,8 @@
     try { warehouses = await api.warehouses() || []; } catch { /* non-fatal */ }
 
     const selectedWhId = v['ErpSync:DefaultWarehouseId'] || '';
+    const currentCron = v['ErpSync:CronExpression'] || '';
+    const isCustomCron = !SCHEDULE_PRESETS.some(p => p.cron === currentCron);
     const whOptions = ['<option value="">— Select warehouse —</option>'].concat(
       warehouses.map(w =>
         `<option value="${esc(w.id)}"${w.id === selectedWhId ? ' selected' : ''}>` +
@@ -43,10 +66,23 @@
             <p class="config-hint">Master kill-switch for the recurring Hangfire job. Manual /Admin/ErpSync triggers work either way.</p>
           </div>
           <div class="config-field">
-            <label for="erpsync-CronExpression">Cron expression</label>
-            <input type="text" id="erpsync-CronExpression" data-key="ErpSync:CronExpression"
-              value="${esc(v['ErpSync:CronExpression'])}" placeholder="0 * * * *">
-            <p class="config-hint">5-field cron: minute hour dom month dow. <code>0 * * * *</code> = every hour at :00. Validated server-side.</p>
+            <label for="erpsync-CronPreset">Schedule</label>
+            <select id="erpsync-CronPreset">
+              ${SCHEDULE_PRESETS.map(p =>
+                `<option value="${esc(p.cron)}"${p.cron === currentCron ? ' selected' : ''}>${esc(p.label)}</option>`
+              ).join('')}
+              <option value="${CUSTOM}"${isCustomCron ? ' selected' : ''}>Custom (advanced)…</option>
+            </select>
+            <!-- Hidden source-of-truth: the save loop reads [data-key]. The
+                 preset dropdown + the custom text input both write to this. -->
+            <input type="hidden" id="erpsync-CronExpression" data-key="ErpSync:CronExpression"
+              value="${esc(v['ErpSync:CronExpression'])}">
+            <div id="erpsync-CronCustomWrap" class="config-field-secondary"${isCustomCron ? '' : ' hidden'}>
+              <label for="erpsync-CronCustom">Cron expression (advanced)</label>
+              <input type="text" id="erpsync-CronCustom" placeholder="0 * * * *"
+                value="${esc(v['ErpSync:CronExpression'])}">
+              <p class="config-hint">5-field cron: minute hour dom month dow. Server validates via NCrontab. <a href="https://crontab.guru/" target="_blank" rel="noopener">crontab.guru</a> can help build expressions.</p>
+            </div>
           </div>
           <div class="config-field">
             <label for="erpsync-TimeoutSeconds">Timeout (seconds)</label>
@@ -81,6 +117,33 @@
 
     panel.querySelector('[data-action="save-erpsync"]').addEventListener('click', () => onSave(panel));
     panel.querySelector('[data-action="reset-erpsync"]').addEventListener('click', () => onReset(panel));
+
+    // ---- v3.1.2 cron preset wiring ----
+    // The hidden input is the source of truth read by the save loop.
+    // Preset select + custom input both write to it. We sync explicitly
+    // rather than chasing focus events so the hidden value is always
+    // current right up to the moment the Save button reads [data-key].
+    const presetSel = panel.querySelector('#erpsync-CronPreset');
+    const customWrap = panel.querySelector('#erpsync-CronCustomWrap');
+    const customInput = panel.querySelector('#erpsync-CronCustom');
+    const hiddenCron = panel.querySelector('#erpsync-CronExpression');
+
+    presetSel.addEventListener('change', () => {
+      if (presetSel.value === CUSTOM) {
+        customWrap.hidden = false;
+        // Pre-fill custom input with whatever was in the hidden field
+        // so the operator sees + can edit the current expression rather
+        // than starting from a blank box.
+        customInput.value = hiddenCron.value;
+        customInput.focus();
+      } else {
+        customWrap.hidden = true;
+        hiddenCron.value = presetSel.value;
+      }
+    });
+    customInput.addEventListener('input', () => {
+      hiddenCron.value = customInput.value.trim();
+    });
   }
 
   async function onSave(panel) {
