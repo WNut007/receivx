@@ -33,6 +33,13 @@ appsettings.Local.json
 .env
 secrets.json
 
+# Phase 11.1 — ASP.NET Data Protection key ring. Contains the master keys
+# that decrypt every dbo.AppSettings.EncryptedValue. Lose these and every
+# stored secret is gone; commit them and every secret is on GitHub. Back
+# up out-of-band alongside the DB.
+.dp-keys/
+src/ReceivingOps.Web/.dp-keys/
+
 # OS
 .DS_Store
 Thumbs.db

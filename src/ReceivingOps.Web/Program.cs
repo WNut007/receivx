@@ -5,6 +5,7 @@ using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using ReceivingOps.Web.Data;
 using ReceivingOps.Web.Data.Repositories;
@@ -34,6 +35,22 @@ builder.Services.AddControllersWithViews()
 
 // ---- HttpContext access for AuthService + AuditService ----
 builder.Services.AddHttpContextAccessor();
+
+// ---- v3.x Phase 11.1 — Data Protection ----
+// Provides the encryption primitives for dbo.AppSettings.EncryptedValue.
+// Keys persist to a folder ON DISK that MUST move with the database in
+// any migration / restore — losing the keys means losing every encrypted
+// secret already stored. DataProtection:KeyDirectory is a bootstrap
+// exclusion (NEVER stored in AppSettings) for the same chicken-and-egg
+// reason as ConnectionStrings:Default. Default location: ".dp-keys/"
+// under ContentRootPath, gitignored.
+var dpKeyDir = builder.Configuration["DataProtection:KeyDirectory"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, ".dp-keys");
+Directory.CreateDirectory(dpKeyDir);
+builder.Services.AddDataProtection()
+    .SetApplicationName("Receivx")
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeyDir))
+    .SetDefaultKeyLifetime(TimeSpan.FromDays(90));
 
 // ---- Cookie authentication ----
 builder.Services
