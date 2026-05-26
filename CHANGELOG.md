@@ -10,6 +10,123 @@ for fine-grained authorship.
 
 ---
 
+## [3.1.1] — 2026-05-26 — Phase 11.2 audit gap closure
+
+Selective ship of 4 gaps surfaced by a post-v3.1 spec audit (others
+deferred per YAGNI). All changes are server-side; UI untouched.
+
+### Added
+
+- `POST /api/admin/config/test/smtp` — wrapper that fires a one-shot
+  send via the same `IEmailService` that backs `/api/admin/email-test`.
+  Lives on the Config namespace so a future hardening pass can
+  deprecate the older diagnostic endpoint without breaking the editor.
+  Returns `{ sent, recipientEmail, error? }` (200 even on send
+  failure — the operator wants the verbatim SMTP error in the panel,
+  not a 500). Malformed recipient → 400.
+
+### Tightened (validation)
+
+- `ErpDb:ConnectionString` — POST `.../secret` now rejects values
+  missing `Server=` or `Database=`. Cheap typo guard; the full parse
+  still happens at the live `SqlConnection.Open()` probe via
+  `POST /api/admin/config/test/erp`.
+- `Exports:BaseUrl` — PUT `.../sections/Exports` now requires
+  `https://` in the Production environment (`IHostEnvironment.IsProduction()`).
+  Dev / Staging continue to accept `http://` for localhost convenience.
+  Rationale: HMAC download tokens travel in the URL query string;
+  plain HTTP exposes them to any on-path observer.
+- `Exports:SigningKey` — POST `.../secret` now enforces a 32-character
+  minimum. The `Regenerate` button always writes 44 chars (base64 of
+  32 random bytes), so this only constrains the manual `/secret`
+  path. Floors HMAC input at the 256-bit safety threshold.
+
+### Docs
+
+- `docs/configuration.md §7` updated to match shipped reality:
+  - SMTP test endpoint table now lists both
+    `/api/admin/config/test/smtp` and the legacy
+    `/api/admin/email-test`.
+  - Clarified that no `GET /api/admin/erp/connection-test` endpoint
+    exists (Phase 10.1 had a sqlcmd-based smoke, not an HTTP probe).
+  - Warehouse dropdown source documented as `/api/warehouses`
+    (existing, all-authenticated) rather than an `/api/admin/`
+    variant.
+  - Removed misleading "Diagnostics tab/footer" mention — the
+    editor's 4 tabs already render every effective value with
+    secrets masked, so a parallel read-only view is redundant.
+  - Supervisor + operator access clarified: page reachable but
+    Configuration section hidden via `data-admin-only`; API gate
+    is the actual security boundary (operator → 403 at every
+    endpoint).
+  - Validation rules table extended with the 3 new constraints +
+    annotation marking them as v3.1.1 additions.
+
+### Skipped (audit Option A — explicitly NOT shipped)
+
+- **Gap 2-3 (response-shape additive)** — proposed adding `title`,
+  `keyCount`, `hasSecrets`, `secretKeys` aliases alongside the
+  shipped property names. The editor UI consumes the v3.1 shape and
+  doesn't need both; additive duplication would have been
+  YAGNI bloat.
+- **Gap 4 (Smtp:Host hostname format)** — browsers validate text
+  input client-side; server-side hostname validation rarely catches
+  more than a typo before the SMTP send attempt does.
+- **Gap 5 (Smtp:Username required-if-Password-set conditional)** —
+  surface the failure at test-send time where the operator can act
+  on the verbatim SMTP error; conditional UI rules tend to confuse
+  more than they help.
+- **Gap 6 (Smtp:Password 8+ chars)** — Gmail App Passwords are
+  fixed 16 chars; the only operators putting shorter values into
+  this field would be intentionally bypassing the test send, which
+  is their problem.
+
+### Smoke
+
+- `tools/smoke-phase-11-2-config-ui.ps1` extended from 19 to 25
+  assertions: test/smtp happy path + bad recipient, ErpDb format
+  guard (good + bad), SigningKey min length (good + bad).
+- Gap 8 (BaseUrl Production-https) is NOT covered by the smoke —
+  needs `ASPNETCORE_ENVIRONMENT=Production` at boot, which would
+  break the rest of the battery. Manual verify: set the env,
+  restart, PUT `http://...` → expect 400.
+
+### Tag
+
+`v3.1.1` — Phase 11.2 audit gap closure (3 commits).
+
+---
+
+## [3.1.0] — 2026-05-26 — Phase 11: configurable settings via admin UI
+
+Encrypted config storage (Phase 11.1, interim tag `v3.0.5`) +
+tabbed `/Config` editor (Phase 11.2). Admin can now edit Smtp,
+ErpDb, ErpSync, Exports config via the UI without touching
+`appsettings.json` or `user-secrets`. Secrets stay encrypted in
+`dbo.AppSettings` via ASP.NET Data Protection (purpose
+`AppSettings.v1`, 90-day key lifetime). Precedence chain:
+env vars > DB > user-secrets > appsettings.json.
+
+### Added
+
+- Migration `db/029` — `dbo.AppSettings` table with Value/EncryptedValue XOR CHECK
+- `IAppSettingsService` (Singleton + IServiceScopeFactory bridge) + `IAppSettingsRepository` (Scoped, Dapper MERGE upsert)
+- `AppSettingsSeeder` — idempotent IConfiguration → DB hydration on first start
+- Options binding refactored: `AddOptions<T>().Configure<IAppSettingsService>(...)` for SmtpOptions / ExportOptions / ErpSyncOptions
+- 7 admin endpoints under `/api/admin/config/` (sections list, section detail, PUT non-secret, POST secret, DELETE reset, regenerate signing key, test ERP)
+- Tabbed `/Config` admin section: 4 pill-style tabs (Email / ERP Connection / Sync Schedule / Exports) replaces v2.1.9 Email-test diagnostic
+- 5 editor JS files with `window.registerConfigTabRenderer` extension point
+- `docs/security.md` + `docs/configuration.md`
+- + `NCrontab 3.3.3` NuGet for cron validation
+- 2 new smokes (10 + 19 assertions)
+
+### Tags
+
+`v3.0.5` (Phase 11.1 interim) → `v3.1.0` (Phase 11.2 close).
+Battery: 51/51 PASS at v3.1 tip.
+
+---
+
 ## [3.0.0] — 2026-05-26 — Phase 10: ERP integration (PULL/ETL)
 
 **First external-system integration.** Receivx now pulls planning

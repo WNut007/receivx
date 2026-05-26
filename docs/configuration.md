@@ -1,6 +1,6 @@
 # Configuration
 
-Last updated: Phase 11.2 (admin config editor UI).
+Last updated: v3.1.1 (Phase 11.2 audit gap closure).
 
 Audience: anyone deploying Receivx or wondering "why does the SMTP host
 keep reverting to the one in appsettings.json after I set it in user-secrets?"
@@ -131,8 +131,22 @@ appears below Theme/Nav, hidden for operator + supervisor.
 |---|---|---|
 | Email | `Smtp` | Host, Port, UseStartTls, Username, FromAddress, FromName, **Password** (masked + "Change") |
 | ERP Connection | `ErpDb` | **Connection string** (masked + "Change", multi-line textarea) |
-| Sync Schedule | `ErpSync` | Enabled toggle, CronExpression, TimeoutSeconds, BackfillDays, **DefaultWarehouseId** (`<select>` from `/api/warehouses`) |
+| Sync Schedule | `ErpSync` | Enabled toggle, CronExpression, TimeoutSeconds, BackfillDays, **DefaultWarehouseId** (`<select>` from `/api/warehouses` — existing endpoint, accessible to all authenticated users; admin-specific surface not needed since the dropdown only reads warehouse list rows that are already visible elsewhere in the app) |
 | Exports | `Exports` | BaseUrl, **Signing key** (masked + "Regenerate" only — no operator-entered values) |
+
+**Diagnostics tab:** intentionally NOT shipped. Earlier spec drafts
+called for a separate read-only Diagnostics tab/footer. The editor's
+4 tabs already render every effective config value (with secrets
+masked), so a parallel read-only view is redundant. To see the same
+information without edit affordances, an admin opens the relevant tab
+and ignores the Save buttons.
+
+**Supervisor + operator access:** `/Config` itself is reachable by any
+authenticated user (Account / Theme / Nav prefs live here). The new
+Configuration section is hidden via the `data-admin-only` attribute
+toggled by `config.js` based on the `/api/auth/me` role response.
+Hiding is convenience only — every endpoint under `/api/admin/config/`
+returns 403 to operator + supervisor regardless.
 
 **Endpoints (all `[Authorize(Roles = "admin")]`):**
 
@@ -143,11 +157,20 @@ PUT    /api/admin/config/sections/{name}             -> save non-secret values; 
 POST   /api/admin/config/sections/{name}/secret      -> save ONE secret; rejects non-secret keys (400)
 DELETE /api/admin/config/sections/{name}             -> reset section to appsettings.json defaults
 POST   /api/admin/config/exports/regenerate-signing-key
+POST   /api/admin/config/test/smtp                   -> live send via IEmailService (v3.1.1)
 POST   /api/admin/config/test/erp                    -> live SqlConnection probe → SELECT @@VERSION
 ```
 
-SMTP test send reuses the existing `POST /api/admin/email-test` from
-Phase 8.4 — not re-exposed under `/api/admin/config/`.
+The existing `POST /api/admin/email-test` (Phase 8.4 diagnostic) is
+unchanged and still works. `POST /api/admin/config/test/smtp` (added
+v3.1.1) is a parallel wrapper on the Config namespace so a future
+hardening pass can deprecate the older endpoint without breaking the
+editor.
+
+There is **no** `GET /api/admin/erp/connection-test` endpoint — Phase
+10.1's connectivity check was a sqlcmd-based smoke, not an HTTP
+endpoint. `POST /api/admin/config/test/erp` (added in Phase 11.2) is
+the only HTTP probe for ERP DB connectivity.
 
 **Validation rules (server-side; UI surfaces field-specific errors):**
 
@@ -156,12 +179,14 @@ Phase 8.4 — not re-exposed under `/api/admin/config/`.
 | `Smtp:Port` | int 1–65535 |
 | `Smtp:UseStartTls` | bool |
 | `Smtp:FromAddress` | `MailAddress.TryCreate` |
+| `ErpDb:ConnectionString` | must contain `Server=` AND `Database=` (v3.1.1) |
 | `ErpSync:Enabled` | bool |
 | `ErpSync:CronExpression` | `NCrontab.CrontabSchedule.TryParse` (5-field) |
 | `ErpSync:TimeoutSeconds` | int 60–3600 |
 | `ErpSync:BackfillDays` | int 1–365 |
 | `ErpSync:DefaultWarehouseId` | Guid + must exist in `dbo.Warehouses` |
-| `Exports:BaseUrl` | `Uri.TryCreate` absolute http(s) |
+| `Exports:BaseUrl` | `Uri.TryCreate` absolute http(s); **Production** environment requires `https` (v3.1.1) |
+| `Exports:SigningKey` | min 32 chars when set via POST `.../secret` (Regenerate always writes 44; v3.1.1) |
 | (other strings) | accepted as-is |
 
 **Save → restart workflow:**
