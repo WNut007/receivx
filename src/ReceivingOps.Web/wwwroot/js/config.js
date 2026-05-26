@@ -123,7 +123,12 @@ async function loadAccount() {
     // earlier Email-test diagnostic was retired into the editor's
     // Email tab + test-send button. The endpoints all have their own
     // [Authorize(Roles="admin")] gate — UI hiding is convenience only.
-    if (u.role === 'admin') {
+    //
+    // Use roleKey (machine value: "admin") not role (display name:
+    // "Administrator"). Matches the convention in app-nav.js +
+    // receiving.js. v3.1.1 fixes a v2.1.9-era bug where the wrong
+    // field kept the section permanently hidden for every admin.
+    if ((u.roleKey || '').toLowerCase() === 'admin') {
       document.querySelectorAll('[data-admin-only]').forEach(el => el.hidden = false);
     }
   } catch (e) { /* not fatal */ }

@@ -124,6 +124,22 @@ AssertFile (Join-Path $webRoot 'wwwroot\js\config-editor-exports.js') "registerC
 OK "5 editor JS files + renderer registrations present"
 
 # ----------------------------------------------------------------------------
+# 5b. v3.1.1 — admin-only reveal gate must read 'roleKey' (machine value),
+#     NOT 'role' (display name). Catches the v2.1.9-era bug where the
+#     entire admin section stayed hidden in browsers because config.js
+#     compared the display string "Administrator" to "admin".
+# ----------------------------------------------------------------------------
+Step "config.js reveal gate uses roleKey (not role)"
+$configJs = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'wwwroot\js\config.js')
+if ($configJs -match "u\.role\s*===\s*'admin'") {
+    Fail "config.js still uses u.role === 'admin' — that's the DISPLAY name; should be u.roleKey"
+}
+if ($configJs -notmatch "u\.roleKey") {
+    Fail "config.js admin-only reveal must read u.roleKey (the machine role value)"
+}
+OK "config.js uses u.roleKey for admin-only reveal"
+
+# ----------------------------------------------------------------------------
 # 6. Dev server reachable
 # ----------------------------------------------------------------------------
 Step "Dev server reachable"
@@ -135,10 +151,24 @@ if ($code -ne 401 -and $code -ne 200) { Fail "Dev server probe got $code" }
 OK "Dev server up"
 
 # ----------------------------------------------------------------------------
+# 6b. v3.1.1 — auth/me actually exposes roleKey='admin' for sadmin so the
+#     config.js reveal gate (Step 5b) resolves true in a real browser.
+#     Belt-and-braces: source check (5b) + behavioral check (6b) together
+#     mean the editor is invisible to admins ONLY if both decay.
+# ----------------------------------------------------------------------------
+Step "auth/me for sadmin exposes roleKey='admin' (matches the JS reveal)"
+$admin = Login 'sadmin' 'admin'
+$meResp = Invoke-RestMethod -Uri "$base/api/auth/me" -WebSession $admin
+if ($null -eq $meResp.roleKey) { Fail "/api/auth/me response missing 'roleKey' field" }
+if ($meResp.roleKey -ne 'admin') {
+    Fail "Expected roleKey='admin' for sadmin, got '$($meResp.roleKey)'. config.js admin reveal would not fire."
+}
+OK "auth/me.roleKey='admin' — admin-only sections will reveal"
+
+# ----------------------------------------------------------------------------
 # 7. GET sections
 # ----------------------------------------------------------------------------
 Step "GET /api/admin/config/sections"
-$admin = Login 'sadmin' 'admin'
 $sections = Invoke-RestMethod -Uri "$base/api/admin/config/sections" -WebSession $admin
 if ($sections.sections.Count -ne 4) { Fail "Expected 4 sections, got $($sections.sections.Count)" }
 $expectedNames = @('Smtp','ErpDb','ErpSync','Exports')
