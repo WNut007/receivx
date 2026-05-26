@@ -105,6 +105,10 @@
     // exports; admin's see-all toggle lives in the page itself.
     { id: 'exports',      label: 'My Exports',      icon: 'bi-cloud-download',       href: '/Exports' },
     { id: 'masters',      label: 'Master Data',     icon: 'bi-database-gear',        href: '/Masters' },
+    // Phase 10.6 — ERP Sync admin page (history + manual trigger).
+    // Admin-only: the controller is [Authorize(Roles="admin")] and the
+    // backing /api/admin/erp-sync/* endpoints are admin-gated too.
+    { id: 'admin-erp-sync', label: 'ERP Sync',      icon: 'bi-cloud-arrow-down',     href: '/Admin/ErpSync', roles: ['admin'] },
     { id: 'config',       label: 'Settings',        icon: 'bi-sliders',              href: '/Config' },
   ];
 
@@ -119,6 +123,7 @@
     if (p.includes('/masters')) return 'masters';
     if (p.startsWith('/pos'))    return 'pos';
     if (p.includes('/config'))   return 'config';
+    if (p.includes('/admin/erpsync')) return 'admin-erp-sync';
     return '';
   })();
 
