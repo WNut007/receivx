@@ -18,6 +18,9 @@
     <PackageReference Include="MailKit" Version="4.*" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.1" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.16" />
+    <!-- Phase 11.2 — cron expression parser for ErpSync:CronExpression
+         validation in ConfigWriteController. MIT, ~30 KB, no transitive deps. -->
+    <PackageReference Include="NCrontab" Version="3.3.3" />
   </ItemGroup>
 
 </Project>
