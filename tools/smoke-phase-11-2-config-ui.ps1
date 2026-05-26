@@ -257,6 +257,54 @@ try {
 OK "Invalid cron rejected with field-specific 400"
 
 # ----------------------------------------------------------------------------
+# 12b. v3.1.2 — preset cron (Every 2 hours = '0 */2 * * *') accepted
+# ----------------------------------------------------------------------------
+Step "PUT preset cron (gap: preset dropdown round-trip)"
+$presetCron = @{ values = @{ 'ErpSync:CronExpression' = '0 */2 * * *' } } | ConvertTo-Json
+$presetResp = Invoke-RestMethod -Uri "$base/api/admin/config/sections/ErpSync" -Method PUT `
+    -Body $presetCron -ContentType 'application/json' -WebSession $admin
+if (-not $presetResp.requiresRestart) { Fail "Preset PUT missing requiresRestart" }
+if (-not ($presetResp.changedKeys -contains 'ErpSync:CronExpression')) {
+    Fail "changedKeys missing ErpSync:CronExpression"
+}
+OK "Preset cron '0 */2 * * *' accepted"
+
+# ----------------------------------------------------------------------------
+# 12c. v3.1.2 — custom advanced cron (weekday business-hours) accepted
+# ----------------------------------------------------------------------------
+Step "PUT custom advanced cron (gap: Custom escape hatch round-trip)"
+$customCron = @{ values = @{ 'ErpSync:CronExpression' = '0 9-17 * * 1-5' } } | ConvertTo-Json
+$customResp = Invoke-RestMethod -Uri "$base/api/admin/config/sections/ErpSync" -Method PUT `
+    -Body $customCron -ContentType 'application/json' -WebSession $admin
+if (-not $customResp.requiresRestart) { Fail "Custom PUT missing requiresRestart" }
+OK "Custom cron '0 9-17 * * 1-5' (weekdays 9-5) accepted"
+
+# ----------------------------------------------------------------------------
+# 12d. v3.1.2 — source-level: erpsync renderer carries the preset list
+#      and the Custom escape hatch sentinel. Catches a future refactor
+#      that removes the dropdown.
+# ----------------------------------------------------------------------------
+Step "config-editor-erpsync.js source carries the preset dropdown"
+$erpSyncJs = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'wwwroot\js\config-editor-erpsync.js')
+if ($erpSyncJs -notmatch 'SCHEDULE_PRESETS') {
+    Fail "erpsync renderer missing SCHEDULE_PRESETS constant"
+}
+$presetCount = ([regex]::Matches($erpSyncJs, "label:\s*'[^']+',\s*cron:")).Count
+if ($presetCount -lt 10) {
+    Fail "Expected at least 10 preset entries in SCHEDULE_PRESETS, found $presetCount"
+}
+if ($erpSyncJs -notmatch "const CUSTOM") {
+    Fail "erpsync renderer missing CUSTOM sentinel constant"
+}
+if ($erpSyncJs -notmatch 'erpsync-CronPreset') {
+    Fail "erpsync renderer missing #erpsync-CronPreset select element"
+}
+if ($erpSyncJs -notmatch 'erpsync-CronCustom') {
+    Fail "erpsync renderer missing #erpsync-CronCustom advanced input"
+}
+OK "Preset dropdown wiring present in erpsync renderer ($presetCount preset entries)"
+
+# ----------------------------------------------------------------------------
 # 13. PUT invalid port → 400
 # ----------------------------------------------------------------------------
 Step "PUT invalid port → 400"
