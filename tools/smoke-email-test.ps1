@@ -103,14 +103,17 @@ try {
 OK "Operator blocked from both endpoints"
 
 # ----------------------------------------------------------------------------
-# 6. /Config page has data-admin-only DOM hook + admin-only section text
+# 6. /Config page exposes the admin section. Phase 11.2 retired the
+#    smtp-host / email-test-send DOM hooks (replaced by the tabbed editor
+#    that calls /api/admin/email-test via JS); the data-admin-only gate
+#    + the new editor markers are what this step asserts now.
 # ----------------------------------------------------------------------------
 Step "/Config page has admin-only section markup"
 $cfgPage = Invoke-WebRequest -Uri "$base/Config" -WebSession $admin -UseBasicParsing
-foreach ($needle in 'data-admin-only', 'id="smtp-host"', 'id="email-test-send"', 'id="email-test-result"', 'Email test') {
+foreach ($needle in 'data-admin-only', 'id="config-editor-root"', 'data-tab="Smtp"', 'config-editor.js') {
     if ($cfgPage.Content -notmatch [regex]::Escape($needle)) { Fail "/Config page missing '$needle'" }
 }
-OK "/Config page has the email-test DOM hooks"
+OK "/Config page has the Phase 11.2 editor markup (data-admin-only + config-editor-root + tabs + editor JS)"
 
 Write-Host ""
 Write-Host "ALL PASS — admin email test diagnostic endpoints + UI." -ForegroundColor Green

@@ -101,7 +101,12 @@
   }
 
   async function onReset(panel) {
-    if (!confirm('Reset Sync Schedule section to defaults? This deletes saved overrides; appsettings.json values will apply after restart.')) return;
+    const ok = await confirmAction({
+      title: 'Reset Sync Schedule section to defaults?',
+      message: 'Deletes saved overrides for ErpSync:*. appsettings.json values will apply after restart.',
+      icon: 'warning', confirmLabel: 'Reset section', danger: true,
+    });
+    if (!ok) return;
     clearAlert(panel);
     try {
       const r = await api.resetSection('ErpSync');

@@ -43,7 +43,12 @@ function AssertFile([string]$path, [string]$mustContain) {
 function SqlScalar([string]$query) {
     $out = & sqlcmd -S 'LAPTOP-CSB3KO3E' -E -d 'ReceivingOps' -h -1 -W -Q $query 2>&1
     if ($LASTEXITCODE -ne 0) { Fail "sqlcmd failed: $out" }
-    return ($out | Where-Object { $_ -and $_.Trim() -and $_ -notmatch '^\(\d+ rows? affected\)' } | Select-Object -First 1).Trim()
+    # Filter out "(N rows affected)" footers + blank lines. Returns $null when
+    # the result set is empty (e.g. a SELECT that matched no rows) so callers
+    # can distinguish "missing row" from "empty string".
+    $first = $out | Where-Object { $_ -and $_.Trim() -and $_ -notmatch '^\(\d+ rows? affected\)' } | Select-Object -First 1
+    if ($null -eq $first) { return $null }
+    return $first.Trim()
 }
 
 # ----------------------------------------------------------------------------

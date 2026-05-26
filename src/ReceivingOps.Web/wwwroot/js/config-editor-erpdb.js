@@ -107,7 +107,12 @@
   }
 
   async function onReset(panel) {
-    if (!confirm('Reset ERP Connection section to defaults? This deletes the saved connection string; appsettings.json / user-secrets fallback will apply after restart.')) return;
+    const ok = await confirmAction({
+      title: 'Reset ERP Connection section to defaults?',
+      message: 'Deletes the saved connection string. appsettings.json / user-secrets fallback will apply after restart.',
+      icon: 'warning', confirmLabel: 'Reset section', danger: true,
+    });
+    if (!ok) return;
     clearAlert(panel);
     try {
       const r = await api.resetSection('ErpDb');

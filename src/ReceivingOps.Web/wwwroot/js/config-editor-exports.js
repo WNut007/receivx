@@ -78,7 +78,12 @@
   }
 
   async function onRegen(panel) {
-    if (!confirm('Regenerate the signing key?\n\nAll pending download URLs (email links operators received recently) will stop working after the application restarts.\n\nContinue?')) return;
+    const ok = await confirmAction({
+      title: 'Regenerate the signing key?',
+      message: 'All pending download URLs (email links operators received recently) will stop working after the application restarts.',
+      icon: 'warning', confirmLabel: 'Regenerate key', danger: true,
+    });
+    if (!ok) return;
     clearAlert(panel);
     const btn = panel.querySelector('[data-action="regen-signing-key"]');
     const orig = btn.innerHTML;
@@ -97,7 +102,12 @@
   }
 
   async function onReset(panel) {
-    if (!confirm('Reset Exports section to defaults? This deletes BaseUrl AND the signing key — every pending download URL will be invalidated, AND the dev-only placeholder signing key will be used after restart.\n\nContinue?')) return;
+    const ok = await confirmAction({
+      title: 'Reset Exports section to defaults?',
+      message: 'Deletes BaseUrl AND the signing key — every pending download URL will be invalidated, AND the dev-only placeholder signing key will be used after restart.',
+      icon: 'warning', confirmLabel: 'Reset section', danger: true,
+    });
+    if (!ok) return;
     clearAlert(panel);
     try {
       const r = await api.resetSection('Exports');

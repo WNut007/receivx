@@ -1,6 +1,6 @@
 # Configuration
 
-Last updated: Phase 11.1 (admin-edited config storage).
+Last updated: Phase 11.2 (admin config editor UI).
 
 Audience: anyone deploying Receivx or wondering "why does the SMTP host
 keep reverting to the one in appsettings.json after I set it in user-secrets?"
@@ -109,9 +109,72 @@ Phase 11.2 will add an admin "re-import from config files" button.
 
 | I want to… | Where to look |
 |---|---|
-| Change the SMTP password permanently | Phase 11.2 UI → `/Config` → Email tab |
+| Change the SMTP password permanently | `/Config` → Email tab → Password row → "Change" |
 | Emergency-override a value for one boot | `Set` an env var, e.g. `Smtp__Host=...`, then restart |
-| See what's stored | Phase 11.2 UI shows all rows; secrets masked |
+| See what's stored | `/Config` → admin section → 4 tabs; secrets masked |
 | Audit who changed what | `SELECT * FROM dbo.AuditLog WHERE EntityType='AppSettings' ORDER BY OccurredAt DESC` |
-| Reset to defaults | `DELETE FROM dbo.AppSettings; restart` (re-seeds from appsettings.json) |
+| Reset to defaults | `/Config` → tab → "Reset section to defaults"; restart re-seeds from appsettings.json |
 | Confirm decryption is working | App startup logs include `AppSettings decryption verified` |
+| Regenerate the export signing key | `/Config` → Exports tab → "Regenerate" (invalidates pending download URLs after restart) |
+| Test SMTP / ERP without restarting | `/Config` → Email tab → "Send test"; ERP tab → "Test connection" (uses LIVE config including unsaved edits if already POST-ed) |
+
+---
+
+## 7. Phase 11.2 — admin UI
+
+**Path:** `/Config` (existing user-settings page); admin-only section
+appears below Theme/Nav, hidden for operator + supervisor.
+
+**Tabs (pill-style, matching Phase 8.4 `/Exports`):**
+
+| Tab | Section | Notable controls |
+|---|---|---|
+| Email | `Smtp` | Host, Port, UseStartTls, Username, FromAddress, FromName, **Password** (masked + "Change") |
+| ERP Connection | `ErpDb` | **Connection string** (masked + "Change", multi-line textarea) |
+| Sync Schedule | `ErpSync` | Enabled toggle, CronExpression, TimeoutSeconds, BackfillDays, **DefaultWarehouseId** (`<select>` from `/api/warehouses`) |
+| Exports | `Exports` | BaseUrl, **Signing key** (masked + "Regenerate" only — no operator-entered values) |
+
+**Endpoints (all `[Authorize(Roles = "admin")]`):**
+
+```
+GET    /api/admin/config/sections                    -> tab metadata + key list + isSecret per key
+GET    /api/admin/config/sections/{name}             -> values for one section; secrets render as "***"
+PUT    /api/admin/config/sections/{name}             -> save non-secret values; rejects secret keys (400)
+POST   /api/admin/config/sections/{name}/secret      -> save ONE secret; rejects non-secret keys (400)
+DELETE /api/admin/config/sections/{name}             -> reset section to appsettings.json defaults
+POST   /api/admin/config/exports/regenerate-signing-key
+POST   /api/admin/config/test/erp                    -> live SqlConnection probe → SELECT @@VERSION
+```
+
+SMTP test send reuses the existing `POST /api/admin/email-test` from
+Phase 8.4 — not re-exposed under `/api/admin/config/`.
+
+**Validation rules (server-side; UI surfaces field-specific errors):**
+
+| Key | Rule |
+|---|---|
+| `Smtp:Port` | int 1–65535 |
+| `Smtp:UseStartTls` | bool |
+| `Smtp:FromAddress` | `MailAddress.TryCreate` |
+| `ErpSync:Enabled` | bool |
+| `ErpSync:CronExpression` | `NCrontab.CrontabSchedule.TryParse` (5-field) |
+| `ErpSync:TimeoutSeconds` | int 60–3600 |
+| `ErpSync:BackfillDays` | int 1–365 |
+| `ErpSync:DefaultWarehouseId` | Guid + must exist in `dbo.Warehouses` |
+| `Exports:BaseUrl` | `Uri.TryCreate` absolute http(s) |
+| (other strings) | accepted as-is |
+
+**Save → restart workflow:**
+
+Every successful write returns `{ requiresRestart: true, changedKeys: [...] }`
+and the UI reveals a sticky **restart banner**:
+
+> ⚠ **Restart required** — Configuration saved. Restart the application
+> to apply changes.
+
+The banner persists across tab switches (session-scoped) until the
+operator clicks Dismiss or reloads the page. `IOptions<T>` resolves
+once at process start; without restart, in-flight code paths still
+use the cached old value. The PHP-style "live reload on file change"
+was rejected in favor of restart-required because the encryption layer
++ Hangfire worker caching make live reload high-risk for low-reward.
