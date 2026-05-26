@@ -14,6 +14,7 @@ using ReceivingOps.Web.Json;
 using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Entities;
 using ReceivingOps.Web.Services;
+using ReceivingOps.Web.Services.Config;
 using ReceivingOps.Web.Services.Email;
 using ReceivingOps.Web.Services.ErpSync;
 using ReceivingOps.Web.Services.Exports;
@@ -125,6 +126,9 @@ builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<IExportJobLogRepository, ExportJobLogRepository>();
 builder.Services.AddScoped<IErpSyncLogRepository, ErpSyncLogRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
+// Phase 11.1 — admin-edited config storage. Repository is Scoped (matches
+// project convention); the service that wraps it is Singleton (see below).
+builder.Services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
 
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
@@ -137,6 +141,11 @@ builder.Services.AddScoped<IPullItemAdminService, PullItemAdminService>();
 builder.Services.AddScoped<IDeliveryOrderService, DeliveryOrderService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
+
+// Phase 11.1 — config storage facade. Singleton because the encryption
+// protector is thread-safe and there's no per-request state. Scoped deps
+// (repository, audit) are resolved per-call via IServiceScopeFactory.
+builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
 
 // ---- v2.x Phase 8.4 — email transport (Gmail SMTP via MailKit) ----
 // SmtpOptions binds from the "Smtp" section — typically user-secrets in
