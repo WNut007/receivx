@@ -280,6 +280,36 @@ using (var seedScope = app.Services.CreateScope())
     await seeder.RunAsync();
 }
 
+// ---- v3.x Phase 11.1 — Data Protection health check ----
+// Probe a known encrypted row at startup so a broken key ring surfaces
+// LOUDLY in the logs instead of failing silently at the first config UI
+// click. Catches CryptographicException only — we want the app to keep
+// running so the operator can land on a re-enter-secrets prompt in the
+// UI rather than a startup crash loop.
+using (var hcScope = app.Services.CreateScope())
+{
+    var settings = hcScope.ServiceProvider
+        .GetRequiredService<IAppSettingsService>();
+    var hcLogger = hcScope.ServiceProvider
+        .GetRequiredService<ILogger<Program>>();
+    try
+    {
+        // Smtp:Password is one of the three known secrets — if the key
+        // ring is intact, this returns the plaintext (or null when not
+        // configured). Either is fine; we're testing the decrypt path.
+        await settings.GetAsync("Smtp:Password");
+        hcLogger.LogInformation("AppSettings decryption verified");
+    }
+    catch (System.Security.Cryptography.CryptographicException ex)
+    {
+        hcLogger.LogCritical(ex,
+            "Data Protection keys missing or rotated — encrypted settings cannot be decrypted. " +
+            "Verify {KeyDir} exists and matches the keys used when secrets were saved. " +
+            "Continuing startup so the admin UI can prompt for re-entry.",
+            dpKeyDir);
+    }
+}
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Account/AccessDenied");

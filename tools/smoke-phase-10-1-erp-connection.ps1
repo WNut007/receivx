@@ -69,7 +69,11 @@ $program = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Program.cs')
 $mustHave = @(
     'using ReceivingOps.Web.Services.ErpSync;',
     'AddScoped<IErpDbConnectionFactory, ErpSqlConnectionFactory>()',
-    'Configure<ErpSyncOptions>',
+    # Phase 11.1 — ErpSyncOptions binding moved from
+    # `Configure<ErpSyncOptions>(...)` to `AddOptions<ErpSyncOptions>()`
+    # with a two-stage Configure (IConfiguration defaults, then DB overlay
+    # via IAppSettingsService). Either pattern is acceptable wiring.
+    'AddOptions<ErpSyncOptions>()',
     'AddScoped<ErpSyncJob>',
     '"erp-sync"',
     'RecurringJob.AddOrUpdate<ErpSyncJob>',
