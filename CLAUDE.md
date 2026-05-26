@@ -3,15 +3,68 @@
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
 + Phase 10 ERP integration + Phase 11 admin config editor).
-**Status:** v3.1 shipped on `main` (2026-05-26, tag `v3.1`, pushed to
-origin). v3.1 closes **Phase 11** — admin-editable configuration with
-encrypted secrets storage, split across two interim tags: `v3.0.5`
-(Phase 11.1 — encryption + storage foundation) and `v3.1` (Phase 11.2
-— tabbed UI editor). Admins now edit `Smtp:*`, `ErpDb:*`, `ErpSync:*`,
-and `Exports:*` via `/Config` → new admin-only "Configuration" section
-(replaces the v2.1.9 Email-test diagnostic) without touching
-appsettings.json or user-secrets. Migration `db/029` adds
-`dbo.AppSettings` ([Key] PK + [Value] NVARCHAR(MAX) NULL +
+**Status:** v3.1.2 shipped on `main` (2026-05-26, tag `v3.1.2`, pushed
+to origin). v3.1.2 closes **Phase 11** — admin-editable configuration
+with encrypted secrets storage — across four tags: `v3.0.5` (Phase
+11.1 — encryption + storage foundation), `v3.1` (Phase 11.2 — tabbed
+UI editor), `v3.1.1` (audit gap closure + admin-only reveal fix), and
+`v3.1.2` (UX polish — cron preset dropdown). v3.1.2 adds a 10-preset
+dropdown (15 min / 30 min / hourly / 2 4 6 12 hr / midnight / 2 AM /
+8 AM) on the Sync Schedule tab with a "Custom (advanced)…" escape
+hatch that reveals the cron text input + a link to crontab.guru.
+Architecture: hidden `#erpsync-CronExpression` mirror input retains
+the `data-key` attribute so the save loop is untouched; the preset
+`<select>` and the conditionally-visible custom text input both write
+to it. Server validation unchanged (NCrontab gate). v3.1.1 closed 4
+audit gaps from the post-v3.1 spec audit: (1) added
+`POST /api/admin/config/test/smtp` wrapper (parallel to `/test/erp`,
+calls `IEmailService` — the existing `/api/admin/email-test` from
+Phase 8.4 stays untouched); (7) `ErpDb:ConnectionString` POST /secret
+rejects values missing `Server=` AND `Database=` (cheap typo guard;
+full parse still happens at SqlConnection.Open() via `/test/erp`);
+(8) `Exports:BaseUrl` PUT requires `https` in Production env
+(`IHostEnvironment.IsProduction()` gate — dev/staging still accept
+http for localhost convenience); (9) `Exports:SigningKey` POST
+/secret enforces min 32 chars (Regenerate writes 44 by default, so
+this only constrains the manual /secret path; HMAC safety floor at
+256-bit input). Skipped per audit Option A (YAGNI): response-shape
+additive aliases (gaps 2-3), Smtp:Host hostname format (gap 4),
+Username-if-Password-set conditional (gap 5), Password min length
+(gap 6 — Gmail App Password is fixed 16 chars). v3.1.1 also fixed a
+v2.1.9-era bug where `config.js:131` used `u.role === 'admin'` —
+`/api/auth/me`'s `role` field is the DISPLAY name ("Administrator");
+the machine value lives at `roleKey` (matches the convention in
+`app-nav.js` + `receiving.js`). Result: the `[data-admin-only]`
+section was hidden in every browser since v2.1.9, but the smoke
+battery never caught it because all 51 assertions checked markup
+presence or backend behavior; none simulated the JS reveal. Phase
+11.2 made the flaw user-visible because the new editor lives behind
+that gate. Fix: `(u.roleKey || '').toLowerCase() === 'admin'`. Two
+new regression guards added (smoke step 5b source-level: config.js
+must read `u.roleKey`; step 6b behavioral: `/api/auth/me` for sadmin
+must return `roleKey === 'admin'`) — either alone is sufficient,
+both together mean the editor is invisible to admins only if both
+decay simultaneously. NuGet at Phase 11 baseline (no v3.1.x adds).
+`docs/configuration.md §7` rewritten to match shipped reality:
+removed mention of a separate Diagnostics tab (editor's 4 tabs
+inherently show effective values), clarified that no
+`GET /api/admin/erp/connection-test` exists (Phase 10.1 was
+sqlcmd-based), documented that the warehouse dropdown sources from
+`/api/warehouses` (existing all-authenticated endpoint, not an
+admin-specific variant), and noted that supervisor/operator see
+`/Config` but the Configuration section is hidden via
+`data-admin-only` (API gate is the real boundary). `CHANGELOG.md`
+gains a `[3.1.1]` entry covering the 4 ships + 5 skips with
+rationale, plus a retroactive `[3.1.0]` consolidation for the
+Phase 11 close. **smoke-phase-11-2-config-ui assertions: 30/30
+PASS** at v3.1.2 (27 at v3.1.1, 25 at v3.1, 19 at v3.1 ship).
+Full battery 49/51 with 2 known Hangfire-contention flakes
+(`smoke-phase-8.4-exports`, `smoke-export-extensions`) — both pass
+standalone, documented in CLAUDE.md flakes list since v3.1.
+
+v3.1 lineage:
+v3.1 shipped Phase 11.2 (and the Phase 11.1 foundation under interim
+tag `v3.0.5`). Migration `db/029` adds `dbo.AppSettings` ([Key] PK + [Value] NVARCHAR(MAX) NULL +
 EncryptedValue VARBINARY(MAX) NULL + IsSecret BIT + UpdatedAt +
 UpdatedBy + PreviousValueHash SHA-256 hex) with
 `CK_AppSettings_ValueOrEncrypted` enforcing Value XOR EncryptedValue
@@ -94,8 +147,9 @@ reset, ERP test, operator 403 at all 7 endpoints, bootstrap
 exclusions absent from listings). 4 deployment items from Phase 10
 deploy-blocker checklist are NOW operator-self-service via `/Config`
 instead of requiring a redeploy: `ErpSync:DefaultWarehouseId`,
-`Smtp:*`, `Exports:BaseUrl`, `Exports:SigningKey`. **Battery:
-51/51 PASS** at v3.1 tip.
+`Smtp:*`, `Exports:BaseUrl`, `Exports:SigningKey`. Battery at v3.1
+ship: 51/51 PASS (later patches in v3.1.1 added 6 new smokes + a
+JS reveal-gate fix; v3.1.2 added 3 more — see top status block).
 
 v3.0 lineage:
 v3.0 shipped on `main` (2026-05-26, tag `v3.0`). v3.0 closes
@@ -650,10 +704,11 @@ See BUILD_PROMPT.md §14.
 
 # Session handoff — 2026-05-26
 
-Latest tag: **v3.1** (Phase 11.2 close — admin config UI). Pushed to origin.
-Battery: **51/51 PASS** · `main` at `3185b86` · clean
+Latest tag: **v3.1.2** (Phase 11.2 UX polish — cron preset dropdown). Pushed to origin.
+Battery: **49/51 in-battery; 51/51 with standalone re-run of 2 flakes** · `main` at `7c3c7c0` · clean
+smoke-phase-11-2-config-ui: **30/30 PASS** (was 19 at v3.1 ship).
 
-## Phase 11 — Done (v3.0.5 + v3.1)
+## Phase 11 — Done (v3.0.5 + v3.1 + v3.1.1 + v3.1.2)
 
 ### Phase 11.1 (tag v3.0.5, interim) — encryption foundation
 
@@ -680,6 +735,28 @@ Battery: **51/51 PASS** · `main` at `3185b86` · clean
 - ✅ + `NCrontab 3.3.3` NuGet
 - ✅ Smoke `smoke-phase-11-2-config-ui.ps1` (19 steps: GETs/PUTs/POST secret/validation/regenerate/DELETE reset/ERP test/operator 403 at all 7 endpoints/bootstrap exclusions absent)
 - ✅ Tag v3.0.5 (Phase 11.1) + v3.1 (Phase 11.2)
+
+### Phase 11.2 audit closure (tag v3.1.1) — gap fixes + admin-reveal
+
+- ✅ `POST /api/admin/config/test/smtp` wrapper (parallel to `/test/erp`; existing `/api/admin/email-test` untouched)
+- ✅ `ErpDb:ConnectionString` POST /secret rejects values missing `Server=` AND `Database=` (400 + helpful error)
+- ✅ `Exports:BaseUrl` PUT requires `https://` in Production (`IHostEnvironment.IsProduction()`); dev/staging unchanged
+- ✅ `Exports:SigningKey` POST /secret min 32 chars (Regenerate writes 44 by default; this floors the manual path)
+- ✅ Skipped per audit Option A (YAGNI): response-shape additive (gaps 2-3), hostname format / Username conditional / Password length (gaps 4-6)
+- ✅ **Bug fix:** `config.js:131` admin-only reveal gate was `u.role === 'admin'` (display name) since v2.1.9 — switched to `u.roleKey` (machine value, matches `app-nav.js` + `receiving.js`). The bug kept the entire admin section hidden in every browser for any admin user; Phase 11.2 made it user-visible because the new editor lives behind the gate
+- ✅ 2 new smoke regression guards (5b source: config.js reads `u.roleKey`; 6b behavioral: /api/auth/me returns `roleKey='admin'` for sadmin)
+- ✅ 4 docs `docs/configuration.md §7` items synced to shipped reality (no `/api/admin/erp/connection-test`, no separate Diagnostics tab, warehouse dropdown via `/api/warehouses`, supervisor visibility model)
+- ✅ `CHANGELOG.md` [3.1.1] + retroactive [3.1.0] entries
+
+### Phase 11.2 UX polish (tag v3.1.2) — schedule preset dropdown
+
+- ✅ Sync Schedule tab cron input → 10-preset dropdown (15min / 30min / hourly / 2 4 6 12 hr / midnight / 2 AM / 8 AM) + "Custom (advanced)…" escape hatch
+- ✅ Hidden `#erpsync-CronExpression` mirror input retains `data-key` so the save loop is untouched; preset `<select>` + custom `<input>` both write to it
+- ✅ Custom branch reveals text input + link to crontab.guru
+- ✅ Initial render: matches preset → dropdown selected, custom wrap hidden. No match → dropdown on "Custom", custom input pre-filled
+- ✅ Server validation unchanged — NCrontab still validates every cron, presets and custom go through the same gate
+- ✅ New CSS `.config-field-secondary` (12px left-border indent) — named generically for future reveal-on-Custom patterns
+- ✅ 3 new smoke assertions (preset round-trip, custom round-trip, source-level dropdown wiring)
 
 ## Production blockers — UI-editable now
 
@@ -714,7 +791,11 @@ every encrypted secret in DB is unrecoverable. Back up alongside the DB.
 
 ## Known flakes (pre-existing; pass standalone)
 
-- `smoke-phase-8.4-exports.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Battery is reliably green after one retry, never had genuine regressions across Phases 10 + 11.
+- `smoke-phase-8.4-exports.ps1`, `smoke-export-extensions.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Battery is reliably 51/51 after one retry; never had genuine regressions across Phases 10 + 11.
+
+## Gmail App Password — episodic block
+
+Gmail auto-blocks the configured App Password after ~30+ rapid SMTP sends in a day (e.g. running the full smoke battery several times back-to-back). Symptom: every mail-dependent smoke fails with `5.7.8 Username and Password not accepted`. Recovery: wait ~1-6h for the block to lapse, OR rotate the App Password at `myaccount.google.com/apppasswords` and update via `/Config` → Email tab → Password row → "Change". Test with the Send-test button before re-running the battery.
 
 ## Dev-environment notes
 
