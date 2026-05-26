@@ -146,6 +146,9 @@ builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 // protector is thread-safe and there's no per-request state. Scoped deps
 // (repository, audit) are resolved per-call via IServiceScopeFactory.
 builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
+// One-time hydration: copies appsettings.json + user-secrets into the DB
+// on first start. Scoped — instantiated once at startup via app.Services.
+builder.Services.AddScoped<AppSettingsSeeder>();
 
 // ---- v2.x Phase 8.4 — email transport (Gmail SMTP via MailKit) ----
 // SmtpOptions binds from the "Smtp" section — typically user-secrets in
@@ -219,6 +222,15 @@ builder.Services.AddHangfireServer(opts =>
 });
 
 var app = builder.Build();
+
+// ---- v3.x Phase 11.1 — AppSettings seeder ----
+// Runs BEFORE any IOptions<T> consumer so the options binding (commit 5)
+// reads from a populated DB. Idempotent: no-ops when rows already exist.
+using (var seedScope = app.Services.CreateScope())
+{
+    var seeder = seedScope.ServiceProvider.GetRequiredService<AppSettingsSeeder>();
+    await seeder.RunAsync();
+}
 
 if (!app.Environment.IsDevelopment())
 {
