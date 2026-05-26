@@ -559,3 +559,152 @@
   .troubleshoot-list strong { color: var(--text); }
   .troubleshoot-list a { color: var(--accent); }
 
+  /* ============================================================
+     Phase 11.2 — configuration editor (replaces Email-test
+     diagnostic). Pill-style tabs match the Phase 8.4 /Exports
+     pattern; classes are namespaced (.config-*) to avoid coupling.
+     ============================================================ */
+  .config-editor { padding: 18px 20px 22px; }
+
+  .config-tabs {
+    display: inline-flex; align-items: center;
+    gap: 2px;
+    margin-bottom: 18px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
+    flex-wrap: wrap;
+  }
+  .config-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: transparent; border: none;
+    padding: 8px 14px;
+    font: inherit; font-size: 13px; color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 7px;
+    transition: background 140ms ease, color 140ms ease;
+  }
+  .config-tab:hover { color: var(--text); background: var(--surface-2); }
+  .config-tab i { font-size: 14px; }
+  .config-tab.is-active,
+  .config-tab.is-active:hover {
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 500;
+  }
+
+  .config-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .config-panel[hidden] { display: none; }
+  .config-panel-loading {
+    color: var(--text-muted); font-size: 13px; padding: 12px 0;
+  }
+
+  /* Per-tab forms (Commits 4–7 populate the content). Generic styles
+     here so each tab doesn't redefine the basics. */
+  .config-form {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .config-form .form-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px 18px;
+  }
+  .config-field { display: flex; flex-direction: column; gap: 6px; }
+  .config-field.full-width { grid-column: 1 / -1; }
+  .config-field label {
+    font-size: 12px; font-weight: 500; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .config-field input[type="text"],
+  .config-field input[type="number"],
+  .config-field input[type="email"],
+  .config-field input[type="url"],
+  .config-field input[type="password"],
+  .config-field textarea,
+  .config-field select {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font: inherit; font-size: 13px; color: var(--text);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .config-field input:focus,
+  .config-field textarea:focus,
+  .config-field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  .config-field input:read-only {
+    background: var(--surface-3); color: var(--text-dim); cursor: default;
+  }
+  .config-field .config-hint {
+    font-size: 11px; color: var(--text-muted); margin: 0;
+  }
+  .config-field .config-error {
+    font-size: 11px; color: var(--error); margin: 0;
+  }
+
+  /* Secret rows render a masked input + Change button side-by-side. */
+  .config-secret-row {
+    display: flex; gap: 8px; align-items: stretch;
+  }
+  .config-secret-row input { flex: 1; }
+  .config-secret-row .btn-secret-change {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 14px;
+    font-size: 12px; color: var(--text);
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .config-secret-row .btn-secret-change:hover {
+    background: var(--surface-2); border-color: var(--border-bright);
+  }
+
+  /* Footer actions strip for each tab (Save / Test / Reset). */
+  .config-actions {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin-top: 8px;
+    padding-top: 16px; border-top: 1px solid var(--border);
+  }
+  .config-actions .config-actions-spacer { flex: 1; }
+
+  /* Inline alert below the action strip (success / error from save). */
+  .config-alert {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid transparent;
+  }
+  .config-alert.is-success {
+    background: var(--accent-bg); color: var(--accent);
+    border-color: var(--accent);
+  }
+  .config-alert.is-error {
+    background: rgba(192, 57, 43, 0.08); color: var(--error);
+    border-color: var(--error);
+  }
+
+  /* Restart-required banner. Sits ABOVE the editor so the operator
+     sees it after save; persists until Dismiss or page reload. */
+  .restart-banner {
+    display: flex; align-items: center; gap: 14px;
+    margin: 0 20px 18px;
+    padding: 14px 18px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    color: var(--text);
+  }
+  .restart-banner i { font-size: 22px; color: var(--accent); flex-shrink: 0; }
+  .restart-banner-text { flex: 1; }
+  .restart-banner-text strong { display: block; font-size: 14px; }
+  .restart-banner-text p { margin: 4px 0 0; font-size: 12px; color: var(--text-dim); }
+

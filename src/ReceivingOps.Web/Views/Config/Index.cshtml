@@ -166,60 +166,57 @@
       </div>
     </div>
 
-    <!-- ADMIN — Email diagnostic. Hidden unless current user is admin;
-         JS toggles .admin-only sections based on session.role from
-         /api/auth/me. The endpoints behind it are themselves
-         [Authorize(Roles = "admin")] so the UI gate is convenience-
-         only, never the security boundary. -->
+    <!-- ADMIN — Configuration editor (Phase 11.2). Replaces the v2.1.9
+         read-only Email-test diagnostic. Hidden unless current user is
+         admin (config.js toggles via /api/auth/me); all endpoints are
+         [Authorize(Roles = "admin")] so the UI gate is convenience only.
+         Tab switching + per-tab renderers live in config-editor.js. -->
     <div class="section admin-only" data-admin-only hidden>
       <div class="section-head">
         <div class="section-title-block">
-          <div class="eyebrow">Diagnostics · Admin only</div>
-          <div class="section-title">Email test</div>
-          <div class="section-desc">Verify SMTP configuration. Use after setting <code>Smtp:*</code> user-secrets or to debug failed export emails.</div>
+          <div class="eyebrow">Configuration · Admin only</div>
+          <div class="section-title">System settings</div>
+          <div class="section-desc">Edit runtime configuration. Changes require an application restart to take effect.</div>
         </div>
       </div>
 
-      <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 16px;">
-        <!-- Config display -->
-        <div class="smtp-config-display">
-          <div class="config-grid">
-            <div class="config-item">
-              <div class="config-label">SMTP host</div>
-              <div class="config-value" id="smtp-host">—</div>
-            </div>
-            <div class="config-item">
-              <div class="config-label">Port</div>
-              <div class="config-value" id="smtp-port">—</div>
-            </div>
-            <div class="config-item">
-              <div class="config-label">From address</div>
-              <div class="config-value" id="smtp-from">—</div>
-            </div>
-            <div class="config-item">
-              <div class="config-label">Credentials</div>
-              <div class="config-value" id="smtp-creds">—</div>
-            </div>
-          </div>
-          <p class="setting-help" style="margin-top: 6px;">
-            <i class="bi bi-info-circle"></i>
-            Credentials are configured via <code>dotnet user-secrets</code> and never exposed in the UI.
-            If unset, emails are logged at Information level instead of sent.
-          </p>
+      <div id="config-editor-root" class="config-editor">
+        <div class="config-tabs" role="tablist">
+          <button class="config-tab is-active" data-tab="Smtp" role="tab" type="button">
+            <i class="bi bi-envelope"></i><span>Email</span>
+          </button>
+          <button class="config-tab" data-tab="ErpDb" role="tab" type="button">
+            <i class="bi bi-database"></i><span>ERP Connection</span>
+          </button>
+          <button class="config-tab" data-tab="ErpSync" role="tab" type="button">
+            <i class="bi bi-clock"></i><span>Sync Schedule</span>
+          </button>
+          <button class="config-tab" data-tab="Exports" role="tab" type="button">
+            <i class="bi bi-box-arrow-down"></i><span>Exports</span>
+          </button>
         </div>
 
-        <!-- Test form -->
-        <div class="email-test-form">
-          <label for="email-test-to" class="setting-name" style="display: block; margin-bottom: 6px;">Send test email to</label>
-          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-            <input type="email" id="email-test-to" class="form-control" placeholder="you@example.com" style="flex: 1; min-width: 240px;">
-            <button class="btn btn-primary" id="email-test-send">
-              <i class="bi bi-envelope"></i> Send test
-            </button>
-          </div>
+        <div class="config-panel" data-panel="Smtp" id="config-panel-Smtp">
+          <div class="config-panel-loading">Loading…</div>
         </div>
+        <div class="config-panel" data-panel="ErpDb" id="config-panel-ErpDb" hidden>
+          <div class="config-panel-loading">Loading…</div>
+        </div>
+        <div class="config-panel" data-panel="ErpSync" id="config-panel-ErpSync" hidden>
+          <div class="config-panel-loading">Loading…</div>
+        </div>
+        <div class="config-panel" data-panel="Exports" id="config-panel-Exports" hidden>
+          <div class="config-panel-loading">Loading…</div>
+        </div>
+      </div>
 
-        <div class="email-test-result" id="email-test-result" hidden></div>
+      <div id="restart-banner" class="restart-banner" hidden role="status" aria-live="polite">
+        <i class="bi bi-exclamation-triangle"></i>
+        <div class="restart-banner-text">
+          <strong>Restart required</strong>
+          <p>Configuration saved. Restart the application to apply changes.</p>
+        </div>
+        <button class="btn" id="dismiss-restart-banner" type="button">Dismiss</button>
       </div>
     </div>
 
@@ -273,6 +270,7 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
 <script src="~/js/config.js" asp-append-version="true"></script>
+<script src="~/js/config-editor.js" asp-append-version="true"></script>
 
 </body>
 </html>
