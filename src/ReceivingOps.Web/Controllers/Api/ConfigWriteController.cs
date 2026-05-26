@@ -6,6 +6,7 @@ using NCrontab;
 using ReceivingOps.Web.Data;
 using ReceivingOps.Web.Data.Repositories;
 using ReceivingOps.Web.Services.Config;
+using ReceivingOps.Web.Services.Email;
 
 namespace ReceivingOps.Web.Controllers.Api;
 
@@ -62,20 +63,39 @@ public class ConfigWriteController : ControllerBase
         public string Warning { get; set; } = "";
     }
 
+    /// <summary>v3.1.1 — wrapper for POST /test/smtp (parallel to /test/erp).</summary>
+    public sealed class TestSmtpRequest
+    {
+        public string RecipientEmail { get; set; } = "";
+    }
+
+    public sealed class TestSmtpResponse
+    {
+        public bool Sent { get; set; }
+        public string? RecipientEmail { get; set; }
+        public string? Error { get; set; }
+    }
+
     private readonly IAppSettingsService _settings;
     private readonly IWarehouseRepository _warehouses;
     private readonly IErpDbConnectionFactory _erpFactory;
+    private readonly IEmailService _email;
+    private readonly IHostEnvironment _env;
     private readonly ILogger<ConfigWriteController> _log;
 
     public ConfigWriteController(
         IAppSettingsService settings,
         IWarehouseRepository warehouses,
         IErpDbConnectionFactory erpFactory,
+        IEmailService email,
+        IHostEnvironment env,
         ILogger<ConfigWriteController> log)
     {
         _settings = settings;
         _warehouses = warehouses;
         _erpFactory = erpFactory;
+        _email = email;
+        _env = env;
         _log = log;
     }
 
@@ -152,6 +172,37 @@ public class ConfigWriteController : ControllerBase
             return BadRequest(new { error = "value is required (use DELETE to clear a secret)." });
         if (req.Value.Length > 4000)
             return BadRequest(new { error = "value exceeds 4000 characters." });
+
+        // v3.1.1 gap 9 — SigningKey min length. The Regenerate endpoint
+        // always writes 32+ chars (44 actually — base64 of 32 bytes), but a
+        // direct /secret call could write a short key; HMAC truncation
+        // attacks need ≥256-bit input, so floor at 32.
+        if (string.Equals(req.Key, "Exports:SigningKey", StringComparison.OrdinalIgnoreCase)
+            && req.Value.Length < 32)
+        {
+            return BadRequest(new
+            {
+                key = req.Key,
+                error = "SigningKey must be at least 32 characters.",
+                actualLength = req.Value.Length,
+            });
+        }
+
+        // v3.1.1 gap 7 — ErpDb:ConnectionString format sanity. Cheap guard
+        // against typos that would only surface at SqlConnection.Open(); we
+        // don't try to fully parse the connection string here.
+        if (string.Equals(req.Key, "ErpDb:ConnectionString", StringComparison.OrdinalIgnoreCase))
+        {
+            if (req.Value.IndexOf("Server=", StringComparison.OrdinalIgnoreCase) < 0 ||
+                req.Value.IndexOf("Database=", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return BadRequest(new
+                {
+                    key = req.Key,
+                    error = "Connection string must contain 'Server=' and 'Database='.",
+                });
+            }
+        }
 
         var actor = ResolveActor();
         await _settings.SetAsync(req.Key, req.Value, isSecret: true, actor, ct);
@@ -266,6 +317,57 @@ public class ConfigWriteController : ControllerBase
         }
     }
 
+    // ------------------------------------------------------------------
+    // v3.1.1 gap 1 — POST /api/admin/config/test/smtp
+    // Thin wrapper around IEmailService for API uniformity — parallel to
+    // /test/erp. The existing /api/admin/email-test endpoint (Phase 8.4
+    // diagnostic) is unchanged and still serves the same purpose; this
+    // endpoint just keeps the test surface on the Config namespace so a
+    // future hardening pass can deprecate /api/admin/email-test without
+    // breaking the editor.
+    // ------------------------------------------------------------------
+    [HttpPost("test/smtp")]
+    public async Task<IActionResult> TestSmtp([FromBody] TestSmtpRequest req, CancellationToken ct)
+    {
+        if (req is null || string.IsNullOrWhiteSpace(req.RecipientEmail))
+            return BadRequest(new TestSmtpResponse
+            {
+                Sent = false,
+                Error = "recipientEmail is required.",
+            });
+        if (!MailAddress.TryCreate(req.RecipientEmail, out _))
+            return BadRequest(new TestSmtpResponse
+            {
+                Sent = false,
+                Error = "recipientEmail is not a valid email.",
+            });
+
+        try
+        {
+            await _email.SendAsync(
+                req.RecipientEmail,
+                "Receivx — Config test send",
+                "<p>Configuration test successful.</p>" +
+                "<p style=\"color:#888;font-size:11px\">Sent by /api/admin/config/test/smtp.</p>",
+                ct: ct);
+            _log.LogInformation("Config test/smtp sent to {To} by {Actor}", req.RecipientEmail, ResolveActor());
+            return Ok(new TestSmtpResponse { Sent = true, RecipientEmail = req.RecipientEmail });
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Config test/smtp failed to {To}", req.RecipientEmail);
+            // 200 with sent=false (parallel to /test/erp shape) — the
+            // operator wants the error verbatim in the UI panel, not a
+            // generic 500.
+            return Ok(new TestSmtpResponse
+            {
+                Sent = false,
+                RecipientEmail = req.RecipientEmail,
+                Error = ex.Message,
+            });
+        }
+    }
+
     // ==================================================================
     // Helpers
     // ==================================================================
@@ -334,6 +436,12 @@ public class ConfigWriteController : ControllerBase
                 if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
                     || (uri.Scheme != "http" && uri.Scheme != "https"))
                     return (false, "BaseUrl must be an absolute http(s):// URL.");
+                // v3.1.1 gap 8 — Production must use https. Download URLs
+                // include the HMAC token in the query string; over plain
+                // http that token is visible to any on-path observer.
+                if (_env.IsProduction() && !string.Equals(uri.Scheme, "https",
+                        StringComparison.OrdinalIgnoreCase))
+                    return (false, "Production environment requires an https:// BaseUrl.");
                 return (true, null);
 
             // Strings with no parsing rules — accept as-is.
