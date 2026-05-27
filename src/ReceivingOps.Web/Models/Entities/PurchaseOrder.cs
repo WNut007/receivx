@@ -17,4 +17,11 @@ public class PurchaseOrder
     // §3.5 — optional link to a Pull. When set, the linked Pull may restrict FIFO scope
     // to its own POs (see Pulls.LockPoByPull). Immutable after PO creation.
     public Guid? PullId { get; set; }
+
+    // db/033 — denormalized external pull reference (PRS_ID from Phase 12
+    // import). Independent of PullId/FK_PO_Pull. Receive flow (§7.15)
+    // matches this against the receiving Pull's PullNumber when PullId
+    // is NULL, letting an imported PO join a live receive without a
+    // Pulls row ever existing for that PRS_ID.
+    public string? PullExternalRef { get; set; }
 }

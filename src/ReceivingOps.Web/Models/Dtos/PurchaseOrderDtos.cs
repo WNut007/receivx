@@ -22,6 +22,11 @@ public class PoListRow
     // §3.5 — optional pull link. Both NULL when PO is in the cross-pull pool.
     public Guid? PullId { get; set; }
     public string? PullNumber { get; set; }
+
+    // db/033 — denormalized external pull reference (PRS_ID from Phase 12
+    // import). Independent of PullId/FK. UI uses precedence:
+    // PullNumber (FK link) > PullExternalRef (import) > "(none — pool)".
+    public string? PullExternalRef { get; set; }
 }
 
 /// <summary>One PO line, used inside PoDetail and as a stand-alone summary row.</summary>
@@ -85,6 +90,11 @@ public class PoDetail
     // §3.5 — optional pull link. Both NULL when PO is in the cross-pull pool.
     public Guid? PullId { get; set; }
     public string? PullNumber { get; set; }
+
+    // db/033 — denormalized external pull reference (PRS_ID from Phase 12
+    // import). Independent of PullId/FK. UI uses precedence:
+    // PullNumber (FK link) > PullExternalRef (import) > "(none — pool)".
+    public string? PullExternalRef { get; set; }
 
     public List<PoLineRow> Lines { get; set; } = new();
 }

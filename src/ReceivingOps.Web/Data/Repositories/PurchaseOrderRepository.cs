@@ -66,7 +66,7 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode,
                     po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate,
                     po.Status, po.CreatedAt, po.ClosedAt,
-                    po.PullId, p.PullNumber,
+                    po.PullId, p.PullNumber, po.PullExternalRef,
                     (SELECT COUNT(*)          FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS LineCount,
                     (SELECT ISNULL(SUM(OrderedQty),0)  FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS TotalOrdered,
                     (SELECT ISNULL(SUM(ReceivedQty),0) FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS TotalReceived
@@ -95,7 +95,7 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
                     po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate, po.Status, po.Notes,
                     po.CreatedBy, cb.Name AS CreatedByName, po.CreatedAt, po.ClosedAt,
-                    po.PullId, p.PullNumber
+                    po.PullId, p.PullNumber, po.PullExternalRef
             FROM    dbo.PurchaseOrders po
             INNER JOIN dbo.Warehouses w  ON w.Id  = po.WarehouseId
             LEFT  JOIN dbo.Users      cb ON cb.Id = po.CreatedBy
