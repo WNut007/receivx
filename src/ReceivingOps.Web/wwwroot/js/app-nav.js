@@ -96,6 +96,12 @@
     // can't receive against a PO that doesn't exist.
     { id: 'pos',          label: 'Purchase Orders', icon: 'bi-receipt',              href: '/Pos',     roles: ['admin', 'supervisor'] },
     { id: 'receiving',    label: 'Receiving',       icon: 'bi-box-arrow-in-down',    href: '/Receiving' },
+    // Phase 12.6 — PO bulk import. Visible to every authenticated user per
+    // Q4=A; the /api/imports/po surface gates by role + warehouse-scopes by
+    // claim so operator visibility doesn't mean operator authorization. The
+    // entry sits next to Receiving because the imported POs feed the receive
+    // workflow downstream.
+    { id: 'imports',      label: 'Imports',         icon: 'bi-cloud-upload',         href: '/Imports' },
     { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: '/Transactions' },
     // v2.x Phase 7.3 — DO render. Same CanManagePulls role gate as /Pos
     // (admin + supervisor) since the same operators who close pulls also
@@ -120,6 +126,7 @@
     if (p.includes('/dashboard') || p.includes('pull-controller')) return 'pull';
     if (p.includes('/receiving')) return 'receiving';
     if (p.includes('/transactions')) return 'transactions';
+    if (p.includes('/imports'))  return 'imports';
     if (p.includes('/masters')) return 'masters';
     if (p.startsWith('/pos'))    return 'pos';
     if (p.includes('/config'))   return 'config';
