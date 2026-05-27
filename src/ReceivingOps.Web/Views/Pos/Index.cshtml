@@ -218,15 +218,18 @@
               <th class="num" style="width: 110px;">Ordered</th>
               <th class="num" style="width: 110px;">Received</th>
               <th class="num" style="width: 110px;">Remaining</th>
-              @* Phase 9 — 5 priority ERP columns. Other 15 ERP fields are in
-                 the API response + Excel export but not surfaced here (PO
-                 detail is already wide; full inspection lives in the export). *@
-              <th class="erp-col erp-col-first" style="width: 130px;">Invoice</th>
+              @* Phase 9 — priority ERP columns. Phase 9.2 promoted Order ID
+                 to the leftmost ERP slot (it's the most-requested identifier
+                 on the floor). Other 15 ERP fields are in the API response +
+                 Excel export but not surfaced here (PO detail is already
+                 wide; full inspection lives in the export + the §9.2 modal). *@
+              <th class="erp-col erp-col-first" style="width: 110px;">Order ID</th>
+              <th class="erp-col" style="width: 130px;">Invoice</th>
               <th class="erp-col" style="width: 110px;">SubInv</th>
               <th class="erp-col" style="width: 110px;">ToLoc</th>
               <th class="erp-col" style="width: 110px;">Pallet</th>
               <th class="erp-col" style="width: 110px;">VMI Pallet</th>
-              <th style="width: 80px; text-align: right;">Actions</th>
+              <th style="width: 96px; text-align: right;">Actions</th>
             </tr>
           </thead>
           <tbody id="po-lines-tbody"></tbody>

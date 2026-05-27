@@ -297,11 +297,17 @@ function renderLines() {
   const tbody = document.getElementById('po-lines-tbody');
   const lines = currentDetail.lines || [];
   if (lines.length === 0) {
-    // Phase 9 bumped colspan 7 → 12 (5 new ERP columns).
-    tbody.innerHTML = `<tr><td colspan="12" class="empty-row">
+    // Phase 9.2 bumped colspan 12 → 13 (added Order ID column).
+    tbody.innerHTML = `<tr><td colspan="13" class="empty-row">
       <i class="bi bi-inbox"></i> No lines yet — click <b>Add line</b>
     </td></tr>`;
   } else {
+    // Phase 9.2 — admin + supervisor can edit line metadata on an open PO.
+    // The /api/pos/{id}/lines/{lineId}/extended-fields endpoint enforces
+    // the same gate server-side; this is convenience-only (hide what the
+    // user can't use). operator never sees the pencil.
+    const canEditLineMeta = (currentRole === 'admin' || currentRole === 'supervisor')
+                            && currentDetail.status === 'open';
     tbody.innerHTML = lines.map(l => {
       const hasReceipts = l.receivedQty > 0;  // best client-side proxy for §7.13
       const isWritable = currentDetail.status === 'open';
@@ -309,6 +315,11 @@ function renderLines() {
       const deleteTitle = hasReceipts
         ? '§7.13 — line has receipts; cannot be deleted'
         : (isWritable ? 'Delete this line' : 'PO is closed');
+      const editBtn = canEditLineMeta ? `
+            <button class="btn btn-icon" data-act="edit-line" data-line-id="${escHtml(l.id)}"
+                    title="Edit ERP fields">
+              <i class="bi bi-pencil"></i>
+            </button>` : '';
       return `
         <tr data-line-id="${escHtml(l.id)}">
           <td class="num">${l.lineNumber}</td>
@@ -317,12 +328,14 @@ function renderLines() {
           <td class="num">${(l.orderedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.receivedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.remainingQty | 0).toLocaleString()}</td>
-          ${erpCell(l.invoiceNo,    'erp-col-first')}
+          ${erpCell(l.orderId,      'erp-col-first')}
+          ${erpCell(l.invoiceNo)}
           ${erpCell(l.subInventory)}
           ${erpCell(l.toLocation)}
           ${erpCell(l.palletId)}
           ${erpCell(l.vmiPalletId)}
-          <td style="text-align:right;">
+          <td style="text-align:right; white-space:nowrap;">
+            ${editBtn}
             <button class="btn btn-icon danger" data-act="delete-line" data-line-id="${escHtml(l.id)}"
                     title="${escHtml(deleteTitle)}" ${canDelete ? '' : 'disabled'}>
               <i class="bi bi-trash"></i>
@@ -783,7 +796,8 @@ document.getElementById('l-save').addEventListener('click', saveAddLine);
 document.getElementById('btn-close-po').addEventListener('click', openCloseModal);
 document.getElementById('cp-confirm').addEventListener('click', confirmClose);
 
-// Row click → openDetail; delete-line button → deleteLine (no row-open)
+// Row click → openDetail; delete-line + edit-line buttons short-circuit
+// the row-open so the operator can act on a line without leaving the detail.
 document.addEventListener('click', (e) => {
   const delBtn = e.target.closest('[data-act="delete-line"]');
   if (delBtn) {
@@ -791,9 +805,22 @@ document.addEventListener('click', (e) => {
     deleteLine(delBtn.getAttribute('data-line-id'));
     return;
   }
+  const editBtn = e.target.closest('[data-act="edit-line"]');
+  if (editBtn) {
+    e.preventDefault(); e.stopPropagation();
+    openEditLineModal(editBtn.getAttribute('data-line-id'));
+    return;
+  }
   const row = e.target.closest('#po-tbody tr[data-id]');
   if (row) openDetail(row.getAttribute('data-id'));
 });
+
+// Phase 9.2 stub — the modal markup + full save flow land in commit 3
+// (9.2.3). Until then the pencil shows a toast so the wiring is testable
+// without dead-clicking. Replaced by the real openEditLineModal in 9.2.3.
+function openEditLineModal(lineId) {
+  showToast('Edit ERP fields', 'Modal lands in 9.2.3 (line ' + lineId + ')');
+}
 
 /* ---------- Startup ---------- */
 // Restore the Date Range from ?dateRange=... if the URL specifies a
