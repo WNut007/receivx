@@ -229,11 +229,12 @@ builder.Services.AddScoped<ErpSyncJob>();
 // distributed locking would be needed for a multi-instance deployment.
 builder.Services.AddSingleton<ErpSyncMutex>();
 
-// ---- v3.x Phase 12.2 — PO Excel import pipeline (parser only at 12.2) ----
-// NPOI-backed reader for .xls + .xlsx. Scoped because the implementation
-// holds an ILogger via DI — no per-request state, but matching the project
-// convention for services. Repositories / job / controller land in 12.3+.
+// ---- v3.x Phase 12 — PO Excel import pipeline ----
+// 12.2 — NPOI-backed reader for .xls + .xlsx.
+// 12.4 — orchestrator: writes log row + parses + persists outcome (Stage 1).
+// Hangfire worker job (Stage 2 atomic upsert) + controller + UI land in 12.5+.
 builder.Services.AddScoped<IPoImportReader, PoImportReader>();
+builder.Services.AddScoped<IPoImportService, PoImportService>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
