@@ -815,12 +815,93 @@ document.addEventListener('click', (e) => {
   if (row) openDetail(row.getAttribute('data-id'));
 });
 
-// Phase 9.2 stub — the modal markup + full save flow land in commit 3
-// (9.2.3). Until then the pencil shows a toast so the wiring is testable
-// without dead-clicking. Replaced by the real openEditLineModal in 9.2.3.
+// ============ Phase 9.2 — Edit line extended (ERP) fields ============
+// 20 nullable string fields grouped in 6 sections (Tracking, Location,
+// Pallets, References, Special, Notes). Mirror of the §9.1 PullItem
+// extended-fields modal in dashboard.js — same trim-to-null semantic,
+// same 401→login, same 409→friendly toast, same refresh-on-success.
+//
+// Lazy modal-instance init: bootstrap.Modal is constructed on first open
+// so the cold-start cost on /Pos stays minimal (the operator path that
+// doesn't need this modal pays nothing).
+const EF_FIELDS = [
+  'orderId', 'asnNo', 'kanbanNo', 'vendorItem',
+  'location', 'subInventory', 'toLocation', 'building', 'productionLine',
+  'palletId', 'vmiPalletId', 'batchNo',
+  'invoiceNo', 'pccNo', 'manufacturingControlNo', 'orderRound',
+  'exportDeclarationNo', 'customerReferenceNo', 'manufacturingReferenceNo',
+  'note',
+];
+let efModalInstance = null;
+let efEditingLineId = null;
+
 function openEditLineModal(lineId) {
-  showToast('Edit ERP fields', 'Modal lands in 9.2.3 (line ' + lineId + ')');
+  if (!currentDetail) return;
+  const line = (currentDetail.lines || []).find(l => l.id === lineId);
+  if (!line) return;
+
+  const el = document.getElementById('poLineExtendedFieldsModal');
+  if (!el) return;
+  if (!efModalInstance) efModalInstance = new bootstrap.Modal(el);
+
+  efEditingLineId = lineId;
+  document.getElementById('ef-line-context').textContent =
+    `Line ${line.lineNumber} · ${line.itemCode}`;
+
+  // Populate all 20 inputs. Field absent from JSON (null + WhenWritingNull
+  // dropped) falls back to '' — same value an operator would see for an
+  // ERP-not-yet-populated field.
+  for (const f of EF_FIELDS) {
+    const input = document.getElementById('ef-' + f);
+    if (input) input.value = line[f] || '';
+  }
+
+  efModalInstance.show();
 }
+
+async function saveLineExtendedFields() {
+  if (!currentDetail || !efEditingLineId) return;
+
+  // Empty trim → null so the column NULL's out (not stored as empty string).
+  // Keeps the ERP-vs-Receivx value comparison clean for the eventual Phase 10
+  // push, matching the §9.1 convention on PullItems.
+  const v = (id) => {
+    const t = document.getElementById(id).value.trim();
+    return t.length ? t : null;
+  };
+  const body = {};
+  for (const f of EF_FIELDS) body[f] = v('ef-' + f);
+
+  const btn = document.getElementById('ef-save');
+  btn.disabled = true;
+  try {
+    const r = await fetch(
+      '/api/pos/' + encodeURIComponent(currentDetail.id) +
+      '/lines/' + encodeURIComponent(efEditingLineId) +
+      '/extended-fields',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    if (r.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!r.ok) {
+      let title = 'Save failed (' + r.status + ')';
+      try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Could not save ERP fields', title, 'danger');
+      return;
+    }
+    // Endpoint returns refreshed PoDetail so we don't need a second GET.
+    currentDetail = await r.json();
+    renderDetail();
+    efModalInstance.hide();
+    showToast('ERP fields updated', `Line ${EF_FIELDS.length} fields saved`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('ef-save')?.addEventListener('click', saveLineExtendedFields);
 
 /* ---------- Startup ---------- */
 // Restore the Date Range from ?dateRange=... if the URL specifies a

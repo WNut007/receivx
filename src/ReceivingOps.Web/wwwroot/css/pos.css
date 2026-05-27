@@ -249,6 +249,24 @@
   }
   .immutable-hint .lock-icon { color: var(--accent); margin-right: 4px; }
 
+  /* Phase 9.2 — section divider inside the line extended-fields modal.
+     The 6 groups (Tracking, Location, Pallets, References, Special, Notes)
+     each get a small caps label above their .detail-grid; styled to match
+     the rest of the page's all-caps mono microcopy. */
+  #poLineExtendedFieldsModal .ef-section-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    padding: 6px 4px 4px 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+  #poLineExtendedFieldsModal .ef-section-label:first-child { padding-top: 0; }
+  #poLineExtendedFieldsModal .modal-body { max-height: 70vh; overflow-y: auto; }
+
   /* ============ Searchable autocomplete (§3.5 linked-pull picker) ============
      Used in the New PO modal in place of a preloaded combobox so the picker
      scales past the ~500 open-pulls/warehouse mark without paying for a

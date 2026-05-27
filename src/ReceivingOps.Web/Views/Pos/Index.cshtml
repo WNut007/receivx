@@ -400,6 +400,79 @@
   </div>
 </div>
 
+@* ============ PHASE 9.2 — EDIT LINE EXTENDED (ERP) FIELDS MODAL ============ *@
+@* Mirror of the §9.1 itemExtendedFieldsModal but for PurchaseOrderLines.   *@
+@* 20 nullable string fields grouped in 6 sections. Closed PO blocks the   *@
+@* save at the server (409 + friendly toast). Admin + supervisor only —    *@
+@* the pencil that opens this modal is server-side-omitted for operators.  *@
+<div class="modal fade" id="poLineExtendedFieldsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-tag" style="color: var(--accent); margin-right: 6px;"></i>
+          Edit ERP fields — <code id="ef-line-context" style="font-family:'Roboto Mono',monospace; font-size:13px; color:var(--text-dim);">—</code>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="ef-modal-body">
+
+        <div class="ef-section-label">Tracking</div>
+        <div class="detail-grid" style="padding: 0 0 14px 0;">
+          <div class="field-group"><label>Order ID</label><input type="text" class="form-control" id="ef-orderId" maxlength="50"></div>
+          <div class="field-group"><label>ASN No</label><input type="text" class="form-control" id="ef-asnNo" maxlength="50"></div>
+          <div class="field-group"><label>Kanban No</label><input type="text" class="form-control" id="ef-kanbanNo" maxlength="50"></div>
+          <div class="field-group"><label>Vendor SKU</label><input type="text" class="form-control" id="ef-vendorItem" maxlength="50"></div>
+        </div>
+
+        <div class="ef-section-label">Location</div>
+        <div class="detail-grid" style="padding: 0 0 14px 0;">
+          <div class="field-group"><label>Location</label><input type="text" class="form-control" id="ef-location" maxlength="50"></div>
+          <div class="field-group"><label>Sub Inventory</label><input type="text" class="form-control" id="ef-subInventory" maxlength="50"></div>
+          <div class="field-group"><label>To Location</label><input type="text" class="form-control" id="ef-toLocation" maxlength="50"></div>
+          <div class="field-group"><label>Building</label><input type="text" class="form-control" id="ef-building" maxlength="50"></div>
+          <div class="field-group" style="grid-column: 1 / -1;"><label>Production Line</label><input type="text" class="form-control" id="ef-productionLine" maxlength="50"></div>
+        </div>
+
+        <div class="ef-section-label">Pallets</div>
+        <div class="detail-grid" style="padding: 0 0 14px 0;">
+          <div class="field-group"><label>Pallet ID</label><input type="text" class="form-control" id="ef-palletId" maxlength="50"></div>
+          <div class="field-group"><label>VMI Pallet ID</label><input type="text" class="form-control" id="ef-vmiPalletId" maxlength="50"></div>
+          <div class="field-group" style="grid-column: 1 / -1;"><label>Batch / Lot No</label><input type="text" class="form-control" id="ef-batchNo" maxlength="50"></div>
+        </div>
+
+        <div class="ef-section-label">References</div>
+        <div class="detail-grid" style="padding: 0 0 14px 0;">
+          <div class="field-group"><label>Invoice No</label><input type="text" class="form-control" id="ef-invoiceNo" maxlength="50"></div>
+          <div class="field-group"><label>PCC No</label><input type="text" class="form-control" id="ef-pccNo" maxlength="50"></div>
+          <div class="field-group"><label>Mfg Ctrl No</label><input type="text" class="form-control" id="ef-manufacturingControlNo" maxlength="50"></div>
+          <div class="field-group"><label>Order Round</label><input type="text" class="form-control" id="ef-orderRound" maxlength="50"></div>
+        </div>
+
+        <div class="ef-section-label">Special</div>
+        <div class="detail-grid" style="padding: 0 0 14px 0;">
+          <div class="field-group"><label>Export Decl No</label><input type="text" class="form-control" id="ef-exportDeclarationNo" maxlength="50"></div>
+          <div class="field-group"><label>Customer Ref</label><input type="text" class="form-control" id="ef-customerReferenceNo" maxlength="50"></div>
+          <div class="field-group" style="grid-column: 1 / -1;"><label>Mfg Ref</label><input type="text" class="form-control" id="ef-manufacturingReferenceNo" maxlength="50"></div>
+        </div>
+
+        <div class="ef-section-label">Notes</div>
+        <div class="detail-grid" style="padding: 0 0 4px 0;">
+          <div class="field-group" style="grid-column: 1 / -1;">
+            <label>Note <span style="color: var(--text-muted); text-transform: none; letter-spacing: 0; font-size: 10px;">(up to 500 chars)</span></label>
+            <textarea class="form-control" id="ef-note" maxlength="500" rows="3" style="font-family:'Roboto', sans-serif;"></textarea>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ef-save"><i class="bi bi-check2-circle"></i> Save changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast-host">
   <div class="custom-toast" id="toast">
     <div class="icon-wrap"><span id="toast-icon">✓</span></div>
