@@ -256,6 +256,7 @@ OK "2 POs · WH=WH-01 · PullId=NULL · CreatedBy=supervisor · OrderDate=today 
 # 11. PurchaseOrderLines rows
 # ----------------------------------------------------------------------------
 Step "dbo.PurchaseOrderLines — 4 lines with deterministic LineNumber + field round-trip"
+$todayUtcDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 $lineCheck = (SqlRow @"
 SET NOCOUNT ON;
 SELECT
@@ -267,14 +268,15 @@ SELECT
     SUM(CASE WHEN ItemCode = 'TST-GIZMO-002'  AND OrderedQty = 18 THEN 1 ELSE 0 END) AS G2,
     SUM(CASE WHEN OrderId IS NOT NULL                            THEN 1 ELSE 0 END) AS OrderIdSet,
     SUM(CASE WHEN PalletId IS NOT NULL                           THEN 1 ELSE 0 END) AS PalletIdSet,
-    SUM(CASE WHEN LineNumber IN (1, 2)                           THEN 1 ELSE 0 END) AS LineNumOk
+    SUM(CASE WHEN LineNumber IN (1, 2)                           THEN 1 ELSE 0 END) AS LineNumOk,
+    SUM(CASE WHEN DeliveryDate = CAST('$todayUtcDate' AS DATE)   THEN 1 ELSE 0 END) AS DeliveryDateMatches
 FROM dbo.PurchaseOrderLines pol
 JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber LIKE 'P127TEST-%';
 "@) -join '' -replace '\s',''
 
 $lp = ($lineCheck -split '\|')
-if ($lp.Count -lt 9) { Fail "Could not parse line check output: '$lineCheck'" }
+if ($lp.Count -lt 10) { Fail "Could not parse line check output: '$lineCheck'" }
 if ([int]$lp[0] -ne 4) { Fail "PurchaseOrderLines total=$($lp[0]), expected 4" }
 if ([int]$lp[1] -ne 4) { Fail "ReceivedQty not 0 on $(4 - [int]$lp[1]) of 4 lines" }
 if ([int]$lp[2] -ne 1) { Fail "TST-WIDGET-001/qty=12 not found exactly once (got $($lp[2]))" }
@@ -284,7 +286,13 @@ if ([int]$lp[5] -ne 1) { Fail "TST-GIZMO-002/qty=18 not found exactly once (got 
 if ([int]$lp[6] -ne 4) { Fail "OrderId NULL on $(4 - [int]$lp[6]) of 4 lines — db/031 column not populated" }
 if ([int]$lp[7] -ne 4) { Fail "PalletId NULL on $(4 - [int]$lp[7]) of 4 lines — db/021 column not populated" }
 if ([int]$lp[8] -ne 4) { Fail "LineNumber outside {1,2} on $(4 - [int]$lp[8]) of 4 lines" }
-OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2}"
+# The fixture writes DELIVERY DATE as 'dd/MM/yyyy' strings; the parser
+# must read them back as the same calendar date. A regression here means
+# the dd/MM/yyyy format slot got dropped from PoImportReader.GetDate or
+# the parser fell back to InvariantCulture liberal-parse and misread the
+# day/month positions.
+if ([int]$lp[9] -ne 4) { Fail "DeliveryDate did not round-trip to $todayUtcDate on $(4 - [int]$lp[9]) of 4 lines — dd/MM/yyyy parser regression?" }
+OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2} · DeliveryDate=$todayUtcDate"
 
 # ----------------------------------------------------------------------------
 # 12. Audit rows

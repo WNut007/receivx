@@ -755,6 +755,16 @@ race the running `ReceivingOps.Web.exe` binary lock on `dotnet build` — see
   parseable. Trailing wholly-empty rows skipped silently to avoid spam
 - ✅ Cell readers honor InvariantCulture (so a German Excel can't smuggle "1.234,5"
   into an item code) and CLAUDE.md whole-units invariant (int-truncate fractional qty)
+- ✅ **DELIVERY DATE format = dd/MM/yyyy** (Thai/UK regional convention, the
+  production source format). `GetDate` String branch uses
+  `DateTime.TryParseExact` with an explicit format list (`dd/MM/yyyy`,
+  `d/M/yyyy`, `yyyy-MM-dd`) — NOT liberal `TryParse(InvariantCulture)` which
+  would mis-read 05/12/2026 as May 12 (US M/d/yyyy) or refuse 25/05/2026
+  outright. Anything outside the format list returns null and the per-row
+  validator flags it as "Invalid or missing date". Numeric-typed date cells
+  (Excel serial dates) come through `cell.DateCellValue` unchanged and are
+  format-agnostic. Source-level guard in smoke 12.2 step 8b prevents
+  silent regression back to liberal `TryParse`
 
 ### Phase 12.3 — log repository + state machine (commit `de9e78b`)
 

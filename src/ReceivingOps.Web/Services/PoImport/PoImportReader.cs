@@ -314,7 +314,18 @@ public class PoImportReader : IPoImportReader
                 case CellType.String:
                     var s = cell.StringCellValue?.Trim();
                     if (string.IsNullOrEmpty(s)) return null;
-                    return DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt)
+                    // Source workbooks emit DELIVERY DATE as dd/MM/yyyy (per
+                    // Phase 12 spec — Thai/UK regional convention). Liberal
+                    // DateTime.TryParse with InvariantCulture would mis-read
+                    // 05/12/2026 as May 12 (M/d/yyyy default) or refuse
+                    // 25/05/2026 outright. TryParseExact with an explicit
+                    // format list eliminates the ambiguity — any string that
+                    // doesn't match a listed format returns null and the
+                    // per-row validator flags it as "Invalid or missing date".
+                    // ISO yyyy-MM-dd is included as an unambiguous fallback;
+                    // ordering does NOT matter since the patterns can't collide.
+                    string[] dateFormats = { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd" };
+                    return DateTime.TryParseExact(s, dateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt)
                         ? dt
                         : null;
                 case CellType.Formula when cell.CachedFormulaResultType == CellType.Numeric:

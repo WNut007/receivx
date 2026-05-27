@@ -16,9 +16,12 @@
 # Cell typing decisions:
 #   OPEN QTY → Numeric (matches realistic spreadsheets; exercises
 #     GetInt's Numeric branch including the int-truncation invariant)
-#   DELIVERY DATE → ISO yyyy-MM-dd String (exercises GetDate's String
-#     branch via DateTime.TryParse with InvariantCulture; date-formatted
-#     Numeric cells require explicit CellStyle work that's needless here)
+#   DELIVERY DATE → dd/MM/yyyy String (matches production source format;
+#     exercises GetDate's String branch via TryParseExact's dd/MM/yyyy slot.
+#     ISO yyyy-MM-dd would also parse but wouldn't exercise the production
+#     path. Date-formatted Numeric cells use NPOI's DateCellValue regardless
+#     of display format — that path is exercised separately by direct
+#     write/read smokes, not here.)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path "$PSScriptRoot\.."
@@ -58,7 +61,13 @@ for ($i = 0; $i -lt $headers.Count; $i++) {
     $hr.CreateCell($i).SetCellValue($headers[$i])
 }
 
-$today = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+# dd/MM/yyyy — matches production source format (Thai/UK regional convention).
+# The parser's PoImportReader.GetDate handles this explicitly via TryParseExact.
+$today = (Get-Date).ToUniversalTime().ToString('dd/MM/yyyy')
+# Date column is also stored on the DB as DATE (date-only, no time) — both
+# the input string and the persisted value land on midnight-UTC of the same
+# calendar day, so the smoke can compare against (Get-Date).ToUniversalTime().Date.
+$todayIso = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
 $rows = @(
     @{ Po='P127TEST-001'; SC='VEND-A'; SN='Vendor Alpha'; SKU='TST-WIDGET-001'; Desc='Widget X — phase-12-7 fixture'; Qty=12; OrderId='ORD-A-1'; Pallet='PAL-A-1' },

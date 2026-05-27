@@ -156,6 +156,25 @@ if ($impl -notmatch 'Invalid or missing date') {
 OK "Row-level validation present (qty + required + date)"
 
 # ----------------------------------------------------------------------------
+# 8b. DELIVERY DATE format list — dd/MM/yyyy is the production source format
+# ----------------------------------------------------------------------------
+# A regression here would mean someone "simplified" the GetDate String branch
+# back to liberal DateTime.TryParse(InvariantCulture), which mis-reads
+# dd/MM/yyyy as either MM/dd/yyyy (silent corruption) or refuses 25/05/2026
+# outright (silent data loss). The format list is the single most load-bearing
+# string in the parser for source-data correctness — guard it here.
+Step "GetDate parses dd/MM/yyyy + d/M/yyyy (production format) + yyyy-MM-dd"
+if ($impl -notmatch 'TryParseExact') {
+    Fail "GetDate must use TryParseExact with an explicit format list (TryParse is ambiguous on dd/MM/yyyy)"
+}
+foreach ($fmt in @('"dd/MM/yyyy"', '"d/M/yyyy"', '"yyyy-MM-dd"')) {
+    if ($impl -notmatch [regex]::Escape($fmt)) {
+        Fail "Date format slot missing from GetDate: $fmt"
+    }
+}
+OK "TryParseExact + dd/MM/yyyy + d/M/yyyy + yyyy-MM-dd all present"
+
+# ----------------------------------------------------------------------------
 # 9. Project compiles cleanly with NPOI referenced
 # ----------------------------------------------------------------------------
 Step "dotnet build succeeds"
