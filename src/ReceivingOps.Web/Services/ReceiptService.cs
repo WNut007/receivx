@@ -162,6 +162,13 @@ public class ReceiptService : IReceiptService
 
     // Builds the FIFO read query. SQL is fixed strings; the only branch is appended
     // when the pull is in lock=true mode (no user input flows into the string).
+    //
+    // A1 (db/033): in lock-by-pull mode the FIFO scope also accepts imported POs
+    // whose denormalized PullExternalRef matches the current pull's PullNumber.
+    // This lets a Phase 12 import join a live receive without ever creating a
+    // Pulls row for that PRS_ID. Cross-table race (import-after-FIFO-walk) is
+    // benign — the line-level UPDLOCK+HOLDLOCK still serializes actual qty
+    // allocation; at worst the receiver retries on "Insufficient capacity".
     private static async Task<IEnumerable<PoLineAvailability>> ReadOpenPoLinesAsync(
         System.Data.IDbConnection conn,
         System.Data.IDbTransaction? transaction,
@@ -181,13 +188,19 @@ public class ReceiptService : IReceiptService
               AND  pol.OrderedQty > pol.ReceivedQty";
 
         if (pullCtx.LockPoByPull)
-            sql += " AND po.PullId = @PullId";
+            sql += " AND (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
 
         sql += " ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
 
         return await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(
             sql,
-            new { pullCtx.WarehouseId, pullCtx.ItemCode, pullCtx.PullId },
+            new
+            {
+                pullCtx.WarehouseId,
+                pullCtx.ItemCode,
+                pullCtx.PullId,
+                PullNumberStr = pullCtx.PullNumber,
+            },
             transaction: transaction,
             cancellationToken: ct));
     }
