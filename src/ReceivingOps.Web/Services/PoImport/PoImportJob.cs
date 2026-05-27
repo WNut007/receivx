@@ -34,12 +34,19 @@ namespace ReceivingOps.Web.Services.PoImport;
 /// imports we leave the default Attempts=10 since the data error is
 /// reproducible and retries would just spam failures).</para>
 ///
-/// <para>Schema notes (verified against db/010 + db/015 + db/021 + db/031):</para>
+/// <para>Schema notes (verified against db/010 + db/015 + db/021 + db/031 + db/033):</para>
 /// <list type="bullet">
-///   <item>PullId set NULL — imported POs have no Pull row (FK_PO_Pull
-///         is nullable; the v3.2 spec's "PullId = PRS_ID denormalized"
-///         conflicts with the real FK constraint, so we take the
-///         conservative NULL path).</item>
+///   <item>PullId set NULL — imported POs have no Pull row at import
+///         time. FK_PO_Pull is nullable; the v3.2 spec's "PullId =
+///         PRS_ID denormalized" idea conflicted with the Guid FK, so
+///         we take the conservative NULL path on PullId.</item>
+///   <item>PullExternalRef = PoNumber (db/033) — captures the PRS_ID
+///         from the workbook on a parallel NVARCHAR(50) column that
+///         is independent of FK_PO_Pull. Receive flow (§7.15 lock-by-
+///         pull, ReceiptService) and the PO detail UI both consult
+///         PullExternalRef when PullId is NULL, so an imported PO
+///         can join a receiving pull whose PullNumber matches the
+///         PRS_ID without ever creating a Pulls row.</item>
 ///   <item>OrderDate set to <c>SYSUTCDATETIME()</c> truncated to DATE
 ///         — schema requires NOT NULL and the parser ignores ORDER DATE
 ///         (C4=A); semantically "date PO entered Receivx".</item>
@@ -232,16 +239,19 @@ public class PoImportJob
 
             var newPoId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.PurchaseOrders
-                    (Id, PoNumber, WarehouseId, PullId, VendorCode, VendorName,
+                    (Id, PoNumber, WarehouseId, PullId, PullExternalRef,
+                     VendorCode, VendorName,
                      OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
                 OUTPUT INSERTED.Id
                 VALUES
-                    (NEWID(), @PoNumber, @WarehouseId, NULL, @VendorCode, @VendorName,
+                    (NEWID(), @PoNumber, @WarehouseId, NULL, @PullExternalRef,
+                     @VendorCode, @VendorName,
                      @OrderDate, NULL, 'open', NULL, @CreatedBy, SYSUTCDATETIME());",
                 new
                 {
                     firstRow.PoNumber,
                     log.WarehouseId,
+                    PullExternalRef = firstRow.PoNumber,   // db/033 — Q1=B denormalized
                     firstRow.VendorCode,
                     firstRow.VendorName,
                     OrderDate = orderDate,
