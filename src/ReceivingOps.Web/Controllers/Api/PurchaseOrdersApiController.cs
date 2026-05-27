@@ -133,4 +133,25 @@ public class PurchaseOrdersApiController : ControllerBase
         catch (NotFoundException ex) { return Problem(title: ex.Message, statusCode: 404); }
         catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
     }
+
+    // Phase 9.2 — PUT /api/pos/{id}/lines/{lineId}/extended-fields
+    // Bulk overwrite of the 20 ERP-sourced metadata fields. Mirror of
+    // /api/pulls/{id}/items/{itemId}/extended-fields (§9.1). CanManagePulls
+    // policy = admin + supervisor; the PO's warehouse scope is implicit via
+    // the service's PO lookup. Returns the refreshed PO so the client can
+    // re-render the line table without an extra GET.
+    [HttpPut("{id:guid}/lines/{lineId:guid}/extended-fields")]
+    [Authorize(Policy = "CanManagePulls")]
+    public async Task<ActionResult<PoDetail>> UpdateLineExtendedFields(
+        Guid id, Guid lineId, [FromBody] PoLineExtendedFieldsUpdateRequest req, CancellationToken ct)
+    {
+        try
+        {
+            await _admin.UpdateLineExtendedFieldsAsync(id, lineId, req, ct);
+            var detail = await _repo.GetDetailAsync(id, ct);
+            return Ok(detail);
+        }
+        catch (NotFoundException ex) { return Problem(title: ex.Message, statusCode: 404); }
+        catch (BusinessException ex) { return Problem(title: ex.Message, statusCode: 409); }
+    }
 }

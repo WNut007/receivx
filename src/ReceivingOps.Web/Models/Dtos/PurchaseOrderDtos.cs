@@ -43,6 +43,7 @@ public class PoLineRow
     public string? InvoiceNo { get; set; }
     public string? KanbanNo { get; set; }
     public string? AsnNo { get; set; }
+    public string? OrderId { get; set; }            // Phase 12.1 (db/031) — C2=C split sibling of AsnNo (sales-order ref vs ASN ref)
     public string? PCCNo { get; set; }
     public string? BatchNo { get; set; }
     public string? ManufacturingControlNo { get; set; }
@@ -117,10 +118,11 @@ public class PoLineExportRow
     public int ReceivedQty { get; set; }
     public int RemainingQty { get; set; }
 
-    // ERP-sourced — Tracking IDs (10)
+    // ERP-sourced — Tracking IDs (11; +OrderId from Phase 12.1 db/031, C2=C split)
     public string? InvoiceNo { get; set; }
     public string? KanbanNo { get; set; }
     public string? AsnNo { get; set; }
+    public string? OrderId { get; set; }
     public string? PCCNo { get; set; }
     public string? BatchNo { get; set; }
     public string? ManufacturingControlNo { get; set; }
@@ -212,4 +214,50 @@ public class PoUpdateRequest
 public class PoCloseRequest
 {
     public string Reason { get; set; } = "";   // mandatory; audit captures it
+}
+
+/// <summary>
+/// Phase 9.2 — PUT /api/pos/{id}/lines/{lineId}/extended-fields body.
+/// Bulk overwrite of the 20 ERP-sourced metadata fields on a single
+/// PurchaseOrderLine. Mirror of <see cref="PullItemExtendedFieldsUpdateRequest"/>
+/// for the PO side. Blanks from the UI coerce to null at the service so
+/// the column NULL's out (not stored as empty string — keeps the Phase 10
+/// ERP-vs-Receivx value comparison clean). Refused with 409 if the parent
+/// PO is closed/canceled (mirror of Pull's closed-pull refusal in §9.1).
+/// PO-immutability fields (OrderedQty, ItemCode, Description) and Receivx-
+/// owned fields (ReceivedQty, ReceivedAt) are intentionally absent.
+/// </summary>
+public class PoLineExtendedFieldsUpdateRequest
+{
+    // Tracking IDs
+    public string? OrderId { get; set; }
+    public string? AsnNo { get; set; }
+    public string? KanbanNo { get; set; }
+    public string? VendorItem { get; set; }
+
+    // Location
+    public string? Location { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+    public string? Building { get; set; }
+    public string? ProductionLine { get; set; }
+
+    // Pallets
+    public string? PalletId { get; set; }
+    public string? VmiPalletId { get; set; }
+    public string? BatchNo { get; set; }
+
+    // References
+    public string? InvoiceNo { get; set; }
+    public string? PCCNo { get; set; }
+    public string? ManufacturingControlNo { get; set; }
+    public string? OrderRound { get; set; }
+
+    // Special
+    public string? ExportDeclarationNo { get; set; }
+    public string? CustomerReferenceNo { get; set; }
+    public string? ManufacturingReferenceNo { get; set; }
+
+    // Notes
+    public string? Note { get; set; }
 }

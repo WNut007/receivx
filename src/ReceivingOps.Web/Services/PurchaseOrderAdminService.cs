@@ -320,8 +320,125 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
     }
 
     // ====================================================================
+    // UPDATE LINE EXTENDED FIELDS (Phase 9.2)
+    // ====================================================================
+    public async Task UpdateLineExtendedFieldsAsync(
+        Guid poId, Guid lineId, PoLineExtendedFieldsUpdateRequest req, CancellationToken ct = default)
+    {
+        ValidateLineExtendedFields(req);
+
+        using var conn = _factory.Create();
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            // Lock the PO header — UPDLOCK on the open-status check, ROWLOCK
+            // keeps the scope tight. Mirror of LockPullAsync in §9.1.
+            var po = await conn.QuerySingleOrDefaultAsync<PoLockRow>(new CommandDefinition(@"
+                SELECT Id, PoNumber, Status
+                FROM   dbo.PurchaseOrders WITH (UPDLOCK, ROWLOCK)
+                WHERE  Id = @Id;",
+                new { Id = poId }, transaction: tx, cancellationToken: ct))
+                ?? throw new NotFoundException("PO not found");
+
+            if (!string.Equals(po.Status, "open", StringComparison.Ordinal))
+                throw new BusinessException(
+                    $"Cannot edit line metadata on a {po.Status} PO. Reopen it first if you need to change line fields.");
+
+            // Verify the line belongs to this PO (defense against /api/pos/{x}/lines/{y}
+            // where y belongs to a different PO) + lock it.
+            var line = await conn.QuerySingleOrDefaultAsync<PoLineDeleteContext>(new CommandDefinition(@"
+                SELECT pol.Id, pol.PurchaseOrderId, pol.LineNumber, pol.ItemCode, @PoNumber AS PoNumber
+                FROM   dbo.PurchaseOrderLines pol WITH (UPDLOCK, ROWLOCK)
+                WHERE  pol.Id = @LineId AND pol.PurchaseOrderId = @PoId;",
+                new { LineId = lineId, PoId = poId, PoNumber = po.PoNumber },
+                transaction: tx, cancellationToken: ct))
+                ?? throw new NotFoundException("PO line not found");
+
+            await conn.ExecuteAsync(new CommandDefinition(@"
+                UPDATE dbo.PurchaseOrderLines
+                   SET OrderId                  = @OrderId,
+                       AsnNo                    = @AsnNo,
+                       KanbanNo                 = @KanbanNo,
+                       VendorItem               = @VendorItem,
+                       Location                 = @Location,
+                       SubInventory             = @SubInventory,
+                       ToLocation               = @ToLocation,
+                       Building                 = @Building,
+                       ProductionLine           = @ProductionLine,
+                       PalletId                 = @PalletId,
+                       VmiPalletId              = @VmiPalletId,
+                       BatchNo                  = @BatchNo,
+                       InvoiceNo                = @InvoiceNo,
+                       PCCNo                    = @PCCNo,
+                       ManufacturingControlNo   = @ManufacturingControlNo,
+                       OrderRound               = @OrderRound,
+                       ExportDeclarationNo      = @ExportDeclarationNo,
+                       CustomerReferenceNo      = @CustomerReferenceNo,
+                       ManufacturingReferenceNo = @ManufacturingReferenceNo,
+                       Note                     = @Note
+                 WHERE Id = @Id;",
+                new
+                {
+                    Id = lineId,
+                    req.OrderId, req.AsnNo, req.KanbanNo, req.VendorItem,
+                    req.Location, req.SubInventory, req.ToLocation, req.Building, req.ProductionLine,
+                    req.PalletId, req.VmiPalletId, req.BatchNo,
+                    req.InvoiceNo, req.PCCNo, req.ManufacturingControlNo, req.OrderRound,
+                    req.ExportDeclarationNo, req.CustomerReferenceNo, req.ManufacturingReferenceNo,
+                    req.Note,
+                }, transaction: tx, cancellationToken: ct));
+
+            await _audit.WriteAsync(conn, tx, "update", "PurchaseOrderLine", lineId.ToString(),
+                $"Updated extended fields on line {line.LineNumber} ({line.ItemCode}) of PO {po.PoNumber}", ct);
+
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
+    // ====================================================================
     // helpers
     // ====================================================================
+    // Phase 9.2 — schema is NVARCHAR(50) on all 19 short fields + NVARCHAR(500)
+    // on Note. UI maxlength mirrors this so the validator catches only the
+    // copy-paste-too-long edge case rather than firing on every input.
+    private static void ValidateLineExtendedFields(PoLineExtendedFieldsUpdateRequest req)
+    {
+        static void CheckShort(string field, string? value)
+        {
+            if (value is not null && value.Length > 50)
+                throw new BusinessException($"{field} is too long (≤ 50 chars)");
+        }
+        CheckShort(nameof(req.OrderId),                  req.OrderId);
+        CheckShort(nameof(req.AsnNo),                    req.AsnNo);
+        CheckShort(nameof(req.KanbanNo),                 req.KanbanNo);
+        CheckShort(nameof(req.VendorItem),               req.VendorItem);
+        CheckShort(nameof(req.Location),                 req.Location);
+        CheckShort(nameof(req.SubInventory),             req.SubInventory);
+        CheckShort(nameof(req.ToLocation),               req.ToLocation);
+        CheckShort(nameof(req.Building),                 req.Building);
+        CheckShort(nameof(req.ProductionLine),           req.ProductionLine);
+        CheckShort(nameof(req.PalletId),                 req.PalletId);
+        CheckShort(nameof(req.VmiPalletId),              req.VmiPalletId);
+        CheckShort(nameof(req.BatchNo),                  req.BatchNo);
+        CheckShort(nameof(req.InvoiceNo),                req.InvoiceNo);
+        CheckShort(nameof(req.PCCNo),                    req.PCCNo);
+        CheckShort(nameof(req.ManufacturingControlNo),   req.ManufacturingControlNo);
+        CheckShort(nameof(req.OrderRound),               req.OrderRound);
+        CheckShort(nameof(req.ExportDeclarationNo),      req.ExportDeclarationNo);
+        CheckShort(nameof(req.CustomerReferenceNo),      req.CustomerReferenceNo);
+        CheckShort(nameof(req.ManufacturingReferenceNo), req.ManufacturingReferenceNo);
+
+        if (req.Note is not null && req.Note.Length > 500)
+            throw new BusinessException("Note is too long (≤ 500 chars)");
+    }
+
+
     private static void ValidateCreate(PoCreateRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.PoNumber) || req.PoNumber.Length > 32)
