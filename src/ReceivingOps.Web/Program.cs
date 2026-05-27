@@ -232,9 +232,12 @@ builder.Services.AddSingleton<ErpSyncMutex>();
 // ---- v3.x Phase 12 — PO Excel import pipeline ----
 // 12.2 — NPOI-backed reader for .xls + .xlsx.
 // 12.4 — orchestrator: writes log row + parses + persists outcome (Stage 1).
-// Hangfire worker job (Stage 2 atomic upsert) + controller + UI land in 12.5+.
+// 12.5 — Hangfire job: atomic insert into PurchaseOrders + PurchaseOrderLines.
+// PoImportJob is Scoped because Hangfire's per-job IServiceScope resolves it
+// fresh on each invocation — matches the project's repository-Scoped convention.
 builder.Services.AddScoped<IPoImportReader, PoImportReader>();
 builder.Services.AddScoped<IPoImportService, PoImportService>();
+builder.Services.AddScoped<PoImportJob>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
@@ -272,10 +275,11 @@ builder.Services.AddHangfire(cfg => cfg
 builder.Services.AddHangfireServer(opts =>
 {
     opts.WorkerCount = 2;
-    // Phase 10.1 adds the "erp-sync" queue. Order matters: Hangfire scans
-    // queues left-to-right when picking the next job, so put time-sensitive
-    // user-facing work (exports) ahead of the background ETL.
-    opts.Queues = new[] { "exports", "erp-sync", "default" };
+    // Phase 10.1 adds the "erp-sync" queue. Phase 12.5 adds "po-import".
+    // Order matters: Hangfire scans queues left-to-right when picking the
+    // next job, so put time-sensitive user-facing work (exports) ahead of
+    // the background ETL + import jobs.
+    opts.Queues = new[] { "exports", "erp-sync", "po-import", "default" };
 });
 
 var app = builder.Build();
