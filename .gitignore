@@ -61,3 +61,11 @@ exports/*
 !exports/.gitkeep
 src/ReceivingOps.Web/exports/*
 !src/ReceivingOps.Web/exports/.gitkeep
+
+# Phase 12.5 — PO Excel import staging. Files land in
+# {ContentRootPath}/imports/staging/{runId}.xlsx between upload and the
+# Hangfire worker's commit. Same .gitkeep convention as exports/.
+imports/staging/*
+!imports/staging/.gitkeep
+src/ReceivingOps.Web/imports/staging/*
+!src/ReceivingOps.Web/imports/staging/.gitkeep
