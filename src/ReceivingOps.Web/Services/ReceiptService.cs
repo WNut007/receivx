@@ -361,12 +361,35 @@ public class ReceiptService : IReceiptService
                 new { Qty = req.Qty, req.PullItemId, req.HourOfDay },
                 transaction: tx, cancellationToken: ct));
 
-            // ----- 7. Update Pulls timing + auto-promote pending → in_progress -----
+            // ----- 7. Update Pulls timing + forward status transitions -----
+            // CASE order: NOT EXISTS (no outstanding windows) wins first, so a
+            // receive that both creates the first receipt AND fills the last
+            // window jumps pending → fully_received in one shot rather than
+            // getting stuck at in_progress (the bug Pull 0000009383 surfaced).
+            // The cancel reverse path at line 527 handles the symmetric
+            // fully_received → in_progress demotion when a receipt undoes a
+            // window. UPDLOCK on this Pulls row was taken at line 228 of
+            // ReceiveAsync, so the NOT EXISTS subquery sees a consistent
+            // window-receipt picture for the duration of the transaction.
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.Pulls
                    SET LastActivityAt = SYSUTCDATETIME(),
                        FirstReceiptAt = ISNULL(FirstReceiptAt, SYSUTCDATETIME()),
-                       Status         = CASE WHEN Status = 'pending' THEN 'in_progress' ELSE Status END
+                       Status         = CASE
+                           WHEN Status IN ('pending', 'in_progress')
+                                AND NOT EXISTS (
+                                    SELECT 1
+                                    FROM   dbo.PullItems pi
+                                    INNER JOIN dbo.PullItemWindows piw
+                                            ON piw.PullItemId = pi.Id
+                                    WHERE  pi.PullId = @PullId
+                                      AND  pi.Status <> 'canceled'
+                                      AND  piw.ExpectedQty > piw.ReceivedQty
+                                )
+                                THEN 'fully_received'
+                           WHEN Status = 'pending' THEN 'in_progress'
+                           ELSE Status
+                       END
                  WHERE Id = @PullId;",
                 new { pullCtx.PullId }, transaction: tx, cancellationToken: ct));
 
@@ -389,6 +412,21 @@ public class ReceiptService : IReceiptService
                   AND pi.Status <> 'canceled'
                   AND piw.ExpectedQty > piw.ReceivedQty;",
                 new { pullCtx.PullId }, transaction: tx, cancellationToken: ct));
+
+            // ----- 9b. If THIS receive flipped the pull to fully_received,
+            //          emit a transition audit row. pullCtx.PullStatus captured
+            //          BEFORE the UPDATE (loaded at lines 224-232 / line 50 of
+            //          PreviewAsync's context query is the same shape); count
+            //          + prior-state guard avoids double-emitting on later
+            //          receives that no-op the status (forbidden by the
+            //          capacity check at line 264, but belt-and-braces). -----
+            if (outstandingWindows == 0
+                && (pullCtx.PullStatus == "pending" || pullCtx.PullStatus == "in_progress"))
+            {
+                await _audit.WriteAsync(conn, tx,
+                    "pull-fully-received", "Pull", pullCtx.PullId.ToString(),
+                    $"Pull {pullCtx.PullNumber} reached fully_received — all windows filled (transitioned from {pullCtx.PullStatus})", ct);
+            }
 
             tx.Commit();
 
