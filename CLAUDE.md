@@ -913,9 +913,16 @@ every encrypted secret in DB is unrecoverable. Back up alongside the DB.
 
 - `smoke-phase-8.4-exports.ps1`, `smoke-export-extensions.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Never had genuine regressions across Phases 10 + 11 + 12.
 
-## Known battery-only fails (v3.2; pass standalone with dev server stopped)
+## Retired battery-only fail pattern (post-v3.2)
 
-- `smoke-phase-12-2-po-import-reader.ps1`, `smoke-phase-12-3-po-import-log-repo.ps1`, `smoke-phase-12-4-po-import-service.ps1`, `smoke-phase-12-5-po-import-job.ps1` — each ends with a `dotnet build` assertion that proves the source compiles cleanly. Under battery the running `ReceivingOps.Web.exe` holds the binary lock, so MSBuild error MSB3027 fires after 10 retries on apphost.exe → bin/Debug/net8.0/ReceivingOps.Web.exe copy. All 4 PASS when the dev server is stopped (`Stop-Process -Name ReceivingOps.Web -Force` then `pwsh tools/smoke-phase-12-2-po-import-reader.ps1`). Option to retire the `dotnet build` step from these 4 source-level smokes was discussed and deferred — the build invariant has real value when the project compiles standalone, just not when raced against the running server.
+- The `dotnet build` step at the tail of `smoke-phase-12-2/3/4/5` was
+  dropped post-v3.2 — build cleanliness is proven behaviorally by the
+  other 50+ smokes end-to-end (any compile break shows up as a 5xx on
+  the dev server during behavioral smokes). Under battery the build
+  step raced the running `ReceivingOps.Web.exe` binary lock and emitted
+  4 false-positive fails. Closing 12.5/12.7 trailer notes already
+  considered the source-level smokes "structural existence + content
+  pattern" verifications, so the build assertion was redundant.
 
 ## Gmail App Password — episodic block
 

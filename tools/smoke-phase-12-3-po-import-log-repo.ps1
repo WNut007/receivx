@@ -14,9 +14,10 @@
 #   5. ErrorMessage is truncated in C# (NVARCHAR(MAX) is on the column,
 #      but we cap at 4000 to keep the list-view payload bounded)
 #   6. Program.cs registers IPoImportLogRepository in DI
-#   7. Build is clean
-#   8. dbo.PoImportLog exists with the 20 expected columns (sqlcmd probe;
+#   7. dbo.PoImportLog exists with the 20 expected columns (sqlcmd probe;
 #      SKIPs if no Default connection string is configured)
+#
+# Build cleanliness proven behaviorally by the other 50+ smokes end-to-end.
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path "$PSScriptRoot\.."
@@ -156,17 +157,7 @@ if ($program -notmatch 'AddScoped<IPoImportLogRepository, PoImportLogRepository>
 OK "DI registration present"
 
 # ----------------------------------------------------------------------------
-# 7. Build clean
-# ----------------------------------------------------------------------------
-Step "dotnet build succeeds"
-$buildOut = & dotnet build $webRoot --nologo -v quiet 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Fail "dotnet build failed (exit $LASTEXITCODE). Output: $($buildOut -join "`n")"
-}
-OK "Build clean (0 errors)"
-
-# ----------------------------------------------------------------------------
-# 8. dbo.PoImportLog exists with the 20 columns + 3 indexes
+# 7. dbo.PoImportLog exists with the 20 columns + 3 indexes
 # ----------------------------------------------------------------------------
 Step "dbo.PoImportLog exists with 20 cols + 3 indexes"
 $secretsList = & dotnet user-secrets list --project (Join-Path $webRoot 'ReceivingOps.Web.csproj') 2>$null
@@ -210,5 +201,5 @@ if ($nums[1] -ne 3)  { Fail "dbo.PoImportLog has $($nums[1]) IX_PoImportLog* ind
 OK "dbo.PoImportLog: 20 columns + 3 IX_PoImportLog* indexes confirmed"
 
 Write-Host ""
-Write-Host "ALL PASS — Phase 12.3: repo surface + DI + build + DB schema verified." -ForegroundColor Green
+Write-Host "ALL PASS — Phase 12.3: repo surface + DI + DB schema verified." -ForegroundColor Green
 exit 0
