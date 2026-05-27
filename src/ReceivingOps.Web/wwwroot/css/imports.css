@@ -1,0 +1,204 @@
+/* Phase 12.8 — /Imports uploader chrome.
+   Dropzone + preview/status panels share variables with the rest of the
+   app (surface, border, accent) so they track theme automatically. */
+
+.imports-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 56px 24px;
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+    text-align: center;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.imports-dropzone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+}
+.imports-dropzone-icon {
+    font-size: 40px;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+.imports-dropzone-primary {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+}
+.imports-dropzone-secondary {
+    margin: 0 0 12px 0;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* Preview + status panels share the same card shell */
+.imports-panel {
+    margin-top: 16px;
+    padding: 20px 22px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+}
+.imports-panel-head {
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+.imports-panel-head h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+}
+.imports-panel-filename {
+    margin: 4px 0 0 0;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.imports-panel-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Preview summary numbers */
+.imports-summary {
+    display: flex;
+    gap: 28px;
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border-radius: 8px;
+    margin-bottom: 12px;
+}
+.imports-summary.failed {
+    background: color-mix(in srgb, #E24B4A 12%, var(--surface-2));
+    color: #A32D2D;
+}
+.imports-summary-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.imports-summary-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.imports-summary-value {
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height: 1;
+}
+
+/* Validation errors list */
+.imports-errors {
+    margin-top: 8px;
+}
+.imports-errors h4 {
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 6px 0;
+}
+.imports-errors-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+}
+.imports-errors-list li {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text);
+}
+.imports-errors-list li:last-child { border-bottom: none; }
+.imports-errors-list code {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    background: var(--surface);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-right: 6px;
+    color: var(--text-dim);
+}
+
+/* Status running badge */
+.imports-status-running {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--accent-bg);
+    border-radius: 8px;
+    color: var(--accent);
+    font-weight: 500;
+}
+.imports-status-running .spin {
+    animation: imports-spin 1s linear infinite;
+}
+@keyframes imports-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+.imports-status-final {
+    padding: 14px 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500;
+}
+.imports-status-final.succeeded {
+    background: color-mix(in srgb, #2D8F5C 12%, var(--surface-2));
+    color: #1F6D44;
+}
+.imports-status-final.failed {
+    background: color-mix(in srgb, #E24B4A 12%, var(--surface-2));
+    color: #A32D2D;
+}
+
+/* Operator notice */
+.imports-notice {
+    display: flex;
+    gap: 16px;
+    padding: 20px 22px;
+}
+.imports-notice-icon {
+    font-size: 28px;
+    color: var(--accent);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.imports-notice h3 {
+    margin: 0 0 6px 0;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+}
+.imports-notice p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.55;
+}

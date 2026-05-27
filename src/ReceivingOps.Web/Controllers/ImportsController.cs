@@ -15,6 +15,11 @@ public class ImportsController : Controller
     public IActionResult Index()
     {
         ViewData["PageId"] = "imports";
+        // Server-side role check: the API gate at /api/imports/po is the
+        // authoritative boundary; the view mirrors it so operators see a
+        // read-only notice instead of a non-functional dropzone. Single
+        // source of truth = User.IsInRole, same predicate the API uses.
+        ViewData["CanUpload"] = User.IsInRole("admin") || User.IsInRole("supervisor");
         return View();
     }
 }
