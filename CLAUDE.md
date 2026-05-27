@@ -2,65 +2,80 @@
 
 Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
-+ Phase 10 ERP integration + Phase 11 admin config editor).
-**Status:** v3.1.2 shipped on `main` (2026-05-26, tag `v3.1.2`, pushed
-to origin). v3.1.2 closes **Phase 11** — admin-editable configuration
-with encrypted secrets storage — across four tags: `v3.0.5` (Phase
-11.1 — encryption + storage foundation), `v3.1` (Phase 11.2 — tabbed
-UI editor), `v3.1.1` (audit gap closure + admin-only reveal fix), and
-`v3.1.2` (UX polish — cron preset dropdown). v3.1.2 adds a 10-preset
-dropdown (15 min / 30 min / hourly / 2 4 6 12 hr / midnight / 2 AM /
-8 AM) on the Sync Schedule tab with a "Custom (advanced)…" escape
-hatch that reveals the cron text input + a link to crontab.guru.
-Architecture: hidden `#erpsync-CronExpression` mirror input retains
-the `data-key` attribute so the save loop is untouched; the preset
-`<select>` and the conditionally-visible custom text input both write
-to it. Server validation unchanged (NCrontab gate). v3.1.1 closed 4
-audit gaps from the post-v3.1 spec audit: (1) added
-`POST /api/admin/config/test/smtp` wrapper (parallel to `/test/erp`,
-calls `IEmailService` — the existing `/api/admin/email-test` from
-Phase 8.4 stays untouched); (7) `ErpDb:ConnectionString` POST /secret
-rejects values missing `Server=` AND `Database=` (cheap typo guard;
-full parse still happens at SqlConnection.Open() via `/test/erp`);
-(8) `Exports:BaseUrl` PUT requires `https` in Production env
-(`IHostEnvironment.IsProduction()` gate — dev/staging still accept
-http for localhost convenience); (9) `Exports:SigningKey` POST
-/secret enforces min 32 chars (Regenerate writes 44 by default, so
-this only constrains the manual /secret path; HMAC safety floor at
-256-bit input). Skipped per audit Option A (YAGNI): response-shape
-additive aliases (gaps 2-3), Smtp:Host hostname format (gap 4),
-Username-if-Password-set conditional (gap 5), Password min length
-(gap 6 — Gmail App Password is fixed 16 chars). v3.1.1 also fixed a
-v2.1.9-era bug where `config.js:131` used `u.role === 'admin'` —
-`/api/auth/me`'s `role` field is the DISPLAY name ("Administrator");
-the machine value lives at `roleKey` (matches the convention in
-`app-nav.js` + `receiving.js`). Result: the `[data-admin-only]`
-section was hidden in every browser since v2.1.9, but the smoke
-battery never caught it because all 51 assertions checked markup
-presence or backend behavior; none simulated the JS reveal. Phase
-11.2 made the flaw user-visible because the new editor lives behind
-that gate. Fix: `(u.roleKey || '').toLowerCase() === 'admin'`. Two
-new regression guards added (smoke step 5b source-level: config.js
-must read `u.roleKey`; step 6b behavioral: `/api/auth/me` for sadmin
-must return `roleKey === 'admin'`) — either alone is sufficient,
-both together mean the editor is invisible to admins only if both
-decay simultaneously. NuGet at Phase 11 baseline (no v3.1.x adds).
-`docs/configuration.md §7` rewritten to match shipped reality:
-removed mention of a separate Diagnostics tab (editor's 4 tabs
-inherently show effective values), clarified that no
-`GET /api/admin/erp/connection-test` exists (Phase 10.1 was
-sqlcmd-based), documented that the warehouse dropdown sources from
-`/api/warehouses` (existing all-authenticated endpoint, not an
-admin-specific variant), and noted that supervisor/operator see
-`/Config` but the Configuration section is hidden via
-`data-admin-only` (API gate is the real boundary). `CHANGELOG.md`
-gains a `[3.1.1]` entry covering the 4 ships + 5 skips with
-rationale, plus a retroactive `[3.1.0]` consolidation for the
-Phase 11 close. **smoke-phase-11-2-config-ui assertions: 30/30
-PASS** at v3.1.2 (27 at v3.1.1, 25 at v3.1, 19 at v3.1 ship).
-Full battery 49/51 with 2 known Hangfire-contention flakes
-(`smoke-phase-8.4-exports`, `smoke-export-extensions`) — both pass
-standalone, documented in CLAUDE.md flakes list since v3.1.
++ Phase 10 ERP integration + Phase 11 admin config editor + Phase 12
+PO Excel importer).
+**Status:** v3.2 shipped on `main` (2026-05-27, tag `v3.2`, pushed to
+origin). v3.2 closes **Phase 12** — bulk PO import from `.xls`/`.xlsx`
+workbooks — across 11 commits spanning sub-phases 12.1 (schema) →
+12.8 (UI). Pipeline: an admin or supervisor uploads a workbook at
+`/Imports`; Stage 1 parses + validates synchronously inside
+`PoImportController.Upload` and stamps a `dbo.PoImportLog` row at
+status `validated` (or `validation_failed` with per-row issues);
+the operator confirms via a preview modal; Stage 2 enqueues
+`PoImportJob` on a new Hangfire `"po-import"` queue (worker queues
+now `["exports", "erp-sync", "po-import", "default"]`), which
+re-parses from `log.StoragePath`, locks the `dbo.PurchaseOrders`
+range under `UPDLOCK + ROWLOCK` for a global PoNumber duplicate
+re-check (PoNumber is globally UNIQUE per db/010 — a WH filter
+would miss cross-warehouse races), groups rows by PoNumber, and
+INSERTs one PurchaseOrder + N PurchaseOrderLines per group inside
+ONE transaction with rollback on any error (Q3=A atomic). State
+machine: `validating → validation_failed | validated → queued →
+running → succeeded | failed`. Schema decisions: `PullId=NULL`
+on imported POs (the spec's "PullId = PRS_ID" idea conflicted with
+the real FK; revised to "no Pull row for imported POs"),
+`OrderDate = DateTime.UtcNow.Date` ("date the PO entered Receivx"
+— parser ignores ORDER DATE per C4=A), `CreatedBy = log.UploadedByUserId`
+(Users.Id GUID, not display name), `Description ?? ""` coalesce
+(POL.Description is NOT NULL), `ReceivedQty=0` literal,
+`LineNumber` 1-based per-PO ordinal in file order. Header-map
+conflicts resolved per the v3.2 mapping audit: C1=A "PULL SHEET ID
+/ PRS NO" wins for PoNumber over the "PO" column; C2=C "ORDER ID"
+and "ASN NO" both survive (db/031 added `OrderId` rather than
+folding into `AsnNo`); C3=A uppercase "PALLET ID" wins over "Pallet ID"
+(later-wins normalization in the header map); C4=A "DELIVERY DATE"
+wins over "ORDER DATE". 3 migrations: `db/030` adds `dbo.PoImportLog`
+(operator-visible per-run state, 3 supporting indexes on SubmittedAt
+DESC, (WarehouseId, SubmittedAt DESC), (Status, SubmittedAt DESC));
+`db/031` adds `PurchaseOrderLines.OrderId NVARCHAR(50) NULL` for the
+C2=C split; `db/032` widens `dbo.AuditLog.ActionType` from VARCHAR(16)
+to VARCHAR(32) — a 12.5 latent defect surfaced by the 12.7 integration
+smoke. `po-import-confirmed` / `po-import-succeeded` / `po-import-failed`
+ActionType strings (19 chars each) were silently truncating + swallowed
+by `IAuditService` per §8 (audit never rolls back business actions),
+leaving a broken audit trail on successful imports. 12.5's source-level
+smoke verified the strings appeared in source but never proved they
+survived the INSERT. NPOI 2.7.2 (Apache-2.0, HSSF + XSSF, single
+NuGet add) is the parser. UI: `/Imports` nav entry between Receiving
+and Transactions, `bi-cloud-upload` icon mirroring `/Exports`'s
+`bi-cloud-download`, visible to every authenticated user per Q4=A
+(no `roles` gate on the MENU entry). `ImportsController.Index()`
+computes `ViewData["CanUpload"] = User.IsInRole("admin") || User.IsInRole("supervisor")`
+— same predicate as the API's `[Authorize(Roles="admin,supervisor")]`
+so the UI gate and the API gate can never drift. The view renders
+either the dropzone + preview + status panels + `<script src="/js/imports.js">`
+tag (for admin or supervisor) OR an operator notice (for operators
+— the script tag is omitted entirely so they can't probe the API
+even via the JS console). No history list, no admin warehouse picker
+(admins use their session WH same as supervisors). No Bootstrap JS
+dependency — sections show/hide via the `hidden` attribute, the
+existing `confirmAction({title, message, icon})` modal handles the
+destructive-action gate. Fixture infrastructure for the 12.7
+integration smoke: `tools/build-po-import-fixture.ps1` is a one-shot
+NPOI-via-Add-Type generator (NOT in battery — re-run only when
+fixture shape needs to change) that writes `tools/fixtures/po-import-sample.xlsx`,
+4 rows / 2 PoNumbers with prefix `P127TEST-` for collision-free
+cleanup. **Battery at v3.2 ship: 49/58 in-battery; 58/58 across
+documented expected fails when re-run with appropriate
+infrastructure.** 9 in-battery fails break down as: 5 pre-existing
+Hangfire-contention + Gmail-block flakes (carry-over from v3.1.x);
+4 NEW in v3.2 — the `smoke-phase-12-2/3/4/5` source-level smokes
+end with a `dotnet build` assertion that can't replace the running
+`ReceivingOps.Web.exe` (the dev server holds the binary lock under
+battery, MSBuild error MSB3027 after 10 retries). All 4 PASS
+standalone when the dev server is stopped. The 3 new behavioral
+Phase 12 smokes (`smoke-phase-12-6-nav-entry`, `smoke-phase-12-7-integration`,
+`smoke-phase-12-8-import-ui`) all PASS in-battery.
 
 v3.1 lineage:
 v3.1 shipped Phase 11.2 (and the Phase 11.1 foundation under interim
@@ -702,61 +717,156 @@ hardcoded SQL login.
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
 
-# Session handoff — 2026-05-26
+# Session handoff — 2026-05-27
 
-Latest tag: **v3.1.2** (Phase 11.2 UX polish — cron preset dropdown). Pushed to origin.
-Battery: **49/51 in-battery; 51/51 with standalone re-run of 2 flakes** · `main` at `7c3c7c0` · clean
-smoke-phase-11-2-config-ui: **30/30 PASS** (was 19 at v3.1 ship).
+Latest tag: **v3.2** (Phase 12 — bulk PO import from `.xls`/`.xlsx`). Pushed to origin.
+Battery: **49/58 in-battery** · `main` at `841d3db` · 9 fails all documented expected
+(5 pre-existing Hangfire/Gmail flakes + 4 new Phase 12.x source-level smokes that
+race the running `ReceivingOps.Web.exe` binary lock on `dotnet build` — see
+"Known battery-only fails" below). 3 new behavioral Phase 12 smokes all PASS.
 
-## Phase 11 — Done (v3.0.5 + v3.1 + v3.1.1 + v3.1.2)
+## Phase 12 — Done (v3.2)
 
-### Phase 11.1 (tag v3.0.5, interim) — encryption foundation
+### Phase 12.1 — schema foundation (commits `4cc53f2`, `6c3a53a`)
 
-- ✅ Migration `db/029` — `dbo.AppSettings` table with Value-XOR-EncryptedValue CHECK
-- ✅ ASP.NET Data Protection wired (purpose `AppSettings.v1`, 90-day key lifetime, `.dp-keys/` gitignored)
-- ✅ `IAppSettingsService` (Singleton + IServiceScopeFactory bridge) + `IAppSettingsRepository` (Scoped, Dapper MERGE upsert)
-- ✅ `AppSettingsSeeder` — idempotent IConfiguration → DB hydration on first start
-- ✅ Options binding refactored: SmtpOptions / ExportOptions / ErpSyncOptions through `AddOptions<T>().Configure<IAppSettingsService>(...)`
-- ✅ Precedence: env vars > DB > user-secrets > appsettings.json
-- ✅ Startup health check (CryptographicException → LogCritical, don't crash)
-- ✅ `docs/security.md` (key custody, threat model) + `docs/configuration.md` (precedence + bootstrap exclusions)
-- ✅ Smoke `smoke-phase-11-1-app-settings.ps1` (10 steps)
+- ✅ Migration `db/030` — `dbo.PoImportLog`: 20 columns covering the run state
+  machine (RunId PK, UploadedBy/UploadedByUserId/UploadedByRole, WarehouseId,
+  FileName/FileSizeBytes/StoragePath, Status, SubmittedAt + StartedAt + CompletedAt
+  + ElapsedMs, TotalRowsRead + ValidationErrorCount + ValidationErrors JSON,
+  PosInserted + LinesInserted, ErrorMessage, HangfireJobId)
+- ✅ 3 supporting indexes: SubmittedAt DESC (recent runs), (WarehouseId, SubmittedAt DESC),
+  (Status, SubmittedAt DESC) — covers per-WH drill-down + status-filtered tail
+- ✅ Migration `db/031` — `PurchaseOrderLines.OrderId NVARCHAR(50) NULL` per the
+  v3.2 mapping audit C2=C decision: ORDER ID and ASN NO are semantically distinct
+  upstream identifiers (sales-order ref vs ASN), so they keep separate columns
+  rather than folding into Phase 9's `AsnNo`
 
-### Phase 11.2 (tag v3.1) — tabbed UI editor
+### Phase 12.2 — NPOI parser (commit `747663a`)
 
-- ✅ `ConfigController` (GET sections + GET sections/{name}) + `ConfigWriteController` (PUT/POST secret/DELETE reset/regenerate signing key/test ERP)
-- ✅ Per-key validation: NCrontab for cron, MailAddress for from, Uri.TryCreate for BaseUrl, range checks, warehouse existence
-- ✅ `/Config` admin section replaced: 4 pill-style tabs (Email / ERP Connection / Sync Schedule / Exports)
-- ✅ 5 JS files: `config-editor.js` (shell) + `config-editor-{smtp,erpdb,erpsync,exports}.js` (renderers via `registerConfigTabRenderer`)
-- ✅ Secrets masked `"***"`; "Change" workflow (inline reveal) for password/connection string; "Regenerate" only for signing key
-- ✅ DefaultWarehouseId `<select>` populated from `/api/warehouses`
-- ✅ Restart banner appears on save (session-persistent until Dismiss)
-- ✅ All 5 confirm() sites swapped to `confirmAction(...)` per smoke-confirm-modal convention
-- ✅ + `NCrontab 3.3.3` NuGet
-- ✅ Smoke `smoke-phase-11-2-config-ui.ps1` (19 steps: GETs/PUTs/POST secret/validation/regenerate/DELETE reset/ERP test/operator 403 at all 7 endpoints/bootstrap exclusions absent)
-- ✅ Tag v3.0.5 (Phase 11.1) + v3.1 (Phase 11.2)
+- ✅ + `NPOI 2.7.2` NuGet (Apache-2.0; HSSF for `.xls`, XSSF for `.xlsx`, single
+  add — no transitive subdeps reach into the project)
+- ✅ `IPoImportReader.ParseAsync(string filePath)` returns `PoImportParseResult`
+  (TotalRows, Rows[], ValidationErrors[]); 4 required headers (`PULL SHEET ID /
+  PRS NO`, `SKU`, `OPEN QTY`, `DELIVERY DATE`); 24 mapped optional headers
+- ✅ Header conflicts: C1=A "PULL SHEET ID / PRS NO" wins (PO column ignored);
+  C2=C OrderId + AsnNo both kept; C3=A uppercase "PALLET ID" wins via later-wins
+  normalization; C4=A "DELIVERY DATE" wins ("ORDER DATE" ignored)
+- ✅ Per-row validation: required PoNumber + ItemCode, OrderedQty > 0, DeliveryDate
+  parseable. Trailing wholly-empty rows skipped silently to avoid spam
+- ✅ Cell readers honor InvariantCulture (so a German Excel can't smuggle "1.234,5"
+  into an item code) and CLAUDE.md whole-units invariant (int-truncate fractional qty)
 
-### Phase 11.2 audit closure (tag v3.1.1) — gap fixes + admin-reveal
+### Phase 12.3 — log repository + state machine (commit `de9e78b`)
 
-- ✅ `POST /api/admin/config/test/smtp` wrapper (parallel to `/test/erp`; existing `/api/admin/email-test` untouched)
-- ✅ `ErpDb:ConnectionString` POST /secret rejects values missing `Server=` AND `Database=` (400 + helpful error)
-- ✅ `Exports:BaseUrl` PUT requires `https://` in Production (`IHostEnvironment.IsProduction()`); dev/staging unchanged
-- ✅ `Exports:SigningKey` POST /secret min 32 chars (Regenerate writes 44 by default; this floors the manual path)
-- ✅ Skipped per audit Option A (YAGNI): response-shape additive (gaps 2-3), hostname format / Username conditional / Password length (gaps 4-6)
-- ✅ **Bug fix:** `config.js:131` admin-only reveal gate was `u.role === 'admin'` (display name) since v2.1.9 — switched to `u.roleKey` (machine value, matches `app-nav.js` + `receiving.js`). The bug kept the entire admin section hidden in every browser for any admin user; Phase 11.2 made it user-visible because the new editor lives behind the gate
-- ✅ 2 new smoke regression guards (5b source: config.js reads `u.roleKey`; 6b behavioral: /api/auth/me returns `roleKey='admin'` for sadmin)
-- ✅ 4 docs `docs/configuration.md §7` items synced to shipped reality (no `/api/admin/erp/connection-test`, no separate Diagnostics tab, warehouse dropdown via `/api/warehouses`, supervisor visibility model)
-- ✅ `CHANGELOG.md` [3.1.1] + retroactive [3.1.0] entries
+- ✅ `IPoImportLogRepository` with `InsertSubmittedAsync` / `MarkValidatedAsync` /
+  `MarkValidationFailedAsync` / `MarkQueuedAsync` / `MarkRunningAsync` /
+  `MarkSucceededAsync` / `MarkFailedAsync` + read methods (`GetByRunIdAsync`,
+  list-by-warehouse with pagination)
+- ✅ States: `validating` → `validation_failed | validated` → `queued` → `running`
+  → `succeeded | failed`. Each transition has its own column writes (StartedAt,
+  CompletedAt, ElapsedMs, totals, ErrorMessage) — no row-level state mutation outside
+  these methods
 
-### Phase 11.2 UX polish (tag v3.1.2) — schedule preset dropdown
+### Phase 12.4 — Stage 1 orchestrator service (commit `91d3148`)
 
-- ✅ Sync Schedule tab cron input → 10-preset dropdown (15min / 30min / hourly / 2 4 6 12 hr / midnight / 2 AM / 8 AM) + "Custom (advanced)…" escape hatch
-- ✅ Hidden `#erpsync-CronExpression` mirror input retains `data-key` so the save loop is untouched; preset `<select>` + custom `<input>` both write to it
-- ✅ Custom branch reveals text input + link to crontab.guru
-- ✅ Initial render: matches preset → dropdown selected, custom wrap hidden. No match → dropdown on "Custom", custom input pre-filled
-- ✅ Server validation unchanged — NCrontab still validates every cron, presets and custom go through the same gate
-- ✅ New CSS `.config-field-secondary` (12px left-border indent) — named generically for future reveal-on-Custom patterns
-- ✅ 3 new smoke assertions (preset round-trip, custom round-trip, source-level dropdown wiring)
+- ✅ `IPoImportService.SubmitForValidationAsync(PoImportSubmission)` →
+  `PoImportSubmissionResult`. Inserts the log row at status `validating`, calls
+  `IPoImportReader.ParseAsync`, transitions to `validated` (file ready for confirm)
+  or `validation_failed` (operator must re-upload). Validation error list is
+  trimmed to first 50 in the response DTO + persisted as JSON on the log row
+- ✅ `po-import-submit` audit row written from the service (16-char ActionType —
+  fits the original VARCHAR(16); the OTHER three are what overflowed)
+
+### Phase 12.5 — Stage 2 job + endpoints (commits `7131d16`, `a72085b`, `9068681`)
+
+- ✅ `PoImportJob.RunAsync(Guid runId, string actorName)` —
+  `[Queue("po-import")]` + `[DisableConcurrentExecution(1800)]`. Idempotency
+  guard: aborts unless status == `queued`. Re-parses from `log.StoragePath` before
+  any DB write (file may have moved/changed). Atomic-tx: BeginTransaction → global
+  PoNumber re-check under `UPDLOCK, ROWLOCK` (no WH filter — PoNumber is globally
+  UNIQUE per db/010) → group by PoNumber → INSERT one PurchaseOrder (`PullId=NULL`,
+  `OrderDate=DateTime.UtcNow.Date`, `CreatedBy=log.UploadedByUserId`) + N
+  PurchaseOrderLines (`LineNumber` 1-based ordinal, `Description ?? ""` coalesce,
+  `ReceivedQty=0` literal) → Commit. Any throw → Rollback → MarkFailed + rethrow
+  so Hangfire records Failed for the dashboard
+- ✅ `PoImportController` at `/api/imports/po` with `[Authorize(Roles="admin,supervisor")]`:
+  POST `/upload` (multipart, 50 MB cap, `.xls`/`.xlsx` allowlist, `FileMode.CreateNew`
+  staging write at `imports/staging/{runId:N}{ext}`), POST `/{runId}/confirm`
+  (validated→queued + Hangfire enqueue + audit), GET `/{runId}` (drill-down)
+- ✅ Hangfire worker queues: `["exports", "erp-sync", "po-import", "default"]` —
+  imports outrank the default queue but yield to existing export + ERP-sync work
+- ✅ `imports/staging/*` in `.gitignore` + `.gitkeep` to preserve the directory
+- ✅ Smoke `smoke-phase-12-5-po-import-job.ps1` (16 source-level assertions:
+  Hangfire attributes, 5-dep injection, state guard, single Commit/Rollback pair,
+  re-parse-before-Create, UPDLOCK+ROWLOCK + no-WH filter on duplicate re-check,
+  PullId=NULL + OrderDate server-set + CreatedBy GUID, LineNumber/Description/
+  ReceivedQty invariants, audit ActionType literals, queue order, controller
+  shape, confirm gate + ownership, upload ext + size + staging path + CreateNew,
+  DI registration, .gitignore + .gitkeep, build clean)
+
+### Phase 12.6 — nav + page chrome (commit `3185c0b`)
+
+- ✅ `app-nav.js` MENU entry `imports` between `receiving` and `transactions`,
+  icon `bi-cloud-upload` (mirrors `/Exports`'s `bi-cloud-download`), no `roles`
+  gate per Q4=A (all authenticated users see it). `activePage` detection extended
+  for `/imports`
+- ✅ `ImportsController` (top-level MVC, not under `/Api`) with bare `[Authorize]`
+  (no Roles= restriction — UI is open; API is the boundary). `[HttpGet("/Imports")]`
+  Index action sets `ViewData["PageId"] = "imports"`
+- ✅ Smoke `smoke-phase-12-6-nav-entry.ps1` (12 assertions: positional regex on
+  MENU array, icon + no-roles + href, activePage rule, all 9 pre-existing entries
+  intact, controller shape, view body marker, /Imports → 200 for admin + supervisor
+  + operator, anonymous → 302 to /Account/Login, /Config regression guard).
+  Addresses the discoverability-gap pattern that bit Phase 10.6 + Phase 11.2 —
+  programmatic nav check protects against silent removals from the MENU array
+
+### Phase 12.7 — integration smoke + audit width fix (commit `b6ee20f`)
+
+- ✅ Migration `db/032` — widen `dbo.AuditLog.ActionType` from VARCHAR(16) to
+  VARCHAR(32). Idempotent COL_LENGTH guard. `ALTER COLUMN` transparently widens
+  IX_Audit_Action leaf entries (no DROP/CREATE INDEX needed). Closes the
+  silent-audit-truncation defect: `po-import-confirmed`, `po-import-succeeded`,
+  `po-import-failed` are 19 chars; under the original 16-char cap they truncated
+  to `po-import-confir` / `po-import-succee` / `po-import-failed`; SQL 2628
+  exceptions were swallowed by IAuditService per §8 (audit never rolls back
+  business actions), so imports succeeded silently with a broken audit trail.
+  12.5's source-level smoke verified the strings appeared in source but never
+  proved they survived the INSERT
+- ✅ Fixture infrastructure: `tools/build-po-import-fixture.ps1` (one-shot
+  generator, NOT in battery — Add-Type-loads NPOI from project's bin output so
+  writer/reader path is byte-identical) + `tools/fixtures/po-import-sample.xlsx`
+  (committed; 4 rows / 2 PoNumbers with prefix `P127TEST-` for collision-free
+  pre+post cleanup)
+- ✅ Smoke `smoke-phase-12-7-integration.ps1` (14 assertions: fixture → pre-cleanup
+  → supervisor login → upload (response shape, totals, runId) → log row attribution
+  + WH-pin → confirm → status flip → poll until terminal (60s cap) → final totals
+  → 2 PO rows with WH+PullId-NULL+CreatedBy+OrderDate+Status invariants → 4 line
+  rows with deterministic LineNumber + ItemCode+OrderedQty round-trip + OrderId
+  (db/031) + PalletId (db/021) round-trip → both audit rows present for the run
+  → operator-at-other-WH 403 → cleanup leaves zero residual rows)
+
+### Phase 12.8 — upload UI (commit `841d3db`)
+
+- ✅ Replaces the 12.6 placeholder view with a real uploader. `ImportsController.Index()`
+  sets `ViewData["CanUpload"] = User.IsInRole("admin") || User.IsInRole("supervisor")`
+  — single source of truth shared with the API gate. View server-side renders
+  either the uploader block (dropzone + preview + status panels + `<script src="/js/imports.js">`)
+  OR an operator notice; the script tag is OMITTED entirely for operators
+- ✅ `wwwroot/js/imports.js` — one-shot flow: drag-drop or browse → POST upload
+  → preview panel (totals + first 50 errors) → `confirmAction(...)` gate → POST
+  confirm → status panel polls every 2s up to 2 minutes → terminal panel with
+  "New import" reset. No Bootstrap JS — sections show/hide via the `hidden`
+  attribute. No history list, no admin warehouse picker (admins use session WH
+  same as supervisors)
+- ✅ `wwwroot/css/imports.css` — dropzone with `drag-over` highlight via
+  `--accent-bg`, terminal status badges via `color-mix` against theme tokens
+  (tracks all 3 themes)
+- ✅ Smoke `smoke-phase-12-8-import-ui.ps1` (11 assertions: JS hooks, CSS classes,
+  controller role check, view branches, admin + supervisor render with dropzone +
+  script tag, operator render with notice + no script tag + no dropzone,
+  API /api/imports/po/upload still 403s the operator (regression guard so a future
+  "let operators see something" tweak can't silently loosen the API gate), JS +
+  CSS statically served)
 
 ## Production blockers — UI-editable now
 
@@ -787,11 +897,15 @@ every encrypted secret in DB is unrecoverable. Back up alongside the DB.
 - Operator-dropdown source for /Transactions (janitorial)
 - Audit retention policy (design decision needed)
 - Phase 11.2 "re-import from config files" admin button (alternative to manual `DELETE FROM dbo.AppSettings` + restart)
-- Phase 12: PO data source — Phase 9's 20 ERP-sourced PurchaseOrderLines columns currently have no writer; either extend the BPI_PRS pull or add a vendor PUSH endpoint
+- Phase 12.x extensions (deferred): admin warehouse picker on `/Imports` (uploader currently uses session WH for all roles), recent-runs panel listing the operator's prior `PoImportLog` rows, per-row preview pane in the modal (currently only totals + first 50 errors). None blocking; all easy adds when first needed.
 
 ## Known flakes (pre-existing; pass standalone)
 
-- `smoke-phase-8.4-exports.ps1`, `smoke-export-extensions.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Battery is reliably 51/51 after one retry; never had genuine regressions across Phases 10 + 11.
+- `smoke-phase-8.4-exports.ps1`, `smoke-export-extensions.ps1`, `smoke-my-exports.ps1`, `smoke-exports-badge.ps1`, `smoke-exports-2tab.ps1` — Hangfire worker contention under battery load. Each passes on standalone re-run. Never had genuine regressions across Phases 10 + 11 + 12.
+
+## Known battery-only fails (v3.2; pass standalone with dev server stopped)
+
+- `smoke-phase-12-2-po-import-reader.ps1`, `smoke-phase-12-3-po-import-log-repo.ps1`, `smoke-phase-12-4-po-import-service.ps1`, `smoke-phase-12-5-po-import-job.ps1` — each ends with a `dotnet build` assertion that proves the source compiles cleanly. Under battery the running `ReceivingOps.Web.exe` holds the binary lock, so MSBuild error MSB3027 fires after 10 retries on apphost.exe → bin/Debug/net8.0/ReceivingOps.Web.exe copy. All 4 PASS when the dev server is stopped (`Stop-Process -Name ReceivingOps.Web -Force` then `pwsh tools/smoke-phase-12-2-po-import-reader.ps1`). Option to retire the `dotnet build` step from these 4 source-level smokes was discussed and deferred — the build invariant has real value when the project compiles standalone, just not when raced against the running server.
 
 ## Gmail App Password — episodic block
 
