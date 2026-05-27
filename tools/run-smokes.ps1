@@ -84,6 +84,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-12-4-po-import-service.ps1'
         'smoke-phase-12-5-po-import-job.ps1'
         'smoke-phase-12-6-nav-entry.ps1'
+        'smoke-phase-12-7-integration.ps1'
         'smoke-receive.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
