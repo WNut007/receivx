@@ -137,10 +137,16 @@ OK "Duplicate check is global (correct) + serialized via locks"
 # ----------------------------------------------------------------------------
 Step "PurchaseOrders INSERT — schema-correct columns"
 AssertFile $jobFile 'INSERT INTO dbo.PurchaseOrders'
-# PullId must be NULL literal in the VALUES clause (not @PullId — parser
-# doesn't provide it; we resolved to "no Pulls FK touch" per Q1=B revised)
-if ($job -notmatch ',\s*NULL,\s*@VendorCode,\s*@VendorName,') {
-    Fail "PullId should be NULL literal between WarehouseId and VendorCode"
+# A1 (db/033): PullId stays NULL (Guid FK_PO_Pull preserved untouched),
+# PullExternalRef = @PullExternalRef sits between PullId and VendorCode so
+# the denormalized PRS_ID survives independently. Regex matches the new
+# VALUES-clause shape.
+if ($job -notmatch ',\s*NULL,\s*@PullExternalRef,\s*@VendorCode,\s*@VendorName,') {
+    Fail "VALUES clause should be (..., NULL, @PullExternalRef, @VendorCode, @VendorName, ...) — PullId NULL literal + PullExternalRef param + Vendor*"
+}
+# PullExternalRef bound to firstRow.PoNumber (Q1=B denormalization)
+if ($job -notmatch 'PullExternalRef\s*=\s*firstRow\.PoNumber') {
+    Fail "PullExternalRef parameter must bind to firstRow.PoNumber (Q1=B denormalization)"
 }
 # OrderDate from a C# variable (DateTime.UtcNow.Date) — schema NOT NULL DATE
 if ($job -notmatch 'orderDate = DateTime\.UtcNow\.Date') {
@@ -150,7 +156,7 @@ if ($job -notmatch 'orderDate = DateTime\.UtcNow\.Date') {
 if ($job -notmatch 'CreatedBy = log\.UploadedByUserId') {
     Fail "CreatedBy must come from log.UploadedByUserId (Users.Id GUID), not the display name"
 }
-OK "PullId=NULL + OrderDate=server + CreatedBy=GUID"
+OK "PullId=NULL + PullExternalRef=PoNumber + OrderDate=server + CreatedBy=GUID"
 
 # ----------------------------------------------------------------------------
 # 8. PurchaseOrderLines INSERT — LineNumber, Description coalesce, ReceivedQty 0

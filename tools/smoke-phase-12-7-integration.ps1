@@ -229,20 +229,22 @@ SELECT
     SUM(CASE WHEN CreatedBy = '$supUserId'                THEN 1 ELSE 0 END) AS CreatedByMatches,
     SUM(CASE WHEN OrderDate = CAST('$todayUtc' AS DATE)   THEN 1 ELSE 0 END) AS OrderDateMatches,
     SUM(CASE WHEN Status = 'open'                         THEN 1 ELSE 0 END) AS OpenStatus,
+    SUM(CASE WHEN PullExternalRef = PoNumber              THEN 1 ELSE 0 END) AS PullExternalRefMatches,
     COUNT(*)                                                                AS Total
 FROM dbo.PurchaseOrders
 WHERE PoNumber LIKE 'P127TEST-%';
 "@) -join '' -replace '\s',''
 
-# Output is one pipe-delimited row "wh|nulls|by|date|open|total"; split it.
+# Output is one pipe-delimited row "wh|nulls|by|date|open|extref|total"; split it.
 $parts = ($poCheck -split '\|')
-if ($parts.Count -lt 6) { Fail "Could not parse PO check output: '$poCheck'" }
-$pTotal      = [int]$parts[5]
+if ($parts.Count -lt 7) { Fail "Could not parse PO check output: '$poCheck'" }
+$pTotal      = [int]$parts[6]
 $pWh         = [int]$parts[0]
 $pPullNulls  = [int]$parts[1]
 $pCreatedBy  = [int]$parts[2]
 $pOrderDate  = [int]$parts[3]
 $pOpen       = [int]$parts[4]
+$pExtRef     = [int]$parts[5]
 
 if ($pTotal -ne 2)         { Fail "PurchaseOrders total=$pTotal, expected 2" }
 if ($pWh -ne 2)            { Fail "WarehouseId mismatch on $($pTotal - $pWh) of $pTotal POs" }
@@ -250,7 +252,9 @@ if ($pPullNulls -ne 2)     { Fail "PullId not NULL on $($pTotal - $pPullNulls) o
 if ($pCreatedBy -ne 2)     { Fail "CreatedBy mismatch on $($pTotal - $pCreatedBy) of $pTotal POs" }
 if ($pOrderDate -ne 2)     { Fail "OrderDate mismatch on $($pTotal - $pOrderDate) of $pTotal POs" }
 if ($pOpen -ne 2)          { Fail "Status not 'open' on $($pTotal - $pOpen) of $pTotal POs" }
-OK "2 POs · WH=WH-01 · PullId=NULL · CreatedBy=supervisor · OrderDate=today · Status=open"
+# A1 (db/033) — PullExternalRef must round-trip = PoNumber on every imported row
+if ($pExtRef -ne 2)        { Fail "PullExternalRef <> PoNumber on $($pTotal - $pExtRef) of $pTotal POs (A1/Q1=B denormalization regression)" }
+OK "2 POs · WH=WH-01 · PullId=NULL · CreatedBy=supervisor · OrderDate=today · Status=open · PullExternalRef=PoNumber"
 
 # ----------------------------------------------------------------------------
 # 11. PurchaseOrderLines rows
@@ -293,6 +297,39 @@ if ([int]$lp[8] -ne 4) { Fail "LineNumber outside {1,2} on $(4 - [int]$lp[8]) of
 # day/month positions.
 if ([int]$lp[9] -ne 4) { Fail "DeliveryDate did not round-trip to $todayUtcDate on $(4 - [int]$lp[9]) of 4 lines — dd/MM/yyyy parser regression?" }
 OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2} · DeliveryDate=$todayUtcDate"
+
+# ----------------------------------------------------------------------------
+# 11b. A1 (db/033) — PullExternalRef surfaces via /api/pos/{id} +
+#      ReceiptService FIFO walk has the A1 conditional in source.
+# ----------------------------------------------------------------------------
+Step "A1: GET /api/pos/{id} surfaces pullExternalRef = PoNumber"
+$poId = (SqlRow @"
+SET NOCOUNT ON;
+SELECT TOP 1 Id FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'P127TEST-%' ORDER BY PoNumber;
+"@) -join '' -replace '\s',''
+if (-not $poId) { Fail "Could not locate imported PO for API check" }
+$poJson = Invoke-RestMethod -Uri "$base/api/pos/$poId" -WebSession $sup
+if (-not $poJson.pullExternalRef) {
+    Fail "/api/pos/$poId response missing pullExternalRef field — DTO surface regression"
+}
+if ($poJson.pullExternalRef -ne $poJson.poNumber) {
+    Fail "pullExternalRef='$($poJson.pullExternalRef)' != poNumber='$($poJson.poNumber)' on API"
+}
+if ($poJson.pullId) {
+    Fail "PullId should remain NULL on imported PO (got '$($poJson.pullId)') — Guid FK preserved invariant"
+}
+OK "API: pullExternalRef = '$($poJson.pullExternalRef)' (matches poNumber); pullId = null"
+
+Step "A1 source guard: ReceiptService FIFO conditional includes PullExternalRef"
+$rsFile = Join-Path $repoRoot 'src\ReceivingOps.Web\Services\ReceiptService.cs'
+$rs = Get-Content -Raw -LiteralPath $rsFile
+if ($rs -notmatch 'po\.PullId = @PullId OR po\.PullExternalRef = @PullNumberStr') {
+    Fail "ReceiptService.cs missing A1 conditional 'po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr' — §7.15 FIFO lock-by-pull would lose imported-PO lookup"
+}
+if ($rs -notmatch 'PullNumberStr\s*=\s*pullCtx\.PullNumber') {
+    Fail "ReceiptService.cs missing 'PullNumberStr = pullCtx.PullNumber' parameter binding"
+}
+OK "ReceiptService A1 conditional + parameter binding present"
 
 # ----------------------------------------------------------------------------
 # 12. Audit rows
