@@ -126,6 +126,7 @@ builder.Services.AddScoped<IPurchaseOrderRepository, PurchaseOrderRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<IExportJobLogRepository, ExportJobLogRepository>();
 builder.Services.AddScoped<IErpSyncLogRepository, ErpSyncLogRepository>();
+builder.Services.AddScoped<IPoImportLogRepository, PoImportLogRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
 // Phase 11.1 — admin-edited config storage. Repository is Scoped (matches
 // project convention); the service that wraps it is Singleton (see below).
