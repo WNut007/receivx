@@ -21,6 +21,9 @@
     <!-- Phase 11.2 — cron expression parser for ErpSync:CronExpression
          validation in ConfigWriteController. MIT, ~30 KB, no transitive deps. -->
     <PackageReference Include="NCrontab" Version="3.3.3" />
+    <!-- Phase 12.2 — Excel reader for PO Excel import. Supports both .xls
+         (HSSF / OLE2) and .xlsx (XSSF / OOXML) in one package. Apache 2.0. -->
+    <PackageReference Include="NPOI" Version="2.7.2" />
   </ItemGroup>
 
 </Project>

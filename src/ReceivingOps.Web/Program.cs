@@ -18,6 +18,7 @@ using ReceivingOps.Web.Services.Config;
 using ReceivingOps.Web.Services.Email;
 using ReceivingOps.Web.Services.ErpSync;
 using ReceivingOps.Web.Services.Exports;
+using ReceivingOps.Web.Services.PoImport;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -226,6 +227,12 @@ builder.Services.AddScoped<ErpSyncJob>();
 // Singleton — guards recurring vs manual-trigger overlap. In-process only;
 // distributed locking would be needed for a multi-instance deployment.
 builder.Services.AddSingleton<ErpSyncMutex>();
+
+// ---- v3.x Phase 12.2 — PO Excel import pipeline (parser only at 12.2) ----
+// NPOI-backed reader for .xls + .xlsx. Scoped because the implementation
+// holds an ILogger via DI — no per-request state, but matching the project
+// convention for services. Repositories / job / controller land in 12.3+.
+builder.Services.AddScoped<IPoImportReader, PoImportReader>();
 
 // ---- v2.x Phase 7.2 — Reports (FastReport.OpenSource) ----
 // CompanyInfo binds from the "CompanyInfo" section in appsettings.json;
