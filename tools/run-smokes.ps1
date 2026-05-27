@@ -70,6 +70,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-exports-2tab.ps1'
         'smoke-phase-9-extended-fields.ps1'
         'smoke-phase-9-1-pull-extended-fields.ps1'
+        'smoke-phase-9-2-po-line-extended-fields.ps1'
         'smoke-phase-10-1-erp-connection.ps1'
         'smoke-phase-10-2-erp-read-transform.ps1'
         'smoke-phase-10-3-erp-upsert.ps1'
