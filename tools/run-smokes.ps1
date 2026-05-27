@@ -88,6 +88,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-12-7-integration.ps1'
         'smoke-phase-12-8-import-ui.ps1'
         'smoke-receive.ps1'
+        'smoke-pull-status-forward-transition.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
         'smoke-close-reopen.ps1'
