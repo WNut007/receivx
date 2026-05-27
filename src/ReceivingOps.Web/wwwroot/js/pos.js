@@ -271,10 +271,18 @@ async function openDetail(id) {
     (currentDetail.createdByName || '—') + ' · ' + fmtDate(currentDetail.createdAt);
 
   // Pull dropdown: rendered DISABLED with only the current value shown.
-  // This enforces §3.5 immutability — the input physically cannot be changed.
+  // §3.5 immutability — the input physically cannot be changed.
+  // 3-state precedence (A1, db/033):
+  //   1. pullId set         → FK-linked Pull; show PullNumber as the label
+  //   2. pullExternalRef    → Phase 12 imported PO (PRS_ID denormalized);
+  //                           label "<ref> (import)" so operator sees the
+  //                           upstream pull ref even without a Pulls row
+  //   3. neither            → genuine cross-pull pool entry
   const pullSel = document.getElementById('d-pull-id');
   if (currentDetail.pullId) {
     pullSel.innerHTML = `<option value="${escHtml(currentDetail.pullId)}" selected>${escHtml(currentDetail.pullNumber || '—')}</option>`;
+  } else if (currentDetail.pullExternalRef) {
+    pullSel.innerHTML = `<option value="" selected>${escHtml(currentDetail.pullExternalRef)} (import)</option>`;
   } else {
     pullSel.innerHTML = `<option value="" selected>(none — cross-pull pool)</option>`;
   }
