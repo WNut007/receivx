@@ -1284,7 +1284,9 @@
     const daysEl = document.getElementById('erp-backfill-days');
     const trigBtn = document.getElementById('erp-trigger');
     const cancelBtn = document.getElementById('erp-cancel');
-    const statusEl = document.getElementById('erp-sync-status');
+    // Phase 13.8.2 — status div id aligned with the new shared partial's
+    // `{FieldPrefix}-status` pattern (was 'erp-sync-status' inline).
+    const statusEl = document.getElementById('erp-status');
     let pollTimer = null;
 
     function setStatus(html, cls) {
