@@ -209,6 +209,10 @@ if ($cd -notmatch [regex]::Escape("$pullNum-DO.pdf")) { Fail "PDF filename shoul
 if ($pdf.RawContentLength -lt 1000) { Fail "PDF suspiciously small ($($pdf.RawContentLength) bytes)" }
 $head4 = [System.Text.Encoding]::ASCII.GetString($pdf.Content[0..3])
 if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }
+# Note: PDFSimpleExport (FastReport.OpenSource) emits text via CID/glyph
+# indices, not ASCII literals — a raw byte grep for "DELIVERY ORDER" /
+# "RECEIVED BY" doesn't work. Band-render regressions need visual check
+# (open the PDF), not a content-string assertion here.
 OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic"
 
 # ----------------------------------------------------------------------------
