@@ -24,6 +24,13 @@ public class ErpSyncLogRow
     public int? ItemsAdded { get; set; }
     public int? ItemsCanceled { get; set; }
     public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Phase 13.1 — per-source counter breakdown stored as a JSON blob.
+    /// Shape: <c>{ "BPI_PRS": { "created":N, "updated":N, ... }, "PRB_PRS": { ... } }</c>.
+    /// NULL for runs that pre-date Phase 13 OR ran with zero enabled sources.
+    /// </summary>
+    public string? SourceTotals { get; set; }
 }
 
 /// <summary>

@@ -28,4 +28,11 @@ public interface IErpSyncLogRepository
 
     /// <summary>Single-row lookup for the drill-down view; returns null if not found.</summary>
     Task<ErpSyncLogRow?> GetByRunIdAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Phase 13.1 — write the per-source counter JSON for a run. The aggregate
+    /// scalar counters still flow through <see cref="MarkSucceededAsync"/>;
+    /// this is the per-source breakdown the status drill-down renders.
+    /// </summary>
+    Task UpdateSourceTotalsAsync(Guid runId, string sourceTotalsJson, CancellationToken ct = default);
 }

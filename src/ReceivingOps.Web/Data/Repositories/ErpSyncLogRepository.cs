@@ -92,14 +92,15 @@ public class ErpSyncLogRepository : IErpSyncLogRepository
     public async Task<(IReadOnlyList<ErpSyncLogRow> Items, int Total)> QueryPagedAsync(
         int skip, int take, CancellationToken ct = default)
     {
-        // IX_ErpSyncLog_StartedAt covers the ORDER BY + the INCLUDE list
-        // gives all summary columns the list view needs without a heap lookup.
+        // IX_ErpSyncLog_StartedAt covers the ORDER BY. SourceTotals (db/034)
+        // is NVARCHAR(MAX) so it can't sit in the index INCLUDE — heap lookup
+        // for the list view is acceptable (the page is admin-only + small).
         const string sql = @"
             SELECT  RunId, TriggeredBy, ActorName, WarehouseId, BackfillDays,
                     Status, StartedAt, CompletedAt, ElapsedMs,
                     SourceRowCount, DraftPullCount,
                     Created, Updated, SkippedClosed, Errors,
-                    ItemsAdded, ItemsCanceled, ErrorMessage
+                    ItemsAdded, ItemsCanceled, ErrorMessage, SourceTotals
             FROM    dbo.ErpSyncLog
             ORDER BY StartedAt DESC, RunId DESC
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
@@ -121,11 +122,28 @@ public class ErpSyncLogRepository : IErpSyncLogRepository
                     Status, StartedAt, CompletedAt, ElapsedMs,
                     SourceRowCount, DraftPullCount,
                     Created, Updated, SkippedClosed, Errors,
-                    ItemsAdded, ItemsCanceled, ErrorMessage
+                    ItemsAdded, ItemsCanceled, ErrorMessage, SourceTotals
             FROM    dbo.ErpSyncLog
             WHERE   RunId = @RunId;";
         using var conn = _factory.Create();
         return await conn.QuerySingleOrDefaultAsync<ErpSyncLogRow>(
             new CommandDefinition(sql, new { RunId = runId }, cancellationToken: ct));
+    }
+
+    public async Task UpdateSourceTotalsAsync(Guid runId, string sourceTotalsJson, CancellationToken ct = default)
+    {
+        // Independent UPDATE so the job can write per-source detail without
+        // having to thread it through MarkSucceededAsync (which still writes
+        // the aggregate scalar counters in one shot).
+        const string sql = @"
+            UPDATE dbo.ErpSyncLog
+            SET    SourceTotals = @SourceTotals
+            WHERE  RunId = @RunId;";
+        using var conn = _factory.Create();
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            RunId = runId,
+            SourceTotals = sourceTotalsJson,
+        }, cancellationToken: ct));
     }
 }
