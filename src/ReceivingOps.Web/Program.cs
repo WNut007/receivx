@@ -222,6 +222,13 @@ builder.Services.AddOptions<ErpSyncOptions>()
         if (int.TryParse(settings.GetAsync("ErpSync:BackfillDays").GetAwaiter().GetResult(), out var bd))
             opts.BackfillDays = bd;
     });
+// Phase 13.2 — IErpSource strategy registration. BpiPrsSource holds the
+// v3.2 SQL + Transform (relocated, no behavior change). The legacy
+// IErpSyncService stays registered as a thin facade delegating to
+// BpiPrsSource; Phase 13.5 retires it when ErpSyncJob switches to
+// depending on IEnumerable<IErpSource>.
+builder.Services.AddScoped<BpiPrsSource>();
+builder.Services.AddScoped<IErpSource>(sp => sp.GetRequiredService<BpiPrsSource>());
 builder.Services.AddScoped<IErpSyncService, ErpSyncService>();
 builder.Services.AddScoped<IErpUpsertService, ErpUpsertService>();
 builder.Services.AddScoped<ErpSyncJob>();
