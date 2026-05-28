@@ -1280,6 +1280,8 @@
 
     const modalEl = document.getElementById('erpSyncModal');
     const modal = new bootstrap.Modal(modalEl);
+    const sourceSel = document.getElementById('erp-source');        // Phase 13.8.3
+    const sourceLabel = document.getElementById('erp-source-label');// Phase 13.8.3
     const whSel = document.getElementById('erp-warehouse');
     const daysEl = document.getElementById('erp-backfill-days');
     const trigBtn = document.getElementById('erp-trigger');
@@ -1292,15 +1294,16 @@
     function setStatus(html, cls) {
       statusEl.className = 'mt-3 alert alert-' + (cls || 'info') + ' py-2 mb-0';
       statusEl.innerHTML = html;
-      statusEl.style.display = '';
+      statusEl.hidden = false;
     }
     function clearStatus() {
-      statusEl.style.display = 'none';
+      statusEl.hidden = true;
       statusEl.innerHTML = '';
     }
     function setBusy(busy) {
       trigBtn.disabled = busy;
       cancelBtn.disabled = busy;
+      sourceSel.disabled = busy;
       whSel.disabled = busy;
       daysEl.disabled = busy;
       trigBtn.innerHTML = busy
@@ -1311,6 +1314,8 @@
     btn.addEventListener('click', async () => {
       clearStatus();
       setBusy(false);
+      // Phase 13.8.3 — populate the SOURCE dropdown each open.
+      await window.ErpSourceDropdown.populate({ selectEl: sourceSel, labelEl: sourceLabel });
       await ensureWarehouses();
       populateWarehouseSelect(whSel, null);
       daysEl.value = 30;
@@ -1354,6 +1359,8 @@
     trigBtn.addEventListener('click', async () => {
       const warehouseId = whSel.value;
       const backfillDays = parseInt(daysEl.value, 10) || 30;
+      // Phase 13.8.3 — empty value = "All enabled" sentinel.
+      const sourceName = sourceSel.value || null;
       if (!warehouseId) { setStatus('Pick a warehouse.', 'warning'); return; }
       clearStatus();
       setBusy(true);
@@ -1361,7 +1368,7 @@
         const r = await fetch('/api/admin/erp-sync/trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ warehouseId, backfillDays }),
+          body: JSON.stringify({ warehouseId, backfillDays, sourceName }),
         });
         if (r.status === 202) {
           const data = await r.json();

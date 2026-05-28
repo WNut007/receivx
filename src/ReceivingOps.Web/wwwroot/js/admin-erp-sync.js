@@ -162,6 +162,8 @@
     function initSyncModal() {
         const modalEl = document.getElementById('syncModal');
         const modal = new bootstrap.Modal(modalEl);
+        const sourceSel = document.getElementById('sync-source');        // Phase 13.8.3
+        const sourceLabel = document.getElementById('sync-source-label');// Phase 13.8.3
         const whSel = document.getElementById('sync-warehouse');
         const daysEl = document.getElementById('sync-backfill-days');
         const trigBtn = document.getElementById('sync-trigger');
@@ -178,6 +180,7 @@
         function setBusy(busy) {
             trigBtn.disabled = busy;
             cancelBtn.disabled = busy;
+            sourceSel.disabled = busy;
             whSel.disabled = busy;
             daysEl.disabled = busy;
             trigBtn.innerHTML = busy
@@ -188,6 +191,9 @@
         document.getElementById('btn-sync-now').addEventListener('click', async () => {
             clearStatus();
             setBusy(false);
+            // Phase 13.8.3 — populate the SOURCE dropdown each open so a
+            // /Config + restart change is reflected next modal show.
+            await window.ErpSourceDropdown.populate({ selectEl: sourceSel, labelEl: sourceLabel });
             await ensureWarehouses();
             populateWarehouseSelect(whSel);
             daysEl.value = 30;
@@ -228,6 +234,9 @@
         trigBtn.addEventListener('click', async () => {
             const warehouseId = whSel.value;
             const backfillDays = parseInt(daysEl.value, 10) || 30;
+            // Phase 13.8.3 — empty value = "All enabled" sentinel (wire
+            // contract: server reads null/"" as "no source filter").
+            const sourceName = sourceSel.value || null;
             if (!warehouseId) { setStatus('Pick a warehouse.', 'warning'); return; }
             clearStatus();
             setBusy(true);
@@ -235,7 +244,7 @@
                 const r = await fetch('/api/admin/erp-sync/trigger', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ warehouseId, backfillDays }),
+                    body: JSON.stringify({ warehouseId, backfillDays, sourceName }),
                 });
                 if (r.status === 202) {
                     const data = await r.json();
