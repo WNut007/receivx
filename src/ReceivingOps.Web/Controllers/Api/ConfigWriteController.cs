@@ -403,6 +403,8 @@ public class ConfigWriteController : ControllerBase
                 return (true, null);
 
             case "ErpSync:Enabled":
+            case "ErpSync:Sources:Bpi:Enabled":
+            case "ErpSync:Sources:Prb:Enabled":
                 if (!bool.TryParse(value, out _))
                     return (false, "Enabled must be 'true' or 'false'.");
                 return (true, null);
@@ -418,12 +420,17 @@ public class ConfigWriteController : ControllerBase
                     return (false, "TimeoutSeconds must be between 60 and 3600.");
                 return (true, null);
 
-            case "ErpSync:BackfillDays":
+            // Phase 13.4 — per-source BackfillDays. Parallel cases (instead of
+            // sharing one branch) so a future per-source range tweak doesn't
+            // need to fork the case.
+            case "ErpSync:Sources:Bpi:BackfillDays":
+            case "ErpSync:Sources:Prb:BackfillDays":
                 if (!int.TryParse(value, out var d) || d < 1 || d > 365)
                     return (false, "BackfillDays must be between 1 and 365.");
                 return (true, null);
 
-            case "ErpSync:DefaultWarehouseId":
+            case "ErpSync:Sources:Bpi:DefaultWarehouseId":
+            case "ErpSync:Sources:Prb:DefaultWarehouseId":
                 if (!Guid.TryParse(value, out var whId))
                     return (false, "DefaultWarehouseId must be a valid GUID.");
                 if (whId == Guid.Empty) return (true, null);  // explicit "unset" sentinel

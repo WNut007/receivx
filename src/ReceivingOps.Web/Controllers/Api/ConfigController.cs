@@ -38,8 +38,18 @@ public class ConfigController : ControllerBase
         }),
         new SectionInfo("ErpSync", "Sync Schedule", new[]
         {
-            "ErpSync:Enabled", "ErpSync:CronExpression", "ErpSync:TimeoutSeconds",
-            "ErpSync:BackfillDays", "ErpSync:DefaultWarehouseId",
+            // Shared keys (Phase 13.4 nested options).
+            "ErpSync:Enabled",
+            "ErpSync:CronExpression",
+            "ErpSync:TimeoutSeconds",
+            // BPI source sub-config.
+            "ErpSync:Sources:Bpi:Enabled",
+            "ErpSync:Sources:Bpi:BackfillDays",
+            "ErpSync:Sources:Bpi:DefaultWarehouseId",
+            // PRB source sub-config (new in Phase 13.3).
+            "ErpSync:Sources:Prb:Enabled",
+            "ErpSync:Sources:Prb:BackfillDays",
+            "ErpSync:Sources:Prb:DefaultWarehouseId",
         }),
         new SectionInfo("Exports", "Exports", new[]
         {
@@ -123,11 +133,29 @@ public class ConfigController : ControllerBase
         // Project onto only the keys this section declares — keeps the
         // response stable even if other rows live under the same prefix
         // (defensive; the seeder doesn't write any).
+        //
+        // Phase 13.4 nested keys: IAppSettingsService.GetSectionAsync's
+        // IConfiguration overlay walks GetChildren() one level only, so
+        // ErpSync:Sources:Bpi:* + Prb:* may not appear in `raw` even
+        // when set in appsettings.json. Fall back to per-key GetAsync
+        // (which DOES honor the full precedence chain incl. nested
+        // IConfiguration access) — 6 extra cheap calls per /Config page
+        // load on the Sync Schedule tab.
         var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in section.Keys)
         {
-            raw.TryGetValue(key, out var v);
-            values[key] = v;
+            if (raw.TryGetValue(key, out var v) && v != null)
+            {
+                values[key] = v;
+                continue;
+            }
+            var resolved = await _settings.GetAsync(key, ct);
+            // Honor secret masking: GetAsync returns plaintext; the UI must
+            // see "***" instead so /Config never round-trips real secrets.
+            if (_settings.IsKnownSecret(key) && !string.IsNullOrEmpty(resolved))
+                values[key] = "***";
+            else
+                values[key] = resolved;
         }
 
         return Ok(new SectionDetailResponse
