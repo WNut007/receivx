@@ -75,7 +75,10 @@ $jobBody = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\E
 if ($jobBody -notmatch 'Task RunAsync\(\)') {
     Fail "ErpSyncJob missing parameterless RunAsync() entry point"
 }
-if ($jobBody -notmatch 'Task RunForWarehouseAsync\(Guid warehouseId, int backfillDays') {
+# Phase 13.8.1 wrapped the parameter list onto its own line for the
+# new `string? sourceName = null` argument. (?s) + \s* allows the
+# wrapped form without false-failing.
+if ($jobBody -notmatch '(?s)Task RunForWarehouseAsync\(\s*Guid warehouseId, int backfillDays') {
     Fail "ErpSyncJob missing RunForWarehouseAsync(Guid, int, ...) entry point"
 }
 foreach ($needle in @('_mutex.TryAcquire()', '_mutex.Release()')) {

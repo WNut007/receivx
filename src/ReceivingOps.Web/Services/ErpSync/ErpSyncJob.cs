@@ -72,14 +72,17 @@ public class ErpSyncJob
 
     /// <summary>
     /// Manual-trigger entry point — admin picks the warehouse + backfill
-    /// via the UI / API. Those values apply to EVERY enabled source in
-    /// this fire (per the Phase 13 design recommendation — keeps the
-    /// trigger UI simple). Hangfire serializes the parameters into the
-    /// job payload so the worker thread sees the operator's values.
+    /// via the UI / API. The values apply to EVERY enabled source in
+    /// this fire when <paramref name="sourceName"/> is null/empty
+    /// (Phase 13 design default); when set, the fan-out restricts to
+    /// the named source only (Phase 13.8.1 single-source trigger).
+    /// Hangfire serializes parameters into the job payload so the
+    /// worker thread sees the operator's values.
     /// </summary>
     [DisableConcurrentExecution(timeoutInSeconds: 600)]
     [Queue("erp-sync")]
-    public async Task RunForWarehouseAsync(Guid warehouseId, int backfillDays, string actorName)
+    public async Task RunForWarehouseAsync(
+        Guid warehouseId, int backfillDays, string actorName, string? sourceName = null)
     {
         if (warehouseId == Guid.Empty)
         {
@@ -89,7 +92,7 @@ public class ErpSyncJob
         var safeActor = string.IsNullOrWhiteSpace(actorName) ? "(unknown)" : actorName;
         await ExecuteAsync(
             overrideWarehouse: warehouseId, overrideBackfillDays: backfillDays,
-            trigger: "manual", actorName: safeActor);
+            trigger: "manual", actorName: safeActor, sourceFilter: sourceName);
     }
 
     // ------------------------------------------------------------------
@@ -115,7 +118,7 @@ public class ErpSyncJob
     // ------------------------------------------------------------------
     private async Task ExecuteAsync(
         Guid? overrideWarehouse, int? overrideBackfillDays,
-        string trigger, string actorName)
+        string trigger, string actorName, string? sourceFilter = null)
     {
         if (!_mutex.TryAcquire())
         {
@@ -125,9 +128,31 @@ public class ErpSyncJob
             return;
         }
 
-        var enabledSources = _sources.Where(s => s.Enabled).ToList();
+        // Phase 13.8.1 — when a sourceFilter is provided, narrow to that
+        // source BEFORE the empty-set check so the failure mode is loud
+        // (throw inside the try-block, marks Hangfire job Failed) rather
+        // than silent ("no enabled sources" log + return). Controller
+        // pre-flight already validated the source name; this is the
+        // worker-side backstop for a race where the source got disabled
+        // between trigger and pickup.
+        IEnumerable<IErpSource> sourceQuery = _sources.Where(s => s.Enabled);
+        if (!string.IsNullOrWhiteSpace(sourceFilter))
+        {
+            sourceQuery = sourceQuery.Where(s =>
+                s.SourceName.Equals(sourceFilter, StringComparison.OrdinalIgnoreCase));
+        }
+        var enabledSources = sourceQuery.ToList();
         if (enabledSources.Count == 0)
         {
+            if (!string.IsNullOrWhiteSpace(sourceFilter))
+            {
+                // Explicit-source request that produced zero runnables.
+                // Throw so Hangfire records Failed + the audit-error path runs.
+                _mutex.Release();
+                throw new InvalidOperationException(
+                    $"Source '{sourceFilter}' is not enabled (or was disabled between " +
+                    "trigger and worker pickup). Re-check ErpSync:Sources:* in /Config.");
+            }
             _log.LogInformation(
                 "ErpSync {Trigger} fired but no sources are enabled — skipping.", trigger);
             _mutex.Release();

@@ -302,17 +302,27 @@ if (-not $perSource.BPI_PRS) {
     Fail "SourceTotals missing BPI_PRS entry. Got keys: $keys"
 }
 $bpi = $perSource.BPI_PRS
-# Single-source run: the per-source BPI counters should equal the
-# row-level aggregates (no other source contributed).
-if ($bpi.created   -ne $latestRow.created   -or
-    $bpi.updated   -ne $latestRow.updated   -or
-    $bpi.skippedClosed -ne $latestRow.skippedClosed -or
-    $bpi.errors    -ne $latestRow.errors) {
-    Fail ("BPI_PRS per-source counters disagree with row aggregates: " +
-          "BPI(c=$($bpi.created),u=$($bpi.updated),s=$($bpi.skippedClosed),e=$($bpi.errors)) vs " +
+# Sum-across-sources invariant — works whether the dev DB has just BPI
+# enabled (Phase 13 default) or BPI+PRB both enabled (operator opted in).
+# The row aggregate must equal the SUM of every per-source entry.
+$sumC=0; $sumU=0; $sumS=0; $sumE=0
+foreach ($k in ($perSource | Get-Member -MemberType NoteProperty).Name) {
+    $sumC += $perSource.$k.created
+    $sumU += $perSource.$k.updated
+    $sumS += $perSource.$k.skippedClosed
+    $sumE += $perSource.$k.errors
+}
+if ($sumC -ne $latestRow.created -or $sumU -ne $latestRow.updated -or
+    $sumS -ne $latestRow.skippedClosed -or $sumE -ne $latestRow.errors) {
+    Fail ("Per-source sum disagrees with row aggregates: " +
+          "sum(c=$sumC,u=$sumU,s=$sumS,e=$sumE) vs " +
           "row(c=$($latestRow.created),u=$($latestRow.updated),s=$($latestRow.skippedClosed),e=$($latestRow.errors))")
 }
-OK "SourceTotals.BPI_PRS counters match row aggregates (single-source run)"
+# And BPI must specifically be present + non-negative (sanity).
+if ($bpi.created -lt 0 -or $bpi.updated -lt 0) {
+    Fail "BPI_PRS counters are negative: $($bpi | ConvertTo-Json)"
+}
+OK "SourceTotals sum matches row aggregates; BPI_PRS present with counters c=$($bpi.created),u=$($bpi.updated)"
 
 Write-Host ""
 Write-Host "ALL PASS — Phase 10.7 BPI: integration consistency + closed-skip + mutex + SourceTotals verified." -ForegroundColor Green

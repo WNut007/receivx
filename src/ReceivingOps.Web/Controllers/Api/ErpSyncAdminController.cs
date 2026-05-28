@@ -7,6 +7,8 @@ using ReceivingOps.Web.Data.Repositories;
 using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services.ErpSync;
+// Phase 13.8.1 — controller takes IEnumerable<IErpSource> to validate
+// req.SourceName at pre-flight time (same source-of-truth as the job).
 
 namespace ReceivingOps.Web.Controllers.Api;
 
@@ -31,17 +33,20 @@ public class ErpSyncAdminController : ControllerBase
     private readonly IBackgroundJobClient _bgClient;
     private readonly ErpSyncMutex _mutex;
     private readonly IErpSyncLogRepository _logRepo;
+    private readonly IEnumerable<IErpSource> _sources;
     private readonly ILogger<ErpSyncAdminController> _log;
 
     public ErpSyncAdminController(
         IBackgroundJobClient bgClient,
         ErpSyncMutex mutex,
         IErpSyncLogRepository logRepo,
+        IEnumerable<IErpSource> sources,
         ILogger<ErpSyncAdminController> log)
     {
         _bgClient = bgClient;
         _mutex = mutex;
         _logRepo = logRepo;
+        _sources = sources;
         _log = log;
     }
 
@@ -50,6 +55,11 @@ public class ErpSyncAdminController : ControllerBase
         public Guid WarehouseId { get; set; }
         // Optional; defaults to 30 when null/<=0 — matches ErpSyncOptions.BackfillDays default.
         public int? BackfillDays { get; set; }
+        // Phase 13.8.1 — when null or empty, the job runs every enabled source
+        // (legacy single-payload behavior preserved). When set, the controller
+        // verifies the source exists + is enabled and threads it through to
+        // the fan-out loop, which restricts the run to that source alone.
+        public string? SourceName { get; set; }
     }
 
     public class TriggerResponse
@@ -57,6 +67,9 @@ public class ErpSyncAdminController : ControllerBase
         public string JobId { get; set; } = "";
         public Guid WarehouseId { get; set; }
         public int BackfillDays { get; set; }
+        // Phase 13.8.1 — echoes the resolved source name for the run.
+        // Empty string when no source filter was requested ("all enabled").
+        public string SourceName { get; set; } = "";
         public string Message { get; set; } = "";
     }
 
@@ -75,6 +88,35 @@ public class ErpSyncAdminController : ControllerBase
     {
         if (req is null || req.WarehouseId == Guid.Empty)
             return Problem(title: "warehouseId is required.", statusCode: 400);
+
+        // Phase 13.8.1 — source-name validation. Empty/null = all enabled
+        // (legacy behavior). Otherwise the source must exist + be enabled
+        // RIGHT NOW. IOptions<ErpSyncOptions> backs IErpSource.Enabled, so
+        // this view of "enabled" matches what the worker will see when it
+        // dequeues. (Restart-required: a /Config edit between trigger and
+        // worker pickup that the IOptions cache hasn't refreshed is the
+        // documented Phase 11.1 invariant.)
+        string? resolvedSource = null;
+        if (!string.IsNullOrWhiteSpace(req.SourceName))
+        {
+            var match = _sources.FirstOrDefault(s =>
+                s.SourceName.Equals(req.SourceName, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                var known = string.Join(", ", _sources.Select(s => s.SourceName));
+                return Problem(
+                    title: $"Unknown source '{req.SourceName}'. Known: {known}",
+                    statusCode: 400);
+            }
+            if (!match.Enabled)
+            {
+                return Problem(
+                    title: $"Source '{match.SourceName}' is not enabled. " +
+                           "Enable it via /Config (Sync Schedule tab) and restart, then retry.",
+                    statusCode: 400);
+            }
+            resolvedSource = match.SourceName;  // canonical casing
+        }
 
         // Pre-flight 409: gives instant feedback rather than enqueueing a
         // job that will immediately no-op on the mutex check inside the
@@ -98,17 +140,19 @@ public class ErpSyncAdminController : ControllerBase
                            ?? "(unknown)";
 
         var jobId = _bgClient.Enqueue<ErpSyncJob>(
-            j => j.RunForWarehouseAsync(req.WarehouseId, backfillDays, operatorName));
+            j => j.RunForWarehouseAsync(req.WarehouseId, backfillDays, operatorName, resolvedSource));
 
         _log.LogInformation(
-            "ErpSync manual trigger by {User} — jobId={JobId}, warehouse={Wh}, backfillDays={Days}",
-            operatorName, jobId, req.WarehouseId, backfillDays);
+            "ErpSync manual trigger by {User} — jobId={JobId}, warehouse={Wh}, " +
+            "backfillDays={Days}, source={Src}",
+            operatorName, jobId, req.WarehouseId, backfillDays, resolvedSource ?? "(all enabled)");
 
         return Accepted(new TriggerResponse
         {
             JobId = jobId,
             WarehouseId = req.WarehouseId,
             BackfillDays = backfillDays,
+            SourceName = resolvedSource ?? "",
             Message = "Sync enqueued — poll /jobs/{jobId} for state.",
         });
     }
