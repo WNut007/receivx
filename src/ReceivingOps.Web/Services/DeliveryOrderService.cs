@@ -1,5 +1,6 @@
 using System.Data;
 using System.Drawing;
+using System.IO;
 using FastReport;
 using FastReport.Utils;
 using Microsoft.Extensions.Options;
@@ -19,11 +20,13 @@ namespace ReceivingOps.Web.Services;
 /// A4 page per DoOrder, aggregated by (Item × PoLineNumber). No hour
 /// column on the printed paper (matches the HTML preview).
 ///
-/// Signature SVG is intentionally NOT rendered on the DO — the drawer
-/// already shows it with a Download PNG affordance; a SVG-to-PNG
-/// conversion for embedding into the report would need a separate
-/// rendering library (System.Drawing.Common can't parse SVG). Closer
-/// name + role + timestamp serve as the printed authorization marker.
+/// Signature rendering: PNG dataURL ("data:image/png;base64,...") is
+/// decoded and embedded above the AUTHORIZED BY divider as a FastReport
+/// PictureObject. Inline SVG markup is skipped — System.Drawing.Common
+/// can't parse SVG, so adding inline-SVG support would need SkiaSharp or
+/// Svg.NET. In both cases the text block (closer name + role + timestamp)
+/// still renders, so a broken or absent signature image never blocks the
+/// printed authorization marker.
 /// </summary>
 public class DeliveryOrderService : IDeliveryOrderService
 {
@@ -289,6 +292,17 @@ public class DeliveryOrderService : IDeliveryOrderService
         summaryBand.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 17,  85));
         summaryBand.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 17, 85));
 
+        // PNG signature mark above the AUTHORIZED BY divider, when the pull
+        // has a base64 PNG dataURL on file. Inline-SVG signatures fall
+        // through to text-only (see class-level summary for why).
+        var sigPng = DecodeSignaturePng(data.Pull.SignatureSvg);
+        if (sigPng is not null)
+        {
+            try { summaryBand.Objects.Add(MakeSignaturePicture($"AuthSig{idx}", 95, 8, 85, 8, sigPng)); }
+            catch (ArgumentException) { /* malformed PNG — fall back to text-only */ }
+            catch (OutOfMemoryException) { /* GDI+ throws this for invalid image streams */ }
+        }
+
         // LEFT: RECEIVED BY (physical signature happens on paper above the rule)
         summaryBand.Objects.Add(MakeText($"RcvLabel{idx}",  0, 19, 85, 5,
             "RECEIVED BY", fontSize: 8f, bold: true));
@@ -352,6 +366,56 @@ public class DeliveryOrderService : IDeliveryOrderService
                 Units.Millimeters * wMm,
                 0),
             Border = { Lines = BorderLines.Top, Width = 0.5f },
+        };
+    }
+
+    /// <summary>
+    /// Decodes a "data:image/png;base64,..." signature dataURL into raw PNG
+    /// bytes. Returns null for null/empty input, inline SVG strings, other
+    /// dataURL flavors, or malformed base64 — caller falls back to text-only.
+    /// </summary>
+    private static byte[]? DecodeSignaturePng(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        const string prefix = "data:image/png;base64,";
+        if (!raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        try { return Convert.FromBase64String(raw.Substring(prefix.Length)); }
+        catch (FormatException) { return null; }
+    }
+
+    /// <summary>
+    /// Decodes the PNG and pre-flattens it onto a white 24bpp canvas. Two
+    /// reasons: (1) PDFSimpleExport rasterizes pages to a JPEG and JPEG has
+    /// no alpha — transparent PNG pixels collapse to black, not white, in
+    /// the export pipeline, so we must flatten ourselves. (2) Copying away
+    /// from the MemoryStream lets us dispose the stream immediately without
+    /// GDI+ later failing on a closed source.
+    /// </summary>
+    private static PictureObject MakeSignaturePicture(string name, float xMm, float yMm,
+                                                      float wMm, float hMm, byte[] pngBytes)
+    {
+        Bitmap flat;
+        using (var ms = new MemoryStream(pngBytes))
+        using (var loaded = Image.FromStream(ms))
+        {
+            flat = new Bitmap(loaded.Width, loaded.Height,
+                              System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            using var g = Graphics.FromImage(flat);
+            g.Clear(Color.White);
+            g.DrawImage(loaded, 0, 0, loaded.Width, loaded.Height);
+        }
+        return new PictureObject
+        {
+            Name = name,
+            Bounds = new RectangleF(
+                Units.Millimeters * xMm,
+                Units.Millimeters * yMm,
+                Units.Millimeters * wMm,
+                Units.Millimeters * hMm),
+            // FastReport.Compat shims this enum under System.Windows.Forms;
+            // qualify to avoid a missing-namespace error.
+            SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom,
+            Image = flat,
         };
     }
 
