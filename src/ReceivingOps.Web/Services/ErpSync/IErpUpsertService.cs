@@ -27,6 +27,11 @@ public interface IErpUpsertService
     /// <param name="actorName"><c>"[system]"</c> for the recurring path or
     /// the operator's display name for the manual path. Recorded as the
     /// AuditLog actor on every row written by this service.</param>
+    /// <param name="sourceName">Phase 13.5 — short stable source identifier
+    /// (e.g. <c>"BPI_PRS"</c>, <c>"PRB_PRS"</c>) suffixed to every audit
+    /// message as <c>[source X]</c> so multi-source runs are drill-downable
+    /// by source. Null/blank suppresses the suffix (legacy single-source path).</param>
     Task<ErpUpsertResult> UpsertAsync(
-        ErpSyncDraft draft, Guid runId, string actorName, CancellationToken ct = default);
+        ErpSyncDraft draft, Guid runId, string actorName,
+        string? sourceName = null, CancellationToken ct = default);
 }

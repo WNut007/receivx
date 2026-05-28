@@ -56,11 +56,12 @@ Step "ErpSyncJob calls UpsertAsync after ReadAndTransformAsync"
 $jobBody = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\ErpSyncJob.cs')
 if ($jobBody -notmatch 'IErpUpsertService') { Fail "ErpSyncJob does not inject IErpUpsertService" }
 if ($jobBody -notmatch 'UpsertAsync\(draft') { Fail "ErpSyncJob does not call UpsertAsync(draft, …)" }
-# Order matters — read before upsert. Anchor on the call site
-# ("await _read.ReadAndTransformAsync(" / "await _upsert.UpsertAsync(") so
-# XML-doc comments mentioning the methods don't false-positive.
-$readPos = $jobBody.IndexOf('await _read.ReadAndTransformAsync(')
-$upsertPos = $jobBody.IndexOf('await _upsert.UpsertAsync(')
+# Order matters — read before upsert. Phase 13.5 fan-out loop calls
+# `plan.Source.ReadAndTransformAsync(...)` (rather than v3.2's _read
+# field), so anchor on the method names without binding to a specific
+# receiver. Avoids matching XML-doc comments by requiring the await.
+$readPos = $jobBody.IndexOf('.ReadAndTransformAsync(')
+$upsertPos = $jobBody.IndexOf('_upsert.UpsertAsync(')
 if ($readPos -lt 0 -or $upsertPos -lt 0 -or $readPos -gt $upsertPos) {
     Fail "ErpSyncJob must call ReadAndTransformAsync BEFORE UpsertAsync"
 }

@@ -22,9 +22,13 @@ public class ErpUpsertService : IErpUpsertService
     }
 
     public async Task<ErpUpsertResult> UpsertAsync(
-        ErpSyncDraft draft, Guid runId, string actorName, CancellationToken ct = default)
+        ErpSyncDraft draft, Guid runId, string actorName,
+        string? sourceName = null, CancellationToken ct = default)
     {
         var result = new ErpUpsertResult();
+        // Per-source audit suffix — e.g. " [source BPI_PRS]". Empty for
+        // legacy/single-source callers so v3.2 audit messages stay identical.
+        var srcTag = string.IsNullOrWhiteSpace(sourceName) ? "" : $" [source {sourceName}]";
 
         foreach (var pull in draft.Pulls)
         {
@@ -44,13 +48,13 @@ public class ErpUpsertService : IErpUpsertService
                 // Audit standalone (no tx) — never mutated anything.
                 await _audit.WriteSystemAsync(actorName, "etl-error", "Pull",
                     pull.PullNumber ?? null,
-                    $"[run {runId}] {detail}", ct);
+                    $"[run {runId}]{srcTag} {detail}", ct);
                 continue;
             }
 
             try
             {
-                await UpsertOneAsync(pull, result, runId, actorName, ct);
+                await UpsertOneAsync(pull, result, runId, actorName, srcTag, ct);
             }
             catch (Exception ex)
             {
@@ -69,7 +73,7 @@ public class ErpUpsertService : IErpUpsertService
                 // Audit outside the (rolled-back) tx so the error is visible
                 // regardless of mutation state.
                 await _audit.WriteSystemAsync(actorName, "etl-error", "Pull",
-                    pull.PullNumber, $"[run {runId}] {Truncate(detail, 900)}", ct);
+                    pull.PullNumber, $"[run {runId}]{srcTag} {Truncate(detail, 900)}", ct);
             }
         }
 
@@ -90,7 +94,8 @@ public class ErpUpsertService : IErpUpsertService
     // mutation happened, but the SKIP event itself should still be visible.
     // ------------------------------------------------------------------
     private async Task UpsertOneAsync(
-        PullDraft pull, ErpUpsertResult result, Guid runId, string actorName, CancellationToken ct)
+        PullDraft pull, ErpUpsertResult result, Guid runId,
+        string actorName, string srcTag, CancellationToken ct)
     {
         using var conn = _factory.Create();
         conn.Open();
@@ -111,7 +116,7 @@ public class ErpUpsertService : IErpUpsertService
             await InsertPullAsync(conn, tx, pull, ct);
             await _audit.WriteSystemAsync(conn, tx, actorName, "etl-create", "Pull",
                 pull.PullNumber,
-                $"[run {runId}] Created from BPI_PRS — items={pull.Items.Count}, " +
+                $"[run {runId}]{srcTag} Created from ERP — items={pull.Items.Count}, " +
                 $"totalExpected={pull.Items.Sum(i => i.Windows.Sum(w => w.ExpectedQty))}", ct);
             tx.Commit();
             result.Created++;
@@ -132,7 +137,7 @@ public class ErpUpsertService : IErpUpsertService
             tx.Rollback();
             await _audit.WriteSystemAsync(actorName, "etl-skip", "Pull",
                 pull.PullNumber,
-                $"[run {runId}] Skipped — pull is closed; ERP cannot revise signed pulls.", ct);
+                $"[run {runId}]{srcTag} Skipped — pull is closed; ERP cannot revise signed pulls.", ct);
             result.SkippedClosed++;
             result.PullOutcomes.Add(new PullOutcome
             {
@@ -150,7 +155,7 @@ public class ErpUpsertService : IErpUpsertService
         var deltaCanceled = result.ItemsCanceled - preItemsCanceled;
         await _audit.WriteSystemAsync(conn, tx, actorName, "etl-update", "Pull",
             pull.PullNumber,
-            $"[run {runId}] Updated from BPI_PRS — items={pull.Items.Count}, " +
+            $"[run {runId}]{srcTag} Updated from ERP — items={pull.Items.Count}, " +
             $"itemsAdded={deltaAdded}, itemsCanceled={deltaCanceled}", ct);
         tx.Commit();
         result.Updated++;

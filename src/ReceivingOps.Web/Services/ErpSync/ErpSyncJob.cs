@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Hangfire;
 using Microsoft.Extensions.Options;
 using ReceivingOps.Web.Data.Repositories;
@@ -8,27 +9,26 @@ using ReceivingOps.Web.Services;
 namespace ReceivingOps.Web.Services.ErpSync;
 
 /// <summary>
-/// Phase 10 — Hangfire-scheduled ETL pull from the ERP source DB.
+/// Phase 13.5 — Hangfire-scheduled ETL pull from the ERP source DB(s).
 ///
-/// <para>Two entry points:</para>
-/// <list type="bullet">
-///   <item><see cref="RunAsync"/>           — recurring; reads warehouse +
-///         backfill from <see cref="ErpSyncOptions"/>; audited as actor <c>[system]</c>.</item>
-///   <item><see cref="RunForWarehouseAsync"/> — manual; caller-provided
-///         warehouse + backfill + operator name; audited as the operator.</item>
-/// </list>
+/// <para>Fan-out: one fire iterates every <see cref="IErpSource"/> whose
+/// <see cref="IErpSource.Enabled"/> returns true, serially under one
+/// mutex acquisition + one <c>RunId</c>. Per-source counters land in
+/// <c>dbo.ErpSyncLog.SourceTotals</c> as JSON; the aggregate scalar
+/// columns (Created/Updated/SkippedClosed/...) hold the cross-source
+/// sum so the v3.2 status page query stays unchanged.</para>
 ///
-/// <para>Both paths share <see cref="ExecuteAsync"/> internally and both
-/// guard with the singleton <see cref="ErpSyncMutex"/>: the second caller
-/// returns early with a log line. Phase 10.5 wires audit-log writes for
-/// every run: start row, per-pull rows (in the upsert tx), end row.</para>
+/// <para>Two entry points: <see cref="RunAsync"/> (recurring; per-source
+/// defaults for WH + backfill) and <see cref="RunForWarehouseAsync"/>
+/// (manual; operator-picked WH + backfill applied to every enabled
+/// source — see operator UX recommendation in the Phase 13 design plan).</para>
 /// </summary>
 public class ErpSyncJob
 {
     /// <summary>Actor name recorded for ETL runs triggered by the recurring cron.</summary>
     public const string SystemActor = "[system]";
 
-    private readonly IErpSyncService _read;
+    private readonly IEnumerable<IErpSource> _sources;
     private readonly IErpUpsertService _upsert;
     private readonly IAuditService _audit;
     private readonly IErpSyncLogRepository _logRepo;
@@ -37,7 +37,7 @@ public class ErpSyncJob
     private readonly ILogger<ErpSyncJob> _log;
 
     public ErpSyncJob(
-        IErpSyncService read,
+        IEnumerable<IErpSource> sources,
         IErpUpsertService upsert,
         IAuditService audit,
         IErpSyncLogRepository logRepo,
@@ -45,7 +45,7 @@ public class ErpSyncJob
         ErpSyncMutex mutex,
         ILogger<ErpSyncJob> log)
     {
-        _read = read;
+        _sources = sources;
         _upsert = upsert;
         _audit = audit;
         _logRepo = logRepo;
@@ -56,35 +56,26 @@ public class ErpSyncJob
 
     /// <summary>
     /// Recurring entry point — Hangfire calls this on the configured
-    /// cron. Reads warehouse + backfill from <see cref="ErpSyncOptions"/>;
-    /// skips silently if DefaultWarehouseId is unset.
+    /// cron. Each enabled source uses its OWN
+    /// <c>ErpSync:Sources:X:DefaultWarehouseId</c> +
+    /// <c>:BackfillDays</c>. Empty WH on every enabled source aborts
+    /// the run.
     /// </summary>
     [DisableConcurrentExecution(timeoutInSeconds: 600)]
     [Queue("erp-sync")]
     public async Task RunAsync()
     {
-        // 13.4 — recurring path now reads BPI's per-source warehouse default
-        // for the ExecuteAsync call. 13.5 will refactor ExecuteAsync to read
-        // per-source warehouse + backfill INSIDE the fan-out loop; until then
-        // the BPI source's defaults preserve v3.2 recurring behavior.
-        var bpiWarehouse = _opts.Sources.Bpi.DefaultWarehouseId;
-        var bpiBackfill = _opts.Sources.Bpi.BackfillDays;
-        if (bpiWarehouse == Guid.Empty)
-        {
-            _log.LogInformation(
-                "ErpSync recurring fired but ErpSync:Sources:Bpi:DefaultWarehouseId is unset — skipping. " +
-                "Set it via /Config or use the manual-trigger UI to pick a warehouse.");
-            return;
-        }
-        await ExecuteAsync(bpiWarehouse, bpiBackfill,
+        await ExecuteAsync(
+            overrideWarehouse: null, overrideBackfillDays: null,
             trigger: "recurring", actorName: SystemActor);
     }
 
     /// <summary>
     /// Manual-trigger entry point — admin picks the warehouse + backfill
-    /// via the UI / API. Hangfire serializes the parameters into the job
-    /// payload so the worker thread sees the operator's values, not the
-    /// recurring options.
+    /// via the UI / API. Those values apply to EVERY enabled source in
+    /// this fire (per the Phase 13 design recommendation — keeps the
+    /// trigger UI simple). Hangfire serializes the parameters into the
+    /// job payload so the worker thread sees the operator's values.
     /// </summary>
     [DisableConcurrentExecution(timeoutInSeconds: 600)]
     [Queue("erp-sync")]
@@ -96,23 +87,35 @@ public class ErpSyncJob
             return;
         }
         var safeActor = string.IsNullOrWhiteSpace(actorName) ? "(unknown)" : actorName;
-        await ExecuteAsync(warehouseId, backfillDays, trigger: "manual", actorName: safeActor);
+        await ExecuteAsync(
+            overrideWarehouse: warehouseId, overrideBackfillDays: backfillDays,
+            trigger: "manual", actorName: safeActor);
     }
 
     // ------------------------------------------------------------------
-    // Shared body — mutex-guarded, audit-bracketed.
+    // Shared body — mutex-guarded, audit-bracketed, per-source loop.
     //
-    //   - One 'etl-start' audit row before read+transform begins.
-    //   - Per-pull rows are written by ErpUpsertService.UpsertAsync.
-    //   - One 'etl-complete' audit row when the run finishes successfully.
-    //   - One 'etl-error' audit row + rethrow when the run fails — Hangfire
-    //     marks the job Failed so the status endpoint surfaces it.
+    //   - One 'etl-start' audit row at the run level.
+    //   - For each enabled source: ReadAndTransform + UpsertAsync
+    //     (which writes per-pull etl-create/update/skip rows tagged
+    //     [source X]).
+    //   - SourceTotals JSON is written to dbo.ErpSyncLog so the status
+    //     page drill-down can render the per-source split.
+    //   - One 'etl-end' audit row at the run level.
+    //   - One 'etl-error' audit row + rethrow if anything goes wrong.
     //
-    // runId is generated at the start of each invocation and stamped into
-    // every audit row's Message so the 10.6 status page can group all rows
-    // for one run.
+    // When overrides are non-null, every enabled source uses the
+    // override values (manual path). When null, each source uses its
+    // own per-source defaults (recurring path).
+    //
+    // dbo.ErpSyncLog has a single WarehouseId column. We store the
+    // FIRST enabled source's effective warehouse — keeps the v3.2
+    // schema invariants while the per-source breakdown lives in
+    // SourceTotals JSON.
     // ------------------------------------------------------------------
-    private async Task ExecuteAsync(Guid warehouseId, int backfillDays, string trigger, string actorName)
+    private async Task ExecuteAsync(
+        Guid? overrideWarehouse, int? overrideBackfillDays,
+        string trigger, string actorName)
     {
         if (!_mutex.TryAcquire())
         {
@@ -122,68 +125,113 @@ public class ErpSyncJob
             return;
         }
 
+        var enabledSources = _sources.Where(s => s.Enabled).ToList();
+        if (enabledSources.Count == 0)
+        {
+            _log.LogInformation(
+                "ErpSync {Trigger} fired but no sources are enabled — skipping.", trigger);
+            _mutex.Release();
+            return;
+        }
+
+        // Build the per-source plan (warehouse + backfill) up front so the
+        // log row can be written with a representative WH before any source
+        // runs. Also lets us bail early if every enabled source has an
+        // unset DefaultWarehouseId on the recurring path.
+        var plans = enabledSources.Select(s =>
+        {
+            var wh = overrideWarehouse ?? PerSourceWarehouse(s);
+            var bd = overrideBackfillDays ?? PerSourceBackfillDays(s);
+            return new SourcePlan(s, wh, bd);
+        }).ToList();
+
+        var runnable = plans.Where(p => p.WarehouseId != Guid.Empty).ToList();
+        if (runnable.Count == 0)
+        {
+            _log.LogInformation(
+                "ErpSync {Trigger} fire skipped — every enabled source has an unset DefaultWarehouseId. " +
+                "Configure ErpSync:Sources:<X>:DefaultWarehouseId via /Config or use the manual trigger.",
+                trigger);
+            _mutex.Release();
+            return;
+        }
+
         var runId = Guid.NewGuid();
         var sw = Stopwatch.StartNew();
+        // Representative WH for the log header: first runnable source's WH.
+        var headerWh = runnable[0].WarehouseId;
+        var headerBd = runnable[0].BackfillDays;
 
-        // 10.6 — denormalized summary row for the status page list. INSERT
-        // BEFORE the start-audit so the row's CreatedAt sequence is
-        // log-then-audit; failures hereafter still leave a visible row.
-        await _logRepo.InsertStartAsync(runId, trigger, actorName, warehouseId, backfillDays);
+        await _logRepo.InsertStartAsync(runId, trigger, actorName, headerWh, headerBd);
 
         await _audit.WriteSystemAsync(actorName, "etl-start", "ErpSync",
             runId.ToString(),
-            $"[run {runId}] Triggered by {trigger} — warehouse={warehouseId}, backfillDays={backfillDays}");
+            $"[run {runId}] Triggered by {trigger} — sources=[{string.Join(",", runnable.Select(p => p.Source.SourceName))}]");
 
         try
         {
-            _log.LogInformation(
-                "ErpSync {Trigger} starting — runId={RunId}, warehouse={Wh}, backfillDays={Days}",
-                trigger, runId, warehouseId, backfillDays);
+            var totals = new ErpSyncLogTotals();
+            var sourceTotals = new Dictionary<string, PerSourceTotals>(StringComparer.Ordinal);
 
-            var draft = await _read.ReadAndTransformAsync(warehouseId, backfillDays);
-
-            _log.LogInformation(
-                "ErpSync transform — runId={RunId}, source={Src}, skipped={Skip}, " +
-                "pulls={Pulls}, items={Items}, totalExpected={Exp}",
-                runId, draft.SourceRowCount, draft.SkippedRowCount,
-                draft.Pulls.Count, draft.ItemCount, draft.TotalExpected);
-
-            ErpUpsertResult outcome;
-            if (draft.Pulls.Count == 0)
+            foreach (var plan in runnable)
             {
-                _log.LogInformation("ErpSync transform produced no pulls — skipping upsert.");
-                outcome = new ErpUpsertResult();
-            }
-            else
-            {
-                outcome = await _upsert.UpsertAsync(draft, runId, actorName);
                 _log.LogInformation(
-                    "ErpSync upsert — runId={RunId}, created={Created}, updated={Updated}, " +
-                    "skippedClosed={Skipped}, errors={Errors}, " +
-                    "itemsAdded={Added}, itemsCanceled={Canceled}",
-                    runId, outcome.Created, outcome.Updated, outcome.SkippedClosed,
-                    outcome.Errors, outcome.ItemsAdded, outcome.ItemsCanceled);
+                    "ErpSync {Trigger} — source={Src}, warehouse={Wh}, backfillDays={Days}, runId={RunId}",
+                    trigger, plan.Source.SourceName, plan.WarehouseId, plan.BackfillDays, runId);
+
+                var draft = await plan.Source.ReadAndTransformAsync(plan.WarehouseId, plan.BackfillDays);
+
+                totals.SourceRowCount += draft.SourceRowCount;
+                totals.DraftPullCount += draft.Pulls.Count;
+
+                ErpUpsertResult outcome;
+                if (draft.Pulls.Count == 0)
+                {
+                    _log.LogInformation(
+                        "ErpSync transform produced no pulls for {Src} — skipping upsert.",
+                        plan.Source.SourceName);
+                    outcome = new ErpUpsertResult();
+                }
+                else
+                {
+                    outcome = await _upsert.UpsertAsync(draft, runId, actorName, plan.Source.SourceName);
+                }
+
+                totals.Created       += outcome.Created;
+                totals.Updated       += outcome.Updated;
+                totals.SkippedClosed += outcome.SkippedClosed;
+                totals.Errors        += outcome.Errors;
+                totals.ItemsAdded    += outcome.ItemsAdded;
+                totals.ItemsCanceled += outcome.ItemsCanceled;
+
+                sourceTotals[plan.Source.SourceName] = new PerSourceTotals
+                {
+                    SourceRowCount = draft.SourceRowCount,
+                    DraftPullCount = draft.Pulls.Count,
+                    Created        = outcome.Created,
+                    Updated        = outcome.Updated,
+                    SkippedClosed  = outcome.SkippedClosed,
+                    Errors         = outcome.Errors,
+                    ItemsAdded     = outcome.ItemsAdded,
+                    ItemsCanceled  = outcome.ItemsCanceled,
+                };
             }
 
             sw.Stop();
-            await _logRepo.MarkSucceededAsync(runId, new ErpSyncLogTotals
-            {
-                SourceRowCount = draft.SourceRowCount,
-                DraftPullCount = draft.Pulls.Count,
-                Created        = outcome.Created,
-                Updated        = outcome.Updated,
-                SkippedClosed  = outcome.SkippedClosed,
-                Errors         = outcome.Errors,
-                ItemsAdded     = outcome.ItemsAdded,
-                ItemsCanceled  = outcome.ItemsCanceled,
-            }, (int)sw.ElapsedMilliseconds);
+            await _logRepo.MarkSucceededAsync(runId, totals, (int)sw.ElapsedMilliseconds);
+            // SourceTotals written separately — keeps MarkSucceededAsync's
+            // SQL shape unchanged for v3.2 callers (smokes that read the
+            // log row by other means).
+            await _logRepo.UpdateSourceTotalsAsync(runId,
+                JsonSerializer.Serialize(sourceTotals));
+
+            var perSourceSummary = string.Join(", ",
+                sourceTotals.Select(kv =>
+                    $"{kv.Key}=(c={kv.Value.Created},u={kv.Value.Updated},s={kv.Value.SkippedClosed},e={kv.Value.Errors})"));
             await _audit.WriteSystemAsync(actorName, "etl-end", "ErpSync",
                 runId.ToString(),
                 $"[run {runId}] Completed in {sw.ElapsedMilliseconds}ms — " +
-                $"sourceRows={draft.SourceRowCount}, transformed={draft.Pulls.Count}, " +
-                $"created={outcome.Created}, updated={outcome.Updated}, " +
-                $"skippedClosed={outcome.SkippedClosed}, errors={outcome.Errors}, " +
-                $"itemsAdded={outcome.ItemsAdded}, itemsCanceled={outcome.ItemsCanceled}");
+                $"sources=[{string.Join(",", sourceTotals.Keys)}] — {perSourceSummary}");
         }
         catch (Exception ex)
         {
@@ -206,5 +254,38 @@ public class ErpSyncJob
         {
             _mutex.Release();
         }
+    }
+
+    // Per-source defaults — recurring path. Adding a new source means
+    // adding a switch arm here AND a Sources sub-property on ErpSyncOptions.
+    private Guid PerSourceWarehouse(IErpSource s) => s.SourceName switch
+    {
+        "BPI_PRS" => _opts.Sources.Bpi.DefaultWarehouseId,
+        "PRB_PRS" => _opts.Sources.Prb.DefaultWarehouseId,
+        _ => Guid.Empty,
+    };
+
+    private int PerSourceBackfillDays(IErpSource s) => s.SourceName switch
+    {
+        "BPI_PRS" => _opts.Sources.Bpi.BackfillDays,
+        "PRB_PRS" => _opts.Sources.Prb.BackfillDays,
+        _ => 30,
+    };
+
+    private sealed record SourcePlan(IErpSource Source, Guid WarehouseId, int BackfillDays);
+
+    // JSON shape stored in dbo.ErpSyncLog.SourceTotals. Property names are
+    // camelCased by JsonSerializer defaults below — match the casing
+    // contract the /api/admin/erp-sync responses use elsewhere.
+    private sealed class PerSourceTotals
+    {
+        public int SourceRowCount { get; set; }
+        public int DraftPullCount { get; set; }
+        public int Created { get; set; }
+        public int Updated { get; set; }
+        public int SkippedClosed { get; set; }
+        public int Errors { get; set; }
+        public int ItemsAdded { get; set; }
+        public int ItemsCanceled { get; set; }
     }
 }
