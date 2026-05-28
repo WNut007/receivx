@@ -298,6 +298,10 @@ public class PullRepository : IPullRepository
     //   SUM > 0 drops (PO × Line × Item) tuples that net to zero.
     public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default)
     {
+        // The 8 ERP-sourced extended fields below are invariant per
+        // (PoId, LineNumber). MAX() lets us surface them without extending
+        // GROUP BY (which would otherwise need duplicate listing of every
+        // attribute) and is a no-op on uniqueness — never multiplies rows.
         const string sql = @"
             SELECT  po.Id           AS PoId,
                     po.PoNumber,
@@ -307,7 +311,15 @@ public class PullRepository : IPullRepository
                     pol.LineNumber  AS PoLineNumber,
                     pol.ItemCode,
                     pol.Description,
-                    SUM(r.QtyReceived) AS TotalQty
+                    SUM(r.QtyReceived) AS TotalQty,
+                    MAX(pol.PalletId)     AS PalletId,
+                    MAX(pol.OrderId)      AS OrderId,
+                    MAX(pol.InvoiceNo)    AS InvoiceNo,
+                    MAX(pol.KanbanNo)     AS KanbanNo,
+                    MAX(pol.SubInventory) AS SubInventory,
+                    MAX(pol.ToLocation)   AS ToLocation,
+                    MAX(pol.AsnNo)        AS AsnNo,
+                    MAX(pol.OrderRound)   AS OrderRound
             FROM    dbo.Receipts r
             INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
             INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId

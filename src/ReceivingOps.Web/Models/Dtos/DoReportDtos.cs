@@ -60,6 +60,18 @@ public class DoLine
     public string PoLineRef { get; set; } = "";
     /// <summary>Net qty after aggregating across hours + reversals.</summary>
     public int TotalQty { get; set; }
+
+    // ERP-sourced PoLine attributes surfaced on the DO at line grain.
+    // Sourced via MAX(pol.X) in GetDoReportRowsAsync — invariant per
+    // (PoId, LineNumber) so the aggregation is exact, not lossy.
+    public string? PalletId { get; set; }
+    public string? OrderId { get; set; }
+    public string? InvoiceNo { get; set; }
+    public string? KanbanNo { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+    public string? AsnNo { get; set; }
+    public string? OrderRound { get; set; }
 }
 
 /// <summary>
@@ -78,4 +90,14 @@ public class DoReportRow
     public string ItemCode { get; set; } = "";
     public string Description { get; set; } = "";
     public int TotalQty { get; set; }
+
+    // ERP-sourced PoLine attributes (MAX() over the aggregation grain).
+    public string? PalletId { get; set; }
+    public string? OrderId { get; set; }
+    public string? InvoiceNo { get; set; }
+    public string? KanbanNo { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+    public string? AsnNo { get; set; }
+    public string? OrderRound { get; set; }
 }

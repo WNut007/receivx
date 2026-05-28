@@ -353,6 +353,29 @@
   }
   .do-lines tfoot td.num { color: var(--text); font-size: 14px; }
 
+  /* ERP detail strip beneath each primary line — verify-grade layout.
+     The primary row keeps its bottom border off; the detail row owns it
+     so the (primary, detail) pair reads as one visual line. */
+  .do-lines tbody tr.do-line-primary td { border-bottom: none; }
+  .do-lines tbody tr.do-line-detail td {
+    padding: 0 10px 8px;
+    border-bottom: 1px solid var(--surface-3);
+  }
+  .do-detail-grid {
+    display: flex; flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .do-detail-grid label {
+    display: inline-block;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+    opacity: 0.7;
+  }
+
   .do-footer {
     display: grid; grid-template-columns: 1fr 1fr;
     gap: 24px;

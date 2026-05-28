@@ -69,6 +69,14 @@ public class DeliveryOrderService : IDeliveryOrderService
                     PoLineNumber = r.PoLineNumber,
                     PoLineRef    = $"{head.PoNumber}·L{r.PoLineNumber}",
                     TotalQty     = r.TotalQty,
+                    PalletId     = r.PalletId,
+                    OrderId      = r.OrderId,
+                    InvoiceNo    = r.InvoiceNo,
+                    KanbanNo     = r.KanbanNo,
+                    SubInventory = r.SubInventory,
+                    ToLocation   = r.ToLocation,
+                    AsnNo        = r.AsnNo,
+                    OrderRound   = r.OrderRound,
                 }).ToList();
                 return new DoOrder
                 {
@@ -195,10 +203,13 @@ public class DeliveryOrderService : IDeliveryOrderService
         titleBand.Objects.Add(MakeText($"HdrQty{idx}", 160,  64, 20, 6, "QTY",         fontSize: 8f, bold: true, align: HorzAlign.Right));
 
         // ----- Data band: one row per aggregated line -----
+        // 12 mm height = primary cells row (5 mm) + ERP detail strip (~6 mm).
+        // The detail TextObject uses CanGrow so a row that wraps to a second
+        // text line still fits inside the allotted height.
         var dataBand = new DataBand
         {
             Name = $"DeliveryRows{idx}",
-            Height = Units.Millimeters * 6f,
+            Height = Units.Millimeters * 12f,
         };
         page.AddChild(dataBand);
 
@@ -208,9 +219,28 @@ public class DeliveryOrderService : IDeliveryOrderService
         table.Columns.Add("Description", typeof(string));
         table.Columns.Add("PoLineRef",   typeof(string));
         table.Columns.Add("TotalQty",    typeof(int));
+        table.Columns.Add("PalletId",     typeof(string));
+        table.Columns.Add("OrderId",      typeof(string));
+        table.Columns.Add("InvoiceNo",    typeof(string));
+        table.Columns.Add("KanbanNo",     typeof(string));
+        table.Columns.Add("SubInventory", typeof(string));
+        table.Columns.Add("ToLocation",   typeof(string));
+        table.Columns.Add("AsnNo",        typeof(string));
+        table.Columns.Add("OrderRound",   typeof(string));
         foreach (var line in order.Lines)
         {
-            table.Rows.Add(line.ItemCode, line.Description, line.PoLineRef, line.TotalQty);
+            // Persist "—" for nulls so empty PoLine fields are visually
+            // distinguishable from a rendering bug in the PDF.
+            table.Rows.Add(
+                line.ItemCode, line.Description, line.PoLineRef, line.TotalQty,
+                line.PalletId     ?? "—",
+                line.OrderId      ?? "—",
+                line.InvoiceNo    ?? "—",
+                line.KanbanNo     ?? "—",
+                line.SubInventory ?? "—",
+                line.ToLocation   ?? "—",
+                line.AsnNo        ?? "—",
+                line.OrderRound   ?? "—");
         }
         report.RegisterData(table, dsName);
         var ds = report.GetDataSource(dsName)
@@ -222,6 +252,16 @@ public class DeliveryOrderService : IDeliveryOrderService
         dataBand.Objects.Add(MakeText($"ColDesc{idx}",  35, 0, 85, 5, $"[{dsName}.Description]", fontSize: 9f));
         dataBand.Objects.Add(MakeText($"ColPo{idx}",   120, 0, 40, 5, $"[{dsName}.PoLineRef]",   fontSize: 9f));
         dataBand.Objects.Add(MakeText($"ColQty{idx}",  160, 0, 20, 5, $"[{dsName}.TotalQty]",    fontSize: 9f, align: HorzAlign.Right));
+
+        // ERP detail strip — one text block below the primary cells.
+        // Verify-grade layout only; this is single-line at 7 pt and will
+        // wrap (CanGrow) if a value is long. Polish deferred.
+        var detailText =
+            $"Pallet [{dsName}.PalletId]   Order [{dsName}.OrderId]   " +
+            $"Invoice [{dsName}.InvoiceNo]   Kanban [{dsName}.KanbanNo]   " +
+            $"Sub-Inv [{dsName}.SubInventory]   To-Loc [{dsName}.ToLocation]   " +
+            $"ASN [{dsName}.AsnNo]   Round [{dsName}.OrderRound]";
+        dataBand.Objects.Add(MakeText($"ColDetail{idx}", 0, 6, 180, 5, detailText, fontSize: 7f));
 
         // ----- Summary band: per-DO total + close-auth -----
         var summaryBand = new ReportSummaryBand

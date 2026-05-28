@@ -81,11 +81,25 @@
                 <tbody>
                     @foreach (var line in order.Lines)
                     {
-                        <tr>
+                        <tr class="do-line-primary">
                             <td class="mono">@line.ItemCode</td>
                             <td>@line.Description</td>
                             <td class="mono">@line.PoLineRef</td>
                             <td class="num">@line.TotalQty.ToString("N0")</td>
+                        </tr>
+                        <tr class="do-line-detail">
+                            <td colspan="4">
+                                <div class="do-detail-grid">
+                                    <span><label>Pallet</label> @(line.PalletId ?? "—")</span>
+                                    <span><label>Order ID</label> @(line.OrderId ?? "—")</span>
+                                    <span><label>Invoice</label> @(line.InvoiceNo ?? "—")</span>
+                                    <span><label>Kanban</label> @(line.KanbanNo ?? "—")</span>
+                                    <span><label>Sub-Inv</label> @(line.SubInventory ?? "—")</span>
+                                    <span><label>To-Loc</label> @(line.ToLocation ?? "—")</span>
+                                    <span><label>ASN</label> @(line.AsnNo ?? "—")</span>
+                                    <span><label>Round</label> @(line.OrderRound ?? "—")</span>
+                                </div>
+                            </td>
                         </tr>
                     }
                 </tbody>
