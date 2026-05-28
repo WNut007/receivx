@@ -1,20 +1,28 @@
-# Smoke: Phase 13.8 — source-selectable trigger modal + backend.
+# Smoke: Phase 13.9 — trigger uses per-source config (warehouse + backfill).
 #
-# Verifies the full source-filter flow added in 13.8.1-13.8.3:
+# Renamed from smoke-phase-13-8-trigger-source.ps1. 13.8 added the source
+# dropdown; 13.9 stripped the warehouse + backfill inputs from the modal
+# and switched the controller to enqueue RunNowAsync (which reads each
+# source's DefaultWarehouseId + BackfillDays from /Config).
 #
-#   1. Both /Admin/ErpSync and /Dashboard render the shared partial
-#      with the SOURCE dropdown + dynamic source-label hook.
-#   2. The component JS (erp-source-dropdown.js) is statically served.
-#   3. POST /api/admin/erp-sync/trigger with sourceName="" (all
-#      enabled) returns 202 + response.sourceName = "".
-#   4. POST with sourceName="BPI_PRS" returns 202 + echo. The job's
-#      ErpSyncLog row's SourceTotals JSON has ONLY a BPI_PRS entry
-#      (PRB absent even when enabled — proves the per-source filter
-#      actually narrowed the fan-out).
-#   5. POST with sourceName="BOGUS_PRS" returns 400 with a helpful
-#      "Known: BPI_PRS, PRB_PRS" message.
-#   6. POST with sourceName="<disabled-source>" returns 400 with the
-#      "not enabled" hint (skipped when both sources are on).
+# This smoke now verifies BOTH:
+#   * the 13.8 contract (dropdown render, single-source filter, 400s) — unchanged
+#   * the 13.9 contract (modal markup shrinks, payload is sourceName-only,
+#     run uses the per-source config WH, extra payload fields ignored)
+#
+# Asserts:
+#   1. Both pages render: source dropdown + dynamic label PRESENT,
+#      warehouse/backfill DOM fields ABSENT (the 13.9 shrink).
+#   2. Component JS still served.
+#   3. POST { sourceName=null } returns 202 + response.sourceName="".
+#   4. POST { sourceName="<enabled>" } returns 202 + echo, ErpSyncLog
+#      SourceTotals contains ONLY that source, AND the row's
+#      WarehouseId column equals the source's config DefaultWarehouseId
+#      (proves the worker uses per-source config — Phase 13.9.1).
+#   5. POST { sourceName="BOGUS_PRS" } → 400 with "Known: ..." detail.
+#   6. POST { sourceName="<disabled>" } → 400 (skipped when both on).
+#   7. POST with extra legacy fields (warehouseId, backfillDays) is
+#      tolerated — the controller ignores them and still returns 202.
 #
 # Preconditions:
 #   - Dev server up
@@ -93,7 +101,15 @@ foreach ($pair in @(
     if ($pair.Html -match '<code>BPI_PRS</code>') {
         Fail "$($pair.Name) page still has hardcoded <code>BPI_PRS</code> — should be dynamic"
     }
-    OK "$($pair.Name) renders modal + source dropdown + dynamic label, no hardcoded BPI_PRS"
+    # Phase 13.9.2 — warehouse + backfill fields MUST be absent. Operators
+    # no longer choose them at trigger time; the worker uses per-source config.
+    if ($pair.Html -match [regex]::Escape("id=`"$($pair.Prefix)-warehouse`"")) {
+        Fail "$($pair.Name) page still has warehouse field id=`"$($pair.Prefix)-warehouse`" — should be removed in 13.9.2"
+    }
+    if ($pair.Html -match [regex]::Escape("id=`"$($pair.Prefix)-backfill-days`"")) {
+        Fail "$($pair.Name) page still has backfill field id=`"$($pair.Prefix)-backfill-days`" — should be removed in 13.9.2"
+    }
+    OK "$($pair.Name) renders source dropdown only (warehouse + backfill fields removed)"
 }
 
 # ----------------------------------------------------------------------------
@@ -131,7 +147,7 @@ if ($enabled.Count -eq 0) {
 # 4. Unknown source → 400
 # ----------------------------------------------------------------------------
 Step "4. Unknown source name returns 400"
-$bogusBody = @{ warehouseId=$WH_01; backfillDays=1; sourceName='BOGUS_PRS' } | ConvertTo-Json
+$bogusBody = @{ sourceName='BOGUS_PRS' } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
         -Body $bogusBody -ContentType 'application/json' -WebSession $admin `
@@ -161,7 +177,7 @@ if ($disabled.Count -eq 0) {
     Skip "All known sources are enabled — disabled-rejection path not exercisable in this env"
 } else {
     $target = $disabled[0]
-    $disBody = @{ warehouseId=$WH_01; backfillDays=1; sourceName=$target } | ConvertTo-Json
+    $disBody = @{ sourceName=$target } | ConvertTo-Json
     try {
         Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
             -Body $disBody -ContentType 'application/json' -WebSession $admin `
@@ -209,11 +225,14 @@ if ($hasErpDb) {
 if (-not $reachable) {
     Skip "ERP DB unreachable — single-source SourceTotals check skipped (controller pre-flight already verified above)"
     Write-Host ""
-    Write-Host "ALL PASS — Phase 13.8 trigger source: UI + 400 paths verified (integration skipped)." -ForegroundColor Green
+    Write-Host "ALL PASS — Phase 13.9 trigger config: UI + 400 paths verified (integration skipped)." -ForegroundColor Green
     exit 0
 }
 
-$trigBody = @{ warehouseId=$WH_01; backfillDays=1; sourceName=$target } | ConvertTo-Json
+# Phase 13.9.3 — payload is sourceName only. Warehouse + backfill come from
+# per-source config (server reads ErpSync:Sources:<X>:DefaultWarehouseId +
+# :BackfillDays).
+$trigBody = @{ sourceName=$target } | ConvertTo-Json
 $trig = Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
     -Body $trigBody -ContentType 'application/json' -WebSession $admin -UseBasicParsing
 if ($trig.StatusCode -ne 202) { Fail "Single-source trigger returned $($trig.StatusCode)" }
@@ -240,6 +259,18 @@ if ($keys.Count -ne 1 -or $keys[0] -ne $target) {
 }
 OK "SourceTotals contains only '$target' — single-source filter honored end-to-end"
 
+# Phase 13.9.1 — verify the run used the source's PER-SOURCE config WH
+# (not some operator-picked one — that's the whole point of the 13.9 reshape).
+$sourceConfigKey = if ($target -eq 'BPI_PRS') { 'Bpi' } elseif ($target -eq 'PRB_PRS') { 'Prb' } else { $null }
+if ($sourceConfigKey) {
+    $configWh = $cfg.values."ErpSync:Sources:${sourceConfigKey}:DefaultWarehouseId"
+    if ($newest.warehouseId -ne $configWh) {
+        Fail ("ErpSyncLog row WH = '$($newest.warehouseId)'; expected '$configWh' " +
+              "(source $target's configured DefaultWarehouseId — 13.9.1 worker should use per-source config)")
+    }
+    OK "Run used per-source config WH ('$configWh') — 13.9.1 RunNowAsync honored"
+}
+
 # ----------------------------------------------------------------------------
 # 7. All-enabled trigger — sourceName null/empty, SourceTotals = full enabled set
 #    Only meaningful with 2+ sources enabled.
@@ -248,7 +279,9 @@ Step "7. All-enabled trigger (sourceName null) — SourceTotals = full enabled s
 if ($enabled.Count -lt 2) {
     Skip "Only 1 source enabled — 'all enabled' is indistinguishable from 'single-source' here"
 } else {
-    $allBody = @{ warehouseId=$WH_01; backfillDays=1 } | ConvertTo-Json
+    # Empty body — no sourceName, no warehouse, no backfill. Worker uses
+    # per-source config for each enabled source.
+    $allBody = '{}'
     $allTrig = Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
         -Body $allBody -ContentType 'application/json' -WebSession $admin -UseBasicParsing
     if ($allTrig.StatusCode -ne 202) { Fail "All-enabled trigger returned $($allTrig.StatusCode)" }
@@ -272,6 +305,28 @@ if ($enabled.Count -lt 2) {
     OK "All-enabled trigger 202, empty sourceName echo, SourceTotals = full enabled set [$($allKeys -join ',')]"
 }
 
+# ----------------------------------------------------------------------------
+# 8. Phase 13.9 — extra/legacy payload fields tolerated (System.Text.Json
+#    silently ignores unknown body fields). Stale clients still sending
+#    warehouseId + backfillDays should not get 400.
+# ----------------------------------------------------------------------------
+Step "8. Stale clients sending warehouseId + backfillDays are tolerated"
+$legacyBody = @{
+    sourceName = $null;
+    warehouseId = '00000000-0000-0000-0000-000000000099';
+    backfillDays = 99;
+} | ConvertTo-Json
+$legacyTrig = Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
+    -Body $legacyBody -ContentType 'application/json' -WebSession $admin -UseBasicParsing
+if ($legacyTrig.StatusCode -ne 202) {
+    Fail "Legacy-payload trigger returned $($legacyTrig.StatusCode); expected 202"
+}
+$legacyData = $legacyTrig.Content | ConvertFrom-Json
+if (-not $legacyData.jobId) { Fail "Legacy-payload trigger missing jobId" }
+# Drain so the next smoke can grab the mutex.
+$null = WaitForJob $admin $legacyData.jobId 120
+OK "Legacy fields ignored; trigger still 202 with jobId=$($legacyData.jobId)"
+
 Write-Host ""
-Write-Host "ALL PASS — Phase 13.8 trigger source: UI + 400 paths + single-source filter + all-enabled verified." -ForegroundColor Green
+Write-Host "ALL PASS — Phase 13.9 trigger config: UI shrink + per-source config + all-enabled + legacy tolerance verified." -ForegroundColor Green
 exit 0

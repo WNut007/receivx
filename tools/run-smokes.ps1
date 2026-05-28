@@ -79,7 +79,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-10-6-erp-sync-page.ps1'
         'smoke-phase-10-7-erp-bpi.ps1'
         'smoke-phase-13-7-erp-prb.ps1'
-        'smoke-phase-13-8-trigger-source.ps1'
+        'smoke-phase-13-9-trigger-config.ps1'
         'smoke-phase-11-1-app-settings.ps1'
         'smoke-phase-11-2-config-ui.ps1'
         'smoke-phase-12-2-po-import-reader.ps1'

@@ -162,10 +162,10 @@
     function initSyncModal() {
         const modalEl = document.getElementById('syncModal');
         const modal = new bootstrap.Modal(modalEl);
-        const sourceSel = document.getElementById('sync-source');        // Phase 13.8.3
-        const sourceLabel = document.getElementById('sync-source-label');// Phase 13.8.3
-        const whSel = document.getElementById('sync-warehouse');
-        const daysEl = document.getElementById('sync-backfill-days');
+        // Phase 13.9.2 — warehouse + backfill selectors removed; the worker
+        // path (RunNowAsync) reads them from per-source config instead.
+        const sourceSel = document.getElementById('sync-source');
+        const sourceLabel = document.getElementById('sync-source-label');
         const trigBtn = document.getElementById('sync-trigger');
         const cancelBtn = document.getElementById('sync-cancel');
         const statusEl = document.getElementById('sync-status');
@@ -181,8 +181,6 @@
             trigBtn.disabled = busy;
             cancelBtn.disabled = busy;
             sourceSel.disabled = busy;
-            whSel.disabled = busy;
-            daysEl.disabled = busy;
             trigBtn.innerHTML = busy
                 ? '<span class="spinner-border spinner-border-sm me-1"></span> Syncing…'
                 : 'Start sync';
@@ -191,12 +189,9 @@
         document.getElementById('btn-sync-now').addEventListener('click', async () => {
             clearStatus();
             setBusy(false);
-            // Phase 13.8.3 — populate the SOURCE dropdown each open so a
-            // /Config + restart change is reflected next modal show.
+            // Populate the SOURCE dropdown each open so a /Config + restart
+            // change is reflected next modal show.
             await window.ErpSourceDropdown.populate({ selectEl: sourceSel, labelEl: sourceLabel });
-            await ensureWarehouses();
-            populateWarehouseSelect(whSel);
-            daysEl.value = 30;
             modal.show();
         });
 
@@ -232,19 +227,17 @@
         }
 
         trigBtn.addEventListener('click', async () => {
-            const warehouseId = whSel.value;
-            const backfillDays = parseInt(daysEl.value, 10) || 30;
-            // Phase 13.8.3 — empty value = "All enabled" sentinel (wire
-            // contract: server reads null/"" as "no source filter").
+            // Phase 13.9.3 — payload is sourceName only. Empty value = "All
+            // enabled" sentinel (server reads null/"" as "no source filter").
+            // Warehouse + backfill come from per-source config server-side.
             const sourceName = sourceSel.value || null;
-            if (!warehouseId) { setStatus('Pick a warehouse.', 'warning'); return; }
             clearStatus();
             setBusy(true);
             try {
                 const r = await fetch('/api/admin/erp-sync/trigger', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ warehouseId, backfillDays, sourceName }),
+                    body: JSON.stringify({ sourceName }),
                 });
                 if (r.status === 202) {
                     const data = await r.json();

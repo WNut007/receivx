@@ -1280,10 +1280,10 @@
 
     const modalEl = document.getElementById('erpSyncModal');
     const modal = new bootstrap.Modal(modalEl);
-    const sourceSel = document.getElementById('erp-source');        // Phase 13.8.3
-    const sourceLabel = document.getElementById('erp-source-label');// Phase 13.8.3
-    const whSel = document.getElementById('erp-warehouse');
-    const daysEl = document.getElementById('erp-backfill-days');
+    // Phase 13.9.2 — warehouse + backfill selectors removed; worker reads
+    // them from per-source config via RunNowAsync.
+    const sourceSel = document.getElementById('erp-source');
+    const sourceLabel = document.getElementById('erp-source-label');
     const trigBtn = document.getElementById('erp-trigger');
     const cancelBtn = document.getElementById('erp-cancel');
     // Phase 13.8.2 — status div id aligned with the new shared partial's
@@ -1304,8 +1304,6 @@
       trigBtn.disabled = busy;
       cancelBtn.disabled = busy;
       sourceSel.disabled = busy;
-      whSel.disabled = busy;
-      daysEl.disabled = busy;
       trigBtn.innerHTML = busy
         ? '<span class="spinner-border spinner-border-sm me-1"></span> Syncing…'
         : 'Start sync';
@@ -1314,11 +1312,8 @@
     btn.addEventListener('click', async () => {
       clearStatus();
       setBusy(false);
-      // Phase 13.8.3 — populate the SOURCE dropdown each open.
+      // Populate the SOURCE dropdown each open.
       await window.ErpSourceDropdown.populate({ selectEl: sourceSel, labelEl: sourceLabel });
-      await ensureWarehouses();
-      populateWarehouseSelect(whSel, null);
-      daysEl.value = 30;
       modal.show();
     });
 
@@ -1357,18 +1352,16 @@
     }
 
     trigBtn.addEventListener('click', async () => {
-      const warehouseId = whSel.value;
-      const backfillDays = parseInt(daysEl.value, 10) || 30;
-      // Phase 13.8.3 — empty value = "All enabled" sentinel.
+      // Phase 13.9.3 — payload is sourceName only. Warehouse + backfill
+      // come from per-source config server-side.
       const sourceName = sourceSel.value || null;
-      if (!warehouseId) { setStatus('Pick a warehouse.', 'warning'); return; }
       clearStatus();
       setBusy(true);
       try {
         const r = await fetch('/api/admin/erp-sync/trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ warehouseId, backfillDays, sourceName }),
+          body: JSON.stringify({ sourceName }),
         });
         if (r.status === 202) {
           const data = await r.json();
