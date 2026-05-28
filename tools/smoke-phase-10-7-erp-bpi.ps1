@@ -1,4 +1,9 @@
-# Smoke: Phase 10.7 — full-pipeline integration test.
+# Smoke: Phase 10.7 — full-pipeline integration test (BPI_PRS path).
+#
+# Renamed from smoke-phase-10-7-integration.ps1 in Phase 13.7 to make
+# room for the PRB peer (smoke-phase-13-7-erp-prb.ps1). The BPI test
+# is the source-of-truth for the receiving end of the fan-out loop
+# (13.5) — covered for the BPI path here, mirrored for PRB in the peer.
 #
 # Covers ground the per-sub-phase smokes (10.4-10.6) leave for the
 # integration boundary:
@@ -13,6 +18,11 @@
 #   3. Mutex contention: trigger #1, wait for worker pickup, trigger
 #      #2 → assert 409 (or skip with note if #1 finishes before #2
 #      can race in)
+#   4. SourceTotals JSON (Phase 13.1): newest ErpSyncLog row has a
+#      non-null SourceTotals containing a "BPI_PRS" entry whose
+#      counters match the row-level aggregates (single-source run).
+#      Proves the 13.5 fan-out loop populates SourceTotals even when
+#      only one source is enabled.
 #
 # Heavy 10x load test (50K writes per spec §6) stays opt-in — see
 # end-of-file note. This smoke runs in the standard battery.
@@ -268,8 +278,44 @@ if ($observedRunning) {
     }
 }
 
+# ============================================================================
+# SECTION 4 — SourceTotals JSON (Phase 13.1 / 13.5)
+# ============================================================================
+Step "Section 4: SourceTotals JSON populated with BPI_PRS entry"
+
+# Newest log row again — at this point the trigger #1 in Section 3
+# has finished, so its row is now the newest. The /log paginated
+# response carries the SourceTotals field on every row.
+$drill = Invoke-RestMethod -Uri "$base/api/admin/erp-sync/log?page=1&pageSize=1" `
+    -Method GET -WebSession $admin
+$latestRow = $drill.items[0]
+if (-not $latestRow.sourceTotals) {
+    Fail "SourceTotals is null on the newest log row — 13.5 fan-out should populate it"
+}
+try {
+    $perSource = $latestRow.sourceTotals | ConvertFrom-Json
+} catch {
+    Fail "SourceTotals not valid JSON: $($latestRow.sourceTotals)"
+}
+if (-not $perSource.BPI_PRS) {
+    $keys = ($perSource | Get-Member -MemberType NoteProperty).Name -join ','
+    Fail "SourceTotals missing BPI_PRS entry. Got keys: $keys"
+}
+$bpi = $perSource.BPI_PRS
+# Single-source run: the per-source BPI counters should equal the
+# row-level aggregates (no other source contributed).
+if ($bpi.created   -ne $latestRow.created   -or
+    $bpi.updated   -ne $latestRow.updated   -or
+    $bpi.skippedClosed -ne $latestRow.skippedClosed -or
+    $bpi.errors    -ne $latestRow.errors) {
+    Fail ("BPI_PRS per-source counters disagree with row aggregates: " +
+          "BPI(c=$($bpi.created),u=$($bpi.updated),s=$($bpi.skippedClosed),e=$($bpi.errors)) vs " +
+          "row(c=$($latestRow.created),u=$($latestRow.updated),s=$($latestRow.skippedClosed),e=$($latestRow.errors))")
+}
+OK "SourceTotals.BPI_PRS counters match row aggregates (single-source run)"
+
 Write-Host ""
-Write-Host "ALL PASS — Phase 10.7: integration consistency + closed-skip + mutex verified." -ForegroundColor Green
+Write-Host "ALL PASS — Phase 10.7 BPI: integration consistency + closed-skip + mutex + SourceTotals verified." -ForegroundColor Green
 Write-Host ""
 Write-Host "NOTE: 10x load test (~50K row writes per spec §6) is intentionally NOT" -ForegroundColor DarkGray
 Write-Host "      battery-runnable — too DB-intensive for CI. Run it once as a" -ForegroundColor DarkGray
