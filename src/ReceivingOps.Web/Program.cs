@@ -243,13 +243,15 @@ builder.Services.AddOptions<ErpSyncOptions>()
                 target.DefaultWarehouseId = sWh;
         }
     });
-// Phase 13.2 — IErpSource strategy registration. BpiPrsSource holds the
-// v3.2 SQL + Transform (relocated, no behavior change). The legacy
-// IErpSyncService stays registered as a thin facade delegating to
-// BpiPrsSource; Phase 13.5 retires it when ErpSyncJob switches to
-// depending on IEnumerable<IErpSource>.
+// Phase 13.2 + 13.3 — IErpSource strategy registration. Both sources
+// implement IErpSource; the Phase 13.5 fan-out loop iterates the
+// resolved IEnumerable<IErpSource> and skips disabled instances. The
+// concrete types are also registered so the legacy IErpSyncService
+// facade can stay as a BpiPrsSource delegate until 13.5 retires it.
 builder.Services.AddScoped<BpiPrsSource>();
+builder.Services.AddScoped<PrbPrsSource>();
 builder.Services.AddScoped<IErpSource>(sp => sp.GetRequiredService<BpiPrsSource>());
+builder.Services.AddScoped<IErpSource>(sp => sp.GetRequiredService<PrbPrsSource>());
 builder.Services.AddScoped<IErpSyncService, ErpSyncService>();
 builder.Services.AddScoped<IErpUpsertService, ErpUpsertService>();
 builder.Services.AddScoped<ErpSyncJob>();
