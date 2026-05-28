@@ -460,6 +460,12 @@
       box-shadow: none; border: 0; max-width: 100%;
       padding: 0; margin: 0 0 24px;
       page-break-after: always;
+      /* Pin the footer to the bottom of each printed page — matches the
+         FastReport PDF's PageFooterBand layout. min-height accounts for
+         standard A4 portrait minus typical browser print margins. */
+      display: flex; flex-direction: column;
+      min-height: calc(100vh - 20mm);
     }
     .do-document:last-child { page-break-after: auto; }
+    .do-footer { margin-top: auto; }
   }

@@ -130,7 +130,8 @@ public class DeliveryOrderService : IDeliveryOrderService
     //                + table header (Item · Description · PO·Line · Qty —
     //                  no hour column, lines are pre-aggregated)
     //   Data band:  one row per DoLine
-    //   Summary:    per-DO total + close-auth (signer + role + closed-at)
+    //   Summary:    per-DO total (right under the lines)
+    //   Page footer: close-auth (signer + role + closed-at), anchored to bottom
     // ------------------------------------------------------------------
     private Report Build(DoReportData data)
     {
@@ -263,11 +264,11 @@ public class DeliveryOrderService : IDeliveryOrderService
             $"ASN [{dsName}.AsnNo]   Round [{dsName}.OrderRound]";
         dataBand.Objects.Add(MakeText($"ColDetail{idx}", 0, 6, 180, 5, detailText, fontSize: 7f));
 
-        // ----- Summary band: per-DO total + close-auth -----
+        // ----- Summary band: per-DO total (stays just under the lines) -----
         var summaryBand = new ReportSummaryBand
         {
             Name = $"Summary{idx}",
-            Height = Units.Millimeters * 40f,
+            Height = Units.Millimeters * 10f,
         };
         page.ReportSummary = summaryBand;
 
@@ -277,34 +278,41 @@ public class DeliveryOrderService : IDeliveryOrderService
         summaryBand.Objects.Add(MakeText($"TotalValue{idx}", 150, 3, 30, 6,
             $"{order.TotalQty:N0} pcs", fontSize: 11f, bold: true, align: HorzAlign.Right));
 
-        // Two parallel blocks at the same Y so the divider lines + labels
-        // baseline-align — mirrors the HTML preview footer. PDF can't draw
-        // the SVG signature image so both sides are text-only; the operator
-        // signs the LEFT (RECEIVED BY) physically on paper.
+        // ----- Page footer: signature blocks anchored to the bottom of every
+        // printed page. PageFooterBand renders at the physical page bottom
+        // regardless of data band length, so a short DO no longer leaves
+        // signatures floating in mid-page whitespace.
         var closedFmt = data.Pull.ClosedAt.HasValue
             ? $"Closed {data.Pull.ClosedAt.Value:yyyy-MM-dd HH:mm} UTC"
             : "";
 
-        summaryBand.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 17,  85));
-        summaryBand.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 17, 85));
+        var footerBand = new PageFooterBand
+        {
+            Name = $"PageFooter{idx}",
+            Height = Units.Millimeters * 25f,
+        };
+        page.PageFooter = footerBand;
+
+        footerBand.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 0,  85));
+        footerBand.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 0, 85));
 
         // LEFT: RECEIVED BY (physical signature happens on paper above the rule)
-        summaryBand.Objects.Add(MakeText($"RcvLabel{idx}",  0, 19, 85, 5,
+        footerBand.Objects.Add(MakeText($"RcvLabel{idx}",  0, 2, 85, 5,
             "RECEIVED BY", fontSize: 8f, bold: true));
-        summaryBand.Objects.Add(MakeText($"RcvName{idx}",   0, 24, 85, 6,
+        footerBand.Objects.Add(MakeText($"RcvName{idx}",   0, 7, 85, 6,
             data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        summaryBand.Objects.Add(MakeText($"RcvTime{idx}",   0, 30, 85, 5,
+        footerBand.Objects.Add(MakeText($"RcvTime{idx}",   0, 13, 85, 5,
             closedFmt, fontSize: 8f));
 
         // RIGHT: AUTHORIZED BY (closer of the pull — name + role + time)
-        summaryBand.Objects.Add(MakeText($"AuthLabel{idx}", 95, 19, 85, 5,
+        footerBand.Objects.Add(MakeText($"AuthLabel{idx}", 95, 2, 85, 5,
             "AUTHORIZED BY", fontSize: 8f, bold: true));
-        summaryBand.Objects.Add(MakeText($"AuthName{idx}",  95, 24, 85, 6,
+        footerBand.Objects.Add(MakeText($"AuthName{idx}",  95, 7, 85, 6,
             data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        summaryBand.Objects.Add(MakeText($"AuthRole{idx}",  95, 30, 85, 5,
+        footerBand.Objects.Add(MakeText($"AuthRole{idx}",  95, 13, 85, 5,
             string.IsNullOrEmpty(data.Pull.ClosedByRole) ? "" : data.Pull.ClosedByRole.ToUpperInvariant(),
             fontSize: 8f));
-        summaryBand.Objects.Add(MakeText($"AuthTime{idx}",  95, 35, 85, 5,
+        footerBand.Objects.Add(MakeText($"AuthTime{idx}",  95, 18, 85, 5,
             closedFmt, fontSize: 8f));
     }
 
