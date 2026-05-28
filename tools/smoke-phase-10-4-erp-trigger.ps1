@@ -125,17 +125,21 @@ ExpectStatus 403 {
 OK "403 for operator role"
 
 # ----------------------------------------------------------------------------
-# 6. Bad input: empty warehouseId → 400
+# 6. Bad input: unknown source name → 400
 # ----------------------------------------------------------------------------
-Step "Admin login + 400 on empty warehouseId"
+# Phase 13.9.1 — WarehouseId + BackfillDays were removed from TriggerRequest.
+# The remaining 400 path is "unknown source name" (the controller's
+# pre-flight against the registered IErpSource set). Empty bodies + empty
+# WH guids are now valid input (the job uses per-source config).
+Step "Admin login + 400 on unknown source name"
 $admin = Login 'sadmin' 'admin' $WH_01
-$emptyBody = @{ warehouseId = '00000000-0000-0000-0000-000000000000' } | ConvertTo-Json
+$badBody = @{ sourceName = 'NOPE_PRS' } | ConvertTo-Json
 ExpectStatus 400 {
     Invoke-WebRequest -Uri "$base/api/admin/erp-sync/trigger" -Method POST `
-        -Body $emptyBody -ContentType 'application/json' -WebSession $admin `
+        -Body $badBody -ContentType 'application/json' -WebSession $admin `
         -UseBasicParsing -ErrorAction Stop
 }
-OK "400 for empty warehouseId"
+OK "400 for unknown source name"
 
 # ----------------------------------------------------------------------------
 # 7. Behavioral end-to-end (gated on ERP reachability)

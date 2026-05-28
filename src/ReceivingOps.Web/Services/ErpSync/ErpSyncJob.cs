@@ -71,13 +71,13 @@ public class ErpSyncJob
     }
 
     /// <summary>
-    /// Manual-trigger entry point — admin picks the warehouse + backfill
-    /// via the UI / API. The values apply to EVERY enabled source in
-    /// this fire when <paramref name="sourceName"/> is null/empty
-    /// (Phase 13 design default); when set, the fan-out restricts to
-    /// the named source only (Phase 13.8.1 single-source trigger).
-    /// Hangfire serializes parameters into the job payload so the
-    /// worker thread sees the operator's values.
+    /// Legacy manual-trigger entry point (Phase 10.4 / 13.8.1). Operator
+    /// picks an explicit warehouse + backfill window that applies to every
+    /// enabled source. Superseded by <see cref="RunNowAsync"/> in Phase
+    /// 13.9.1 — the controller now enqueues that path instead.
+    ///
+    /// <para>Kept callable so any in-flight Hangfire job from a prior
+    /// deploy can still resolve. New callers should use <see cref="RunNowAsync"/>.</para>
     /// </summary>
     [DisableConcurrentExecution(timeoutInSeconds: 600)]
     [Queue("erp-sync")]
@@ -92,6 +92,29 @@ public class ErpSyncJob
         var safeActor = string.IsNullOrWhiteSpace(actorName) ? "(unknown)" : actorName;
         await ExecuteAsync(
             overrideWarehouse: warehouseId, overrideBackfillDays: backfillDays,
+            trigger: "manual", actorName: safeActor, sourceFilter: sourceName);
+    }
+
+    /// <summary>
+    /// Phase 13.9.1 — current manual-trigger entry point. "Run scheduled
+    /// logic now": each enabled source uses its OWN configured
+    /// <c>DefaultWarehouseId</c> + <c>BackfillDays</c> (same as the
+    /// recurring path), just attributed to the operator + tagged
+    /// <c>trigger=manual</c> in audit/log rows. Optional
+    /// <paramref name="sourceName"/> filter restricts the run to one
+    /// source (Phase 13.8.1 contract preserved).
+    ///
+    /// <para>Sources whose <c>DefaultWarehouseId</c> is unset are skipped
+    /// per-source with a warning log (not a hard failure) — so a missing
+    /// PRB config doesn't block a BPI-only fire on the same run.</para>
+    /// </summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 600)]
+    [Queue("erp-sync")]
+    public async Task RunNowAsync(string actorName, string? sourceName = null)
+    {
+        var safeActor = string.IsNullOrWhiteSpace(actorName) ? "(unknown)" : actorName;
+        await ExecuteAsync(
+            overrideWarehouse: null, overrideBackfillDays: null,
             trigger: "manual", actorName: safeActor, sourceFilter: sourceName);
     }
 
@@ -170,14 +193,37 @@ public class ErpSyncJob
             return new SourcePlan(s, wh, bd);
         }).ToList();
 
+        // Phase 13.9.1 — surface per-source skip-due-to-empty-WH as a
+        // warning before partitioning to `runnable`. Previously silent;
+        // operators reasonably want to know "PRB was disabled-by-config
+        // because its warehouse was Guid.Empty" without grepping logs.
+        foreach (var skipped in plans.Where(p => p.WarehouseId == Guid.Empty))
+        {
+            _log.LogWarning(
+                "ErpSync {Trigger} — source {Src} has no DefaultWarehouseId configured; skipping. " +
+                "Set ErpSync:Sources:{SrcKey}:DefaultWarehouseId via /Config and restart.",
+                trigger, skipped.Source.SourceName, ConfigKeyForSource(skipped.Source.SourceName));
+        }
+
         var runnable = plans.Where(p => p.WarehouseId != Guid.Empty).ToList();
         if (runnable.Count == 0)
         {
+            _mutex.Release();
+            // Phase 13.9.1 — explicit-source request that ended up empty
+            // (the requested source had no WH) is a LOUD failure: the
+            // operator deliberately asked for that source, so silence
+            // would be confusing. Recurring/all-enabled path stays a
+            // quiet skip — that's the documented background-run behavior.
+            if (!string.IsNullOrWhiteSpace(sourceFilter))
+            {
+                throw new InvalidOperationException(
+                    $"Source '{sourceFilter}' has no DefaultWarehouseId configured. " +
+                    "Set it via /Config (Sync Schedule tab) and restart, then retry.");
+            }
             _log.LogInformation(
                 "ErpSync {Trigger} fire skipped — every enabled source has an unset DefaultWarehouseId. " +
                 "Configure ErpSync:Sources:<X>:DefaultWarehouseId via /Config or use the manual trigger.",
                 trigger);
-            _mutex.Release();
             return;
         }
 
@@ -295,6 +341,15 @@ public class ErpSyncJob
         "BPI_PRS" => _opts.Sources.Bpi.BackfillDays,
         "PRB_PRS" => _opts.Sources.Prb.BackfillDays,
         _ => 30,
+    };
+
+    // Phase 13.9.1 — sub-key for the per-source warning log so operators can
+    // copy the exact key to /Config without consulting docs.
+    private static string ConfigKeyForSource(string sourceName) => sourceName switch
+    {
+        "BPI_PRS" => "Bpi",
+        "PRB_PRS" => "Prb",
+        _ => sourceName,
     };
 
     private sealed record SourcePlan(IErpSource Source, Guid WarehouseId, int BackfillDays);

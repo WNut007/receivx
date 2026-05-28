@@ -52,21 +52,24 @@ public class ErpSyncAdminController : ControllerBase
 
     public class TriggerRequest
     {
-        public Guid WarehouseId { get; set; }
-        // Optional; defaults to 30 when null/<=0 — matches ErpSyncOptions.BackfillDays default.
-        public int? BackfillDays { get; set; }
         // Phase 13.8.1 — when null or empty, the job runs every enabled source
         // (legacy single-payload behavior preserved). When set, the controller
         // verifies the source exists + is enabled and threads it through to
         // the fan-out loop, which restricts the run to that source alone.
         public string? SourceName { get; set; }
+
+        // Phase 13.9.1 — WarehouseId + BackfillDays REMOVED. Manual trigger
+        // now reuses per-source config (ErpSync:Sources:<X>:DefaultWarehouseId
+        // and :BackfillDays), the same values the recurring path uses.
+        // Operators changing those values use /Config + restart.
+        //
+        // Stale clients that still send the old fields are tolerated
+        // (System.Text.Json ignores unknown body fields by default).
     }
 
     public class TriggerResponse
     {
         public string JobId { get; set; } = "";
-        public Guid WarehouseId { get; set; }
-        public int BackfillDays { get; set; }
         // Phase 13.8.1 — echoes the resolved source name for the run.
         // Empty string when no source filter was requested ("all enabled").
         public string SourceName { get; set; } = "";
@@ -84,10 +87,11 @@ public class ErpSyncAdminController : ControllerBase
 
     // POST /api/admin/erp-sync/trigger
     [HttpPost("trigger")]
-    public IActionResult Trigger([FromBody] TriggerRequest req)
+    public IActionResult Trigger([FromBody] TriggerRequest? req)
     {
-        if (req is null || req.WarehouseId == Guid.Empty)
-            return Problem(title: "warehouseId is required.", statusCode: 400);
+        // Phase 13.9.1 — req is optional; a fully empty body means "run all
+        // enabled sources with their configured warehouse + backfill".
+        var sourceName = req?.SourceName;
 
         // Phase 13.8.1 — source-name validation. Empty/null = all enabled
         // (legacy behavior). Otherwise the source must exist + be enabled
@@ -97,15 +101,15 @@ public class ErpSyncAdminController : ControllerBase
         // worker pickup that the IOptions cache hasn't refreshed is the
         // documented Phase 11.1 invariant.)
         string? resolvedSource = null;
-        if (!string.IsNullOrWhiteSpace(req.SourceName))
+        if (!string.IsNullOrWhiteSpace(sourceName))
         {
             var match = _sources.FirstOrDefault(s =>
-                s.SourceName.Equals(req.SourceName, StringComparison.OrdinalIgnoreCase));
+                s.SourceName.Equals(sourceName, StringComparison.OrdinalIgnoreCase));
             if (match is null)
             {
                 var known = string.Join(", ", _sources.Select(s => s.SourceName));
                 return Problem(
-                    title: $"Unknown source '{req.SourceName}'. Known: {known}",
+                    title: $"Unknown source '{sourceName}'. Known: {known}",
                     statusCode: 400);
             }
             if (!match.Enabled)
@@ -128,8 +132,6 @@ public class ErpSyncAdminController : ControllerBase
                 title: "ERP sync is already in progress. Try again in a moment.",
                 statusCode: 409);
 
-        var backfillDays = (req.BackfillDays is int b && b > 0) ? b : 30;
-
         // Capture operator name HERE — Hangfire serializes the lambda's args
         // into the job payload, so by the time the worker thread runs there's
         // no HttpContext to read User from. Falls back to "(unknown)" only if
@@ -139,21 +141,22 @@ public class ErpSyncAdminController : ControllerBase
                            ?? User.Identity?.Name
                            ?? "(unknown)";
 
+        // Phase 13.9.1 — switched from RunForWarehouseAsync (operator-picked
+        // WH + backfill) to RunNowAsync (per-source config). The latter is
+        // the "run the scheduled logic now" semantic the user wants.
         var jobId = _bgClient.Enqueue<ErpSyncJob>(
-            j => j.RunForWarehouseAsync(req.WarehouseId, backfillDays, operatorName, resolvedSource));
+            j => j.RunNowAsync(operatorName, resolvedSource));
 
         _log.LogInformation(
-            "ErpSync manual trigger by {User} — jobId={JobId}, warehouse={Wh}, " +
-            "backfillDays={Days}, source={Src}",
-            operatorName, jobId, req.WarehouseId, backfillDays, resolvedSource ?? "(all enabled)");
+            "ErpSync manual trigger by {User} — jobId={JobId}, source={Src} (per-source config)",
+            operatorName, jobId, resolvedSource ?? "(all enabled)");
 
         return Accepted(new TriggerResponse
         {
             JobId = jobId,
-            WarehouseId = req.WarehouseId,
-            BackfillDays = backfillDays,
             SourceName = resolvedSource ?? "",
-            Message = "Sync enqueued — poll /jobs/{jobId} for state.",
+            Message = "Sync enqueued — each enabled source uses its configured " +
+                      "DefaultWarehouseId + BackfillDays. Poll /jobs/{jobId} for state.",
         });
     }
 
