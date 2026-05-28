@@ -95,9 +95,32 @@ foreach ($w in @(@{ h = 10; q = 50 }, @{ h = 14; q = 30 })) {
     Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $recvBody -ContentType 'application/json' -WebSession $sv | Out-Null
 }
 
+# Stamp the 8 ERP-sourced fields on the PoLine(s) the smoke's receipts hit.
+# /api/pos has no PUT for these (ERP-source-of-truth per Phase 9), so the
+# smoke writes them directly with sqlcmd, same way SqlCleanup tears down.
+$stampSql = @'
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+UPDATE pol
+SET PalletId     = 'PALLET-DOR-001',
+    OrderId      = 'ORD-DOR-001',
+    InvoiceNo    = 'INV-DOR-001',
+    KanbanNo     = 'KBN-DOR-001',
+    SubInventory = 'SUB-DOR',
+    ToLocation   = 'TLOC-DOR',
+    AsnNo        = 'ASN-DOR-001',
+    OrderRound   = 'R1'
+FROM dbo.PurchaseOrderLines pol
+INNER JOIN dbo.Receipts r ON r.PurchaseOrderLineId = pol.Id
+INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE p.PullNumber = N'__PULLNUM__';
+'@.Replace('__PULLNUM__', $pullNum)
+sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $stampSql 2>&1 | Out-Null
+
 $closeBody = @{ signatureSvg = $SAMPLE_SVG } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/close" -Method POST -Body $closeBody -ContentType 'application/json' -WebSession $sv | Out-Null
-OK "PL-DOR pull set up + closed (2 receipts at hours 10 + 14, total 80)"
+OK "PL-DOR pull set up + closed (2 receipts at hours 10 + 14, total 80; PoLine ERP fields stamped)"
 
 # ----------------------------------------------------------------------------
 # 1. /Reports list page — 200 + two-pane DOM + smoke pull row present
@@ -131,6 +154,25 @@ if ($tbody -notmatch '>80<') { Fail "Aggregated qty 80 not present — hours not
 $thead = [regex]::Match($prev.Content, '<thead>(?s)(.*?)</thead>').Groups[1].Value
 if ($thead -match '>HOUR<') { Fail "Preview still has HOUR column header — aggregation incomplete" }
 OK "Preview renders 1 aggregated row (qty=80) and no HOUR column"
+
+# ----------------------------------------------------------------------------
+# 2c. ERP detail strip — second row under each line carries the 8 PoLine
+#     fields, with the SqlCleanup-stamped sentinel values visible.
+# ----------------------------------------------------------------------------
+Step "ERP detail strip carries 8 PoLine fields with stamped sentinel values"
+if ($prev.Content -notmatch 'class="do-line-detail"') { Fail "Preview missing .do-line-detail row" }
+if ($prev.Content -notmatch 'class="do-detail-grid"') { Fail "Preview missing .do-detail-grid container" }
+foreach ($label in 'Pallet','Order ID','Invoice','Kanban','Sub-Inv','To-Loc','ASN','Round') {
+    if ($prev.Content -notmatch ">$([regex]::Escape($label))<") {
+        Fail "Detail grid missing label '$label'"
+    }
+}
+foreach ($val in 'PALLET-DOR-001','ORD-DOR-001','INV-DOR-001','KBN-DOR-001','SUB-DOR','TLOC-DOR','ASN-DOR-001','R1') {
+    if ($prev.Content -notmatch [regex]::Escape($val)) {
+        Fail "Detail grid missing stamped value '$val' — repo SELECT or DTO map didn't carry the field through"
+    }
+}
+OK "All 8 labels + 8 stamped values present in detail row"
 
 # ----------------------------------------------------------------------------
 # 2b. Footer — aligned RECEIVED BY (text-only) + AUTHORIZED BY (signature)
