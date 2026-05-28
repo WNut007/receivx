@@ -63,14 +63,20 @@ public class ErpSyncJob
     [Queue("erp-sync")]
     public async Task RunAsync()
     {
-        if (_opts.DefaultWarehouseId == Guid.Empty)
+        // 13.4 — recurring path now reads BPI's per-source warehouse default
+        // for the ExecuteAsync call. 13.5 will refactor ExecuteAsync to read
+        // per-source warehouse + backfill INSIDE the fan-out loop; until then
+        // the BPI source's defaults preserve v3.2 recurring behavior.
+        var bpiWarehouse = _opts.Sources.Bpi.DefaultWarehouseId;
+        var bpiBackfill = _opts.Sources.Bpi.BackfillDays;
+        if (bpiWarehouse == Guid.Empty)
         {
             _log.LogInformation(
-                "ErpSync recurring fired but ErpSync:DefaultWarehouseId is unset — skipping. " +
-                "Set it in user-secrets or use the manual-trigger UI to pick a warehouse.");
+                "ErpSync recurring fired but ErpSync:Sources:Bpi:DefaultWarehouseId is unset — skipping. " +
+                "Set it via /Config or use the manual-trigger UI to pick a warehouse.");
             return;
         }
-        await ExecuteAsync(_opts.DefaultWarehouseId, _opts.BackfillDays,
+        await ExecuteAsync(bpiWarehouse, bpiBackfill,
             trigger: "recurring", actorName: SystemActor);
     }
 

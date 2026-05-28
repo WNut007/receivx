@@ -33,10 +33,11 @@ public class BpiPrsSource : IErpSource
 
     public string SourceName => "BPI_PRS";
 
-    // 13.2 still reads the v3.2 flat ErpSyncOptions. 13.4 will repoint this
-    // at the nested Sources.Bpi.Enabled sub-option without changing the
-    // surface this property exposes.
-    public bool Enabled => _opts.Enabled;
+    // 13.4 — per-source toggle reads from the nested Sources.Bpi sub-config.
+    // The top-level ErpSyncOptions.Enabled is the MASTER kill-switch (gates
+    // recurring registration in Program.cs) — IErpSource.Enabled is the
+    // PER-SOURCE toggle the fan-out loop checks for inclusion.
+    public bool Enabled => _opts.Sources.Bpi.Enabled;
 
     public async Task<ErpSyncDraft> ReadAndTransformAsync(
         Guid warehouseId, int backfillDays, CancellationToken ct = default)

@@ -151,6 +151,10 @@ builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
 // One-time hydration: copies appsettings.json + user-secrets into the DB
 // on first start. Scoped — instantiated once at startup via app.Services.
 builder.Services.AddScoped<AppSettingsSeeder>();
+// Phase 13.4 — idempotent flat→nested migrator for ErpSync config keys
+// (v3.2 had ErpSync:DefaultWarehouseId / ErpSync:BackfillDays as flat
+// rows; v3.3 nests them under ErpSync:Sources:Bpi:*).
+builder.Services.AddScoped<ErpSyncOptionsMigrator>();
 
 // ---- v2.x Phase 8.4 — email transport (Gmail SMTP via MailKit) ----
 // SmtpOptions used to bind directly from "Smtp" (appsettings + user-secrets).
@@ -202,25 +206,42 @@ builder.Services.AddScoped<PosExportJob>();
 builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
 
-// ---- v3.x Phase 10.1 — ERP sync pipeline ----
-// ErpSyncOptions: kill-switch + cron expression + warehouse default +
-// backfill window. Phase 11.1 routes through IAppSettingsService —
-// admins flip Enabled / DefaultWarehouseId via the config UI without
-// touching appsettings.json.
+// ---- v3.x Phase 13.4 — ERP sync pipeline (dual-source) ----
+// ErpSyncOptions: master kill-switch + cron + timeout (shared) +
+// per-source sub-configs (Bpi/Prb). Phase 11.1 routes through
+// IAppSettingsService — admins flip Enabled flags / DefaultWarehouseId
+// per source via the /Config UI without touching appsettings.json.
+//
+// Read precedence (per AppSettingsService): env > DB > user-secrets > appsettings.json.
+// Nested keys flatten as colon-separated strings throughout:
+//   ErpSync:Enabled, ErpSync:Sources:Bpi:Enabled, ErpSync:Sources:Prb:BackfillDays, ...
 builder.Services.AddOptions<ErpSyncOptions>()
     .Configure(opts => builder.Configuration.GetSection("ErpSync").Bind(opts))
     .Configure<IAppSettingsService>((opts, settings) =>
     {
+        // Shared/top-level keys.
         if (bool.TryParse(settings.GetAsync("ErpSync:Enabled").GetAwaiter().GetResult(), out var en))
             opts.Enabled = en;
         var cron = settings.GetAsync("ErpSync:CronExpression").GetAwaiter().GetResult();
         if (cron is not null) opts.CronExpression = cron;
         if (int.TryParse(settings.GetAsync("ErpSync:TimeoutSeconds").GetAwaiter().GetResult(), out var t))
             opts.TimeoutSeconds = t;
-        if (Guid.TryParse(settings.GetAsync("ErpSync:DefaultWarehouseId").GetAwaiter().GetResult(), out var wh))
-            opts.DefaultWarehouseId = wh;
-        if (int.TryParse(settings.GetAsync("ErpSync:BackfillDays").GetAwaiter().GetResult(), out var bd))
-            opts.BackfillDays = bd;
+
+        // Per-source overlays. ApplySource is a local helper so adding a
+        // third source later is one-line addition not a copy-paste block.
+        ApplySource(settings, "Bpi", opts.Sources.Bpi);
+        ApplySource(settings, "Prb", opts.Sources.Prb);
+
+        static void ApplySource(IAppSettingsService settings, string name, ErpSourceOptions target)
+        {
+            var prefix = $"ErpSync:Sources:{name}:";
+            if (bool.TryParse(settings.GetAsync(prefix + "Enabled").GetAwaiter().GetResult(), out var sEn))
+                target.Enabled = sEn;
+            if (int.TryParse(settings.GetAsync(prefix + "BackfillDays").GetAwaiter().GetResult(), out var sBd))
+                target.BackfillDays = sBd;
+            if (Guid.TryParse(settings.GetAsync(prefix + "DefaultWarehouseId").GetAwaiter().GetResult(), out var sWh))
+                target.DefaultWarehouseId = sWh;
+        }
     });
 // Phase 13.2 — IErpSource strategy registration. BpiPrsSource holds the
 // v3.2 SQL + Transform (relocated, no behavior change). The legacy
@@ -298,6 +319,17 @@ using (var seedScope = app.Services.CreateScope())
 {
     var seeder = seedScope.ServiceProvider.GetRequiredService<AppSettingsSeeder>();
     await seeder.RunAsync();
+}
+
+// ---- v3.x Phase 13.4 — ErpSync flat→nested key migration ----
+// MUST run AFTER the seeder (so any first-boot rows that landed via the
+// seeder also get a chance to be reshaped) and BEFORE any IOptions
+// resolution (the new ErpSyncOptions binding reads the nested keys).
+// Idempotent: silent no-op when no flat rows are present.
+using (var migScope = app.Services.CreateScope())
+{
+    var migrator = migScope.ServiceProvider.GetRequiredService<ErpSyncOptionsMigrator>();
+    await migrator.RunAsync();
 }
 
 // ---- v3.x Phase 11.1 — Data Protection health check ----
