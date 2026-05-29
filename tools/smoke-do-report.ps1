@@ -20,7 +20,13 @@
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5213'
 $WH_01 = '22222222-2222-2222-2222-000000000001'
-$SAMPLE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 30"><path d="M5 25 Q 50 5 95 25" stroke="black" fill="none"/></svg>'
+# PNG dataURL mirrors the production sign-pad output — exercises the PDF
+# signature-embed path (PageFooterBand PictureObject) end-to-end. The
+# baseline 1x1 white PNG is enough for the encode/decode/MakeSignaturePicture
+# pipeline; visual richness is covered by the human DO export flow. Variable
+# name kept as $SAMPLE_SVG because /api/pulls/{id}/close stores it in the
+# SignatureSvg DB column verbatim (the column carries either flavor).
+$SAMPLE_SVG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 function Step($n) { Write-Host "`n--- $n ---" -ForegroundColor Cyan }
 function OK($m)   { Write-Host "PASS: $m" -ForegroundColor Green }
@@ -192,7 +198,7 @@ if ($dividerCount -ne 2) { Fail "Expected 2 sig-divider elements (one per block)
 if ($footer -match 'class="sig-line"')      { Fail "Old .sig-line class still present — alignment refactor incomplete" }
 if ($footer -match 'class="sig-signature"') { Fail "Old .sig-signature class still present — alignment refactor incomplete" }
 if ($footer -notmatch [regex]::Escape($SAMPLE_SVG.Substring(0, 40))) {
-    Fail "AUTHORIZED BY signature-image missing the inline SVG"
+    Fail "AUTHORIZED BY signature-image missing the PNG dataURL"
 }
 OK "Footer aligned: spacer/image (80px) + 2 dividers + RECEIVED BY/AUTHORIZED BY"
 
@@ -213,7 +219,16 @@ if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }
 # indices, not ASCII literals — a raw byte grep for "DELIVERY ORDER" /
 # "RECEIVED BY" doesn't work. Band-render regressions need visual check
 # (open the PDF), not a content-string assertion here.
-OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic"
+# Size floor: PDFSimpleExport rasterizes each page to a JPEG, so even a
+# sparse DO clears ~50KB. With the PageFooterBand carrying a PNG signature
+# image (PictureObject flattened onto a white 24bpp canvas before embed),
+# the size lands well over 100KB. If this drops below 100KB the most
+# likely cause is the PageFooterBand failing to emit — exactly the
+# silent-regression scenario the v3.3 → v3.4 retry was hardening against.
+if ($pdf.RawContentLength -lt 100000) {
+    Fail "PDF $($pdf.RawContentLength) bytes < 100KB — PageFooterBand or signature image probably not embedded"
+}
+OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic + size floor"
 
 # ----------------------------------------------------------------------------
 # 4. Eligibility — open pull → 400 from preview

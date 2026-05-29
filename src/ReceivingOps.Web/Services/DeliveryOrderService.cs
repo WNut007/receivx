@@ -133,7 +133,13 @@ public class DeliveryOrderService : IDeliveryOrderService
     //                + table header (Item · Description · PO·Line · Qty —
     //                  no hour column, lines are pre-aggregated)
     //   Data band:  one row per DoLine
-    //   Summary:    per-DO total + close-auth (signer + role + closed-at)
+    //   Summary:    per-DO total (right under the last line)
+    //   Page foot:  RECEIVED BY + AUTHORIZED BY blocks + PNG signature,
+    //               anchored to the bottom of every printed page so
+    //               multi-page DOs carry an auth marker on each detachable
+    //               sheet. Engine emits this via ShowPageFooter() in
+    //               ReportEngine.Pages; PDFSimpleExport renders whatever
+    //               the engine emits.
     // ------------------------------------------------------------------
     private Report Build(DoReportData data)
     {
@@ -266,16 +272,13 @@ public class DeliveryOrderService : IDeliveryOrderService
             $"ASN [{dsName}.AsnNo]   Round [{dsName}.OrderRound]";
         dataBand.Objects.Add(MakeText($"ColDetail{idx}", 0, 6, 180, 5, detailText, fontSize: 7f));
 
-        // ----- Summary band: per-DO total + close-auth -----
-        // PageFooterBand was tried for true page-bottom anchoring but
-        // PDFSimpleExport (FastReport.OpenSource) doesn't render page-footer
-        // bands, so the signature vanished from the PDF. Keep everything in
-        // ReportSummaryBand — signature sits right under the total, not
-        // anchored to the page bottom, but it's visible.
+        // ----- Summary band: per-DO total only (10mm). Sits right under
+        // the last data row on the last page; auth block lives in the
+        // PageFooterBand below so multi-page DOs carry sig on every page.
         var summaryBand = new ReportSummaryBand
         {
             Name = $"Summary{idx}",
-            Height = Units.Millimeters * 40f,
+            Height = Units.Millimeters * 10f,
         };
         page.ReportSummary = summaryBand;
 
@@ -285,41 +288,52 @@ public class DeliveryOrderService : IDeliveryOrderService
         summaryBand.Objects.Add(MakeText($"TotalValue{idx}", 150, 3, 30, 6,
             $"{order.TotalQty:N0} pcs", fontSize: 11f, bold: true, align: HorzAlign.Right));
 
+        // ----- Page footer: close-auth + PNG signature, anchored to bottom
+        // of every printed page (multi-page DOs carry the auth marker on
+        // each detachable sheet). Y origin is the top of the footer band.
+        var pageFooter = new PageFooterBand
+        {
+            Name = $"PageFooter{idx}",
+            Height = Units.Millimeters * 35f,
+        };
+        page.PageFooter = pageFooter;
+
         var closedFmt = data.Pull.ClosedAt.HasValue
             ? $"Closed {data.Pull.ClosedAt.Value:yyyy-MM-dd HH:mm} UTC"
             : "";
 
-        summaryBand.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 17,  85));
-        summaryBand.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 17, 85));
-
-        // PNG signature mark above the AUTHORIZED BY divider, when the pull
-        // has a base64 PNG dataURL on file. Inline-SVG signatures fall
-        // through to text-only (see class-level summary for why).
+        // PNG signature image sits ABOVE the AUTHORIZED BY divider rule;
+        // text-block flows below it. AddSignaturePicture preserved verbatim
+        // from v3.3 ship — call site only relocated.
         var sigPng = DecodeSignaturePng(data.Pull.SignatureSvg);
         if (sigPng is not null)
         {
-            try { summaryBand.Objects.Add(MakeSignaturePicture($"AuthSig{idx}", 95, 8, 85, 8, sigPng)); }
+            try { pageFooter.Objects.Add(MakeSignaturePicture($"AuthSig{idx}", 95, 0, 85, 8, sigPng)); }
             catch (ArgumentException) { /* malformed PNG — fall back to text-only */ }
             catch (OutOfMemoryException) { /* GDI+ throws this for invalid image streams */ }
         }
 
+        // Divider rules (top of text block on each side)
+        pageFooter.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 9,  85));
+        pageFooter.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 9, 85));
+
         // LEFT: RECEIVED BY (physical signature happens on paper above the rule)
-        summaryBand.Objects.Add(MakeText($"RcvLabel{idx}",  0, 19, 85, 5,
+        pageFooter.Objects.Add(MakeText($"RcvLabel{idx}",  0, 11, 85, 5,
             "RECEIVED BY", fontSize: 8f, bold: true));
-        summaryBand.Objects.Add(MakeText($"RcvName{idx}",   0, 24, 85, 6,
+        pageFooter.Objects.Add(MakeText($"RcvName{idx}",   0, 16, 85, 6,
             data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        summaryBand.Objects.Add(MakeText($"RcvTime{idx}",   0, 30, 85, 5,
+        pageFooter.Objects.Add(MakeText($"RcvTime{idx}",   0, 22, 85, 5,
             closedFmt, fontSize: 8f));
 
         // RIGHT: AUTHORIZED BY (closer of the pull — name + role + time)
-        summaryBand.Objects.Add(MakeText($"AuthLabel{idx}", 95, 19, 85, 5,
+        pageFooter.Objects.Add(MakeText($"AuthLabel{idx}", 95, 11, 85, 5,
             "AUTHORIZED BY", fontSize: 8f, bold: true));
-        summaryBand.Objects.Add(MakeText($"AuthName{idx}",  95, 24, 85, 6,
+        pageFooter.Objects.Add(MakeText($"AuthName{idx}",  95, 16, 85, 6,
             data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        summaryBand.Objects.Add(MakeText($"AuthRole{idx}",  95, 30, 85, 5,
+        pageFooter.Objects.Add(MakeText($"AuthRole{idx}",  95, 22, 85, 5,
             string.IsNullOrEmpty(data.Pull.ClosedByRole) ? "" : data.Pull.ClosedByRole.ToUpperInvariant(),
             fontSize: 8f));
-        summaryBand.Objects.Add(MakeText($"AuthTime{idx}",  95, 35, 85, 5,
+        pageFooter.Objects.Add(MakeText($"AuthTime{idx}",  95, 27, 85, 5,
             closedFmt, fontSize: 8f));
     }
 
