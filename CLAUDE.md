@@ -843,9 +843,14 @@ collide on PRS_ID. Phase 10's single-source ETL extends to fan-out.
   muted-when-NULL; PDF render matches HTML preview pixel-for-pixel
 - ✅ Signature block now anchored to page footer (moved from
   `ReportSummaryBand` mid-page → footer band → back into
-  `ReportSummaryBand` after the multi-page break interaction was
-  understood). Final: in `ReportSummaryBand`, positioned via mm offsets
-  to land at footer height
+  `ReportSummaryBand` → and finally back to `PageFooterBand` in v3.3.1
+  patch `e577fe4`). End state: RECEIVED BY + AUTHORIZED BY + PNG sig
+  live in `PageFooterBand` (35mm), repeat on every page of multi-page
+  DOs; `ReportSummaryBand` shrunk to 10mm carrying only TOTAL DELIVERED.
+  The earlier retreat back into the summary band was based on a wrong
+  diagnosis that `PDFSimpleExport` filters by band type — it doesn't,
+  `ReportEngine.Pages` emits whatever bands the engine emits via
+  `ShowPageFooter()` and the exporter renders them.
 - ✅ PNG signature mark renders in PDF above the AUTHORIZED BY divider.
   `Pulls.SignatureSvg` containing `data:image/png;base64,...` is
   decoded, pre-flattened onto a white 24bpp canvas (JPEG-in-PDF
