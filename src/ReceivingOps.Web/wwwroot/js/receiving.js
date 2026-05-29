@@ -447,7 +447,7 @@
 
   /* Read transactions store, filter for this (pull, item, hour), render rows. */
   function renderModalTransactions(itemCode, hour) {
-    const pullId = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : document.getElementById('pull-select').value;
+    const pullId = (typeof currentPull !== 'undefined' && currentPull) ? currentPull : '';
     const allTx = (typeof txLoad === 'function') ? txLoad() : [];
     const list = allTx
       .filter(r => r.pullId === pullId && r.itemCode === itemCode && r.hour === hour)
@@ -847,7 +847,7 @@
       });
     });
 
-    const pullId = document.getElementById('pull-select').value;
+    const pullId = currentPull || '';
     document.getElementById('cm-pullid').textContent = pullId;
     document.getElementById('cm-decl-id').textContent = pullId;
     document.getElementById('cm-received').textContent = rec.toLocaleString();
@@ -1052,7 +1052,7 @@
 
   // ============ EXPORT TO EXCEL ============
   function buildExportRows() {
-    const pullId = document.getElementById('pull-select').value;
+    const pullId = currentPull || '';
     const whSel = document.getElementById('warehouse-select');
     const warehouse = whSel.options[whSel.selectedIndex].text;
     const now = new Date();
@@ -1183,16 +1183,6 @@
   // Filter dropdown — re-render to apply
   document.getElementById('filter-select').addEventListener('change', () => render());
 
-  // Stage B: Pull # dropdown now navigates to /Receiving?pull=NEW (one URL = one pull).
-  // We no longer load multiple pulls' data client-side; the server is the source.
-  function applyPull() {
-    const sel = document.getElementById('pull-select');
-    const pullId = sel.value;
-    if (!pullId || pullId === currentPull) return;
-    window.location.href = `/Receiving?pull=${encodeURIComponent(pullId)}`;
-  }
-  document.getElementById('pull-select').addEventListener('change', applyPull);
-
   // Stage B: a pull belongs to exactly one warehouse server-side, so the warehouse
   // dropdown is presentational only — we sync its label fields after a load.
   function applyWarehouse() {
@@ -1259,17 +1249,12 @@
     items = mapped;
   }
 
-  // Inject the current pull/warehouse into the dropdown options if the static HTML
-  // doesn't already contain them. Otherwise the change handler can't reflect them.
+  // Page is context-locked — Pull # is a read-only text label fed from the
+  // loaded PullDetail. Warehouse stays a <select> for legacy markup parity but
+  // is presentational only (change handler reverts above).
   function ensureDropdownOptions(pullNumber, whCode, whName) {
-    const pullSel = document.getElementById('pull-select');
-    if (pullSel && ![...pullSel.options].some(o => o.value === pullNumber)) {
-      const opt = document.createElement('option');
-      opt.value = pullNumber;
-      opt.textContent = pullNumber;
-      pullSel.prepend(opt);
-    }
-    if (pullSel) pullSel.value = pullNumber;
+    const pullLabel = document.getElementById('pull-label');
+    if (pullLabel) pullLabel.textContent = pullNumber;
 
     const whSel = document.getElementById('warehouse-select');
     if (whSel && ![...whSel.options].some(o => o.value === whCode)) {

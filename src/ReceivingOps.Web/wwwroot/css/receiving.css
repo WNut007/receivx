@@ -365,6 +365,21 @@
   .select:hover { border-color: var(--border-bright); background-color: var(--surface-2); }
   .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31, 77, 43, 0.1); }
 
+  /* Pull # — read-only text label. Page is context-locked (one URL = one pull). */
+  .pull-number-display {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 8px;
+    min-width: 140px;
+    box-shadow: var(--shadow-sm);
+    letter-spacing: 0.03em;
+  }
+
   /* ---- Period stepper (prev / dropdown+NOW badge / next + Jump to now link) ---- */
   /* Same visual language as the hamburger split button: 0.5px border, 8px radius,
      compact 30x30 arrows that flank the dropdown. */

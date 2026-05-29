@@ -65,4 +65,10 @@ if ($resp.StatusCode -ne 200) { Fail "Expected 200, got $($resp.StatusCode)" }
 if ($resp.Content -notmatch 'data-app-page="receiving"') { Fail "View body lost" }
 OK "Receiving view still renders (Stage A landmark intact)"
 
+Step "Pull # is a read-only text label (context-locked page)"
+if ($resp.Content -notmatch 'id="pull-label"')  { Fail "Receiving view missing id=`"pull-label`" — expected text-label control" }
+if ($resp.Content -match    'id="pull-select"') { Fail "Receiving view still has id=`"pull-select`" — vestigial combobox should be removed" }
+if ($js -match              'pull-select')      { Fail "receiving.js still references 'pull-select' — should read currentPull instead" }
+OK "Pull # rendered as #pull-label text, no #pull-select combobox"
+
 Write-Host "`nStage B page-side smoke passed." -ForegroundColor Green
