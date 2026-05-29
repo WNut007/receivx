@@ -4,10 +4,19 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
 + Phase 10 ERP integration + Phase 11 admin config editor + Phase 12
 PO Excel importer).
-**Status:** v3.2 shipped on `main` (2026-05-27, tag `v3.2`, pushed to
-origin). v3.2 closes **Phase 12** — bulk PO import from `.xls`/`.xlsx`
-workbooks — across 11 commits spanning sub-phases 12.1 (schema) →
-12.8 (UI). Pipeline: an admin or supervisor uploads a workbook at
+**Status:** v3.3 shipped on `main` (2026-05-29, tag `v3.3`, pushed to
+origin). v3.3 bundles 6 threads on top of v3.2: Phase 9.2 (PO line
+extended-fields edit modal), A1 PullExternalRef denormalization +
+receive-FIFO lookup, Pull status forward-transition fix
+(`in_progress → fully_received`), Phase 13 dual-source ERP sync
+(BPI_PRS + PRB_PRS), DO report 8 detail fields + PNG signature
+embed, and Receiving Console Pull # text-label refactor. 2 migrations
+(`db/033`, `db/034`). Battery 58/62 at ship (4 fails = documented
+Gmail App Password block flakes only). See the v3.3 handoff block
+at the end of this file. Earlier ship was v3.2 (2026-05-27, tag
+`v3.2`), which closed **Phase 12** — bulk PO import from `.xls`/
+`.xlsx` workbooks — across 11 commits spanning sub-phases 12.1
+(schema) → 12.8 (UI). Pipeline: an admin or supervisor uploads a workbook at
 `/Imports`; Stage 1 parses + validates synchronously inside
 `PoImportController.Upload` and stamps a `dbo.PoImportLog` row at
 status `validated` (or `validation_failed` with per-row issues);
@@ -716,6 +725,172 @@ hardcoded SQL login.
 
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
+
+# Session handoff — 2026-05-29
+
+Latest tag: **v3.3**. Pushed to origin. Battery: **58/62** at ship · 4 fails
+are documented Gmail App Password block flakes only (`smoke-email-test`,
+`smoke-my-exports`, `smoke-exports-badge`, `smoke-exports-2tab` — the
+latter three cascade from the email failure since their export job
+emails a download link). No new regressions vs v3.2. v3.3 closed 6
+threads + 1 smoke patch across 24 commits.
+
+## Phase 9.2 — PO line extended-fields edit (Done in v3.3)
+
+Operator-editable surface for the 20 ERP-sourced columns Phase 9 added
+to `dbo.PurchaseOrderLines` (was DB-write-only / display-only at v2.3).
+Closes the gap until Phase 10 ERP push lands, mirroring v2.3.1's Phase
+9.1 pattern for PullItems.
+
+- ✅ `PoLineExtendedFieldsUpdateRequest` DTO (20 nullable string fields
+  except `DeliveryDate DateOnly?` and `OrderedQty int?` — bulk-overwrite
+  semantics; blank → NULL so ERP-vs-Receivx comparison stays clean for
+  Phase 10), service method `IPurchaseOrderAdminService.UpdateLineExtendedFieldsAsync`
+- ✅ **PUT** `/api/pos/{poId}/lines/{lineId}/extended-fields` —
+  `[Authorize(Roles="admin,supervisor")]`, refuses closed PO with 409,
+  writes one audit row per call
+- ✅ PO detail page: "Order ID" column now visible left of INVOICE
+  (display-only previously); pencil icon per line opens edit modal
+- ✅ Edit modal: 20 fields grouped into 6 sections (Tracking, Order,
+  Logistics, Pallets, Identifiers, Other) — matches the visual grouping
+  Phase 9 used in the detail-page sticky columns
+- ✅ Smoke `smoke-phase-9-2-po-line-extended-fields.ps1` — 9 paths
+  (admin PUT 200 + refreshed PoDetail, operator 403, closed-PO 409,
+  audit row, blank → NULL, partial overwrite preserves non-touched
+  fields, etc.)
+
+## A1 — PullExternalRef denormalization + receive lookup (Done in v3.3)
+
+Imported POs (Phase 12) have `PullId=NULL` because there's no
+`dbo.Pulls` row matching an upstream PRS_ID. But §7.15 lock-by-pull
+FIFO needs to scope candidate POs by the pull's reference. A1
+denormalizes the upstream identifier onto the PO itself so receive
+can match either by FK or by string.
+
+- ✅ Migration `db/033` — `PurchaseOrders.PullExternalRef NVARCHAR(50) NULL`
+  + filtered index `IX_PO_PullExternalRef WHERE PullExternalRef IS NOT NULL`
+- ✅ PoImportJob populates `PullExternalRef = PoNumber` per Q1=B
+  (the v3.2 mapping audit established PoNumber=PullSheetId=PRS_ID, so
+  denormalizing the same string onto a separate column is the cheapest
+  way to keep the §7.15 lookup symmetric)
+- ✅ `ReceiptService.ReceiveAsync` §7.15 FIFO conditional under the
+  existing `UPDLOCK, HOLDLOCK, ROWLOCK`:
+  `po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr`
+- ✅ DTO + repository SELECTs surface `pullExternalRef` to /api/pos
+- ✅ `/Pos` detail "Linked Pull" cell now 3-state:
+  (a) FK link → `PullNumber` (regular link to `/Dashboard?pull=…`),
+  (b) import-only → `"<ext> (import)"` muted-text badge,
+  (c) cross-pull warehouse-wide pool → em-dash
+- ✅ Smoke coverage (extended `smoke-phase-12-7-integration.ps1`):
+  PullExternalRef round-trips to PoNumber on every imported row +
+  ReceiptService A1 conditional + parameter binding present in source
+
+## Pull status forward transition fix (Done in v3.3)
+
+Bug surfaced on Pull `0000009383` — every window 100% filled but
+`Pulls.Status` stayed `in_progress` indefinitely. Root cause:
+`ReceiveAsync`'s tail UPDATE only handled the reverse direction
+(`fully_received → in_progress` demotion on undo). No forward
+transition existed because v2 originally relied on the Close gate
+to flip status; Hour Cap (v2.1) made fully-received achievable
+without a Close.
+
+- ✅ `ReceiveAsync` combined CASE expression — one round trip:
+  `Status = CASE WHEN (every window filled) THEN 'fully_received' ELSE Status END`
+- ✅ Forward + reverse coexist in the same statement
+- ✅ Backfill SQL for already-stuck pulls (`tools/sql/backfill-pulls-fully-received.sql`)
+- ✅ Smoke `smoke-pull-status-forward-transition.ps1` — asserts forward
+  flip via behavioral receive + reverse demotion on cancel
+
+## Phase 13 — Dual-source ERP sync (Done in v3.3)
+
+Same upstream host (`103.13.229.21`) carries a second planning table
+`PRB_PRS` peer to `BPI_PRS`. Both readers share schema and never
+collide on PRS_ID. Phase 10's single-source ETL extends to fan-out.
+
+- ✅ Migration `db/034` — `dbo.ErpSyncLog.SourceTotals NVARCHAR(MAX) NULL`
+  JSON column (per-source counter breakdown; single RunId still spans
+  both sources for operator drill-down)
+- ✅ `IErpSource` strategy interface; `BpiPrsSource` (pre-existing
+  logic extracted) + new `PrbPrsSource` (parallel impl, identical
+  schema, different table name)
+- ✅ Nested `ErpSyncOptions` — `Sources: { Bpi: {Enabled, BackfillDays,
+  DefaultWarehouseId}, Prb: {Enabled, BackfillDays, DefaultWarehouseId} }`.
+  Top-level `Enabled` retained as master switch
+- ✅ `ErpSyncJob.RunAsync` fan-out loop over `Sources.Where(s => s.Enabled)`,
+  shared mutex (no concurrent ETL across sources), shared RunId,
+  per-source totals aggregated into `SourceTotals` JSON
+- ✅ `/Config → ERP Sync` UI: per-source fieldsets (Enabled + Backfill +
+  DefaultWarehouseId per source)
+- ✅ Manual trigger refactor:
+  - Shared `_ErpSyncTriggerModal.cshtml` partial (was inlined in two
+    pages — Dashboard + /Admin/ErpSync)
+  - Modal now has a source dropdown (BPI / PRB / All)
+  - `TriggerRequest` carries `SourceName?` — `null` = all sources,
+    string = single source
+  - Warehouse + Backfill inputs REMOVED from modal (per-source config
+    is the source of truth — modal was a duplication risk)
+- ✅ Smokes — `smoke-phase-13-7-erp-prb.ps1` (PRB peer parity with
+  10.7's BPI integration coverage); `smoke-phase-13-9-trigger-config.ps1`
+  (single-source + all-source + disabled-source-rejection paths;
+  renamed from 13-8 mid-Phase to match the final source taxonomy)
+
+## DO report enhancements (Done in v3.3)
+
+- ✅ 8 detail fields per line added to DO HTML preview + PDF render
+  (PalletId, OrderId, InvoiceNo, KanbanNo, SubInventory, ToLocation,
+  AsnNo, OrderRound) in a 2-row layout — fields are visible-when-set,
+  muted-when-NULL; PDF render matches HTML preview pixel-for-pixel
+- ✅ Signature block now anchored to page footer (moved from
+  `ReportSummaryBand` mid-page → footer band → back into
+  `ReportSummaryBand` after the multi-page break interaction was
+  understood). Final: in `ReportSummaryBand`, positioned via mm offsets
+  to land at footer height
+- ✅ PNG signature mark renders in PDF above the AUTHORIZED BY divider.
+  `Pulls.SignatureSvg` containing `data:image/png;base64,...` is
+  decoded, pre-flattened onto a white 24bpp canvas (JPEG-in-PDF
+  rasterization has no alpha — transparent PNGs would collapse to
+  black), wrapped in `try/catch (ArgumentException, OutOfMemoryException)`
+  so a malformed signature never crashes PDF generation. Inline-SVG
+  signatures still skip silently (System.Drawing can't parse SVG;
+  text block continues to authorize). `PictureObject.SizeMode` is
+  fully qualified as `System.Windows.Forms.PictureBoxSizeMode.Zoom`
+  because FastReport.Compat shims that enum under the WinForms
+  namespace without pulling `Microsoft.WindowsDesktop.App`
+- ✅ Smoke coverage — extended `smoke-do-report.ps1`: 8-field round-trip
+  in preview HTML + PDF text-layer
+
+## UI polish (Done in v3.3)
+
+- ✅ Receiving Console `Pull #` combobox → read-only `#pull-label` text.
+  The page is context-locked (always entered via `?pull=X` from Pull
+  Controller; bare `/Receiving` redirects to Dashboard). The previous
+  `<select id="pull-select">` carried stale hardcoded mockup options
+  + a `change` handler that navigated to `/Receiving?pull=NEW`. Removed
+  along with `ensureDropdownOptions` JS helper. Smoke
+  `smoke-receiving-page-stage-b.ps1` asserts `#pull-label` present,
+  `#pull-select` absent, and JS doesn't reference the old id
+- ✅ ERP trigger modal — Warehouse + Backfill input fields removed
+  (config-driven from `/Config → ERP Sync` per source; modal only
+  picks the source + confirms)
+
+## Smoke maintenance (Done in v3.3)
+
+- ✅ `smoke-phase-12-7-integration.ps1` DeliveryDate assertion made
+  date-agnostic. The fixture `tools/fixtures/po-import-sample.xlsx`
+  bakes today's date in dd/MM/yyyy at build time (via Get-Date in
+  `build-po-import-fixture.ps1`); the smoke compared against today
+  at run time, which only matched on the day the fixture was last
+  regenerated. Replaced equality check with "NOT NULL + in sane
+  range 2024..2030" — still catches parser-drops-NULL +
+  century-misread regressions. Strict dd/MM/yyyy correctness remains
+  covered by `smoke-phase-12-2-po-import-reader.ps1` (unit-level,
+  known input)
+
+## Migrations new in v3.3
+
+- `db/033_purchase_orders_pull_external_ref.sql` — A1 denormalization
+- `db/034_erp_sync_log_source_totals.sql` — Phase 13 per-source counters
 
 # Session handoff — 2026-05-27
 
