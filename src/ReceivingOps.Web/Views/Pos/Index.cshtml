@@ -218,12 +218,15 @@
               <th class="num" style="width: 110px;">Ordered</th>
               <th class="num" style="width: 110px;">Received</th>
               <th class="num" style="width: 110px;">Remaining</th>
-              @* Phase 9 — priority ERP columns. Phase 9.2 promoted Order ID
-                 to the leftmost ERP slot (it's the most-requested identifier
-                 on the floor). Other 15 ERP fields are in the API response +
-                 Excel export but not surfaced here (PO detail is already
-                 wide; full inspection lives in the export + the §9.2 modal). *@
-              <th class="erp-col erp-col-first" style="width: 110px;">Order ID</th>
+              @* Phase 9 — priority ERP columns. Phase 14 promoted Vendor to
+                 the leftmost ERP slot (vendor is now per-line, most-requested
+                 identity on the floor). Order ID, Invoice, SubInv, ToLoc,
+                 Pallet, VMI Pallet follow. Other 14 ERP fields are in the
+                 API response + Excel export but not surfaced here (PO detail
+                 is already wide; full inspection lives in the export + the
+                 §9.2 modal). *@
+              <th class="erp-col erp-col-first" style="width: 130px;">Vendor</th>
+              <th class="erp-col" style="width: 110px;">Order ID</th>
               <th class="erp-col" style="width: 130px;">Invoice</th>
               <th class="erp-col" style="width: 110px;">SubInv</th>
               <th class="erp-col" style="width: 110px;">ToLoc</th>
@@ -419,6 +422,11 @@
 
         <div class="ef-section-label">Tracking</div>
         <div class="detail-grid" style="padding: 0 0 14px 0;">
+          @* Phase 14 — vendor at line grain (db/036). VendorCode is VARCHAR(64),
+             VendorName is NVARCHAR(160) — wider maxlength than the other 19
+             NVARCHAR(50) tracking fields, matched server-side. *@
+          <div class="field-group"><label>Vendor Code</label><input type="text" class="form-control" id="ef-vendorCode" maxlength="64"></div>
+          <div class="field-group"><label>Vendor Name</label><input type="text" class="form-control" id="ef-vendorName" maxlength="160"></div>
           <div class="field-group"><label>Order ID</label><input type="text" class="form-control" id="ef-orderId" maxlength="50"></div>
           <div class="field-group"><label>ASN No</label><input type="text" class="form-control" id="ef-asnNo" maxlength="50"></div>
           <div class="field-group"><label>Kanban No</label><input type="text" class="form-control" id="ef-kanbanNo" maxlength="50"></div>

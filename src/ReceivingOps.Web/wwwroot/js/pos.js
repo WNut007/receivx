@@ -305,8 +305,9 @@ function renderLines() {
   const tbody = document.getElementById('po-lines-tbody');
   const lines = currentDetail.lines || [];
   if (lines.length === 0) {
-    // Phase 9.2 bumped colspan 12 → 13 (added Order ID column).
-    tbody.innerHTML = `<tr><td colspan="13" class="empty-row">
+    // Colspan history: 12 baseline → 13 (Phase 9.2 added Order ID) →
+    // 14 (Phase 14 added Vendor as the new leftmost ERP column).
+    tbody.innerHTML = `<tr><td colspan="14" class="empty-row">
       <i class="bi bi-inbox"></i> No lines yet — click <b>Add line</b>
     </td></tr>`;
   } else {
@@ -336,7 +337,8 @@ function renderLines() {
           <td class="num">${(l.orderedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.receivedQty | 0).toLocaleString()}</td>
           <td class="num">${(l.remainingQty | 0).toLocaleString()}</td>
-          ${erpCell(l.orderId,      'erp-col-first')}
+          ${vendorCell(l.vendorName, l.vendorCode)}
+          ${erpCell(l.orderId)}
           ${erpCell(l.invoiceNo)}
           ${erpCell(l.subInventory)}
           ${erpCell(l.toLocation)}
@@ -365,6 +367,23 @@ function erpCell(value, extraClass) {
   const cls = 'erp-col' + (extraClass ? ' ' + extraClass : '') + (present ? '' : ' is-empty');
   const display = present ? escHtml(value) : '—';
   const title = present ? ` title="${escHtml(value)}"` : '';
+  return `<td class="${cls}"${title}>${display}</td>`;
+}
+
+// Phase 14 — vendor cell for the leftmost ERP slot. Shows VendorName
+// preferred, falls back to VendorCode (matches the DO partial's vendor
+// fallback chain); tooltip carries both so the operator can see code +
+// name without scrolling sideways.
+function vendorCell(name, code) {
+  const hasName = name != null && name !== '';
+  const hasCode = code != null && code !== '';
+  const present = hasName || hasCode;
+  const cls = 'erp-col erp-col-first' + (present ? '' : ' is-empty');
+  const display = hasName ? escHtml(name) : (hasCode ? escHtml(code) : '—');
+  const titleText = present
+    ? (hasName && hasCode ? `${name} (${code})` : (name || code))
+    : '';
+  const title = present ? ` title="${escHtml(titleText)}"` : '';
   return `<td class="${cls}"${title}>${display}</td>`;
 }
 
@@ -833,6 +852,10 @@ document.addEventListener('click', (e) => {
 // so the cold-start cost on /Pos stays minimal (the operator path that
 // doesn't need this modal pays nothing).
 const EF_FIELDS = [
+  // Phase 14 — VendorCode + VendorName at line grain (db/036). Order
+  // matches the modal's Tracking section so the read/write code stays
+  // declarative and the operator's eye reads top-to-bottom in one pass.
+  'vendorCode', 'vendorName',
   'orderId', 'asnNo', 'kanbanNo', 'vendorItem',
   'location', 'subInventory', 'toLocation', 'building', 'productionLine',
   'palletId', 'vmiPalletId', 'batchNo',
