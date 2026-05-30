@@ -113,9 +113,8 @@ DECLARE @po501Id  UNIQUEIDENTIFIER = '66666666-6666-6666-6666-000000000012';
 IF NOT EXISTS (SELECT 1 FROM dbo.PurchaseOrders WHERE PoNumber = 'PO-2405-001')
 BEGIN
     PRINT 'Creating PO-2405-001 (dedicated to PL-2900)...';
-    INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, PullId, VendorCode, VendorName, OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
+    INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, PullId, OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
     VALUES (@po501Id, 'PO-2405-001', @wBkk, @p2900,
-            'V-FORTIS', N'Fortis Microparts',
             '2026-05-10', '2026-05-22', 'open',
             N'Dedicated PO for PL-2900 strict-mode demo', NULL,
             '2026-05-10T00:00:00');
@@ -128,8 +127,9 @@ DECLARE @po501L1  UNIQUEIDENTIFIER = '77777777-7777-7777-7777-120100000001';
 IF NOT EXISTS (SELECT 1 FROM dbo.PurchaseOrderLines WHERE Id = @po501L1)
 BEGIN
     PRINT 'Creating PO-2405-001 line 1 (PCBA-AX450-R2 / 500 pcs)...';
-    INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
-    VALUES (@po501L1, @po501Id, 1, 'PCBA-AX450-R2', N'PCBA AX450 Rev 2 - 1.5GHz', 500, 0);
+    -- Phase 14 (db/036): vendor at line grain.
+    INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName)
+    VALUES (@po501L1, @po501Id, 1, 'PCBA-AX450-R2', N'PCBA AX450 Rev 2 - 1.5GHz', 500, 0, 'V-FORTIS', N'Fortis Microparts');
 END
 GO
 

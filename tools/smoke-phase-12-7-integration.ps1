@@ -270,6 +270,11 @@ Step "dbo.PurchaseOrderLines — 4 lines with deterministic LineNumber + field r
 # the end-to-end pipe lit up: the parser produced a non-NULL date and it
 # landed in a sane range (rules out a year-0 / year-1900 / millennium-
 # bug-style misread that surfaces as a non-null garbage date).
+# Phase 14 (db/036): vendor moved from PO header to POL. The fixture writes
+# VEND-A on both P127TEST-001 lines (Vendor Alpha) and VEND-B on both
+# P127TEST-002 lines (Vendor Beta) via STORER CODE/STORER NAME — the
+# per-row vendor assertions below close the v3.2 silent-loss regression
+# where the job took only firstRow.VendorCode and stamped the whole PO.
 $lineCheck = (SqlRow @"
 SET NOCOUNT ON;
 SELECT
@@ -284,14 +289,21 @@ SELECT
     SUM(CASE WHEN LineNumber IN (1, 2)                           THEN 1 ELSE 0 END) AS LineNumOk,
     SUM(CASE WHEN DeliveryDate IS NOT NULL
               AND DeliveryDate >= '2024-01-01'
-              AND DeliveryDate <  '2031-01-01'                   THEN 1 ELSE 0 END) AS DeliveryDateSane
+              AND DeliveryDate <  '2031-01-01'                   THEN 1 ELSE 0 END) AS DeliveryDateSane,
+    SUM(CASE WHEN po.PoNumber = 'P127TEST-001'
+              AND pol.VendorCode = 'VEND-A'
+              AND pol.VendorName = 'Vendor Alpha'                THEN 1 ELSE 0 END) AS VendAOnPo1,
+    SUM(CASE WHEN po.PoNumber = 'P127TEST-002'
+              AND pol.VendorCode = 'VEND-B'
+              AND pol.VendorName = 'Vendor Beta'                 THEN 1 ELSE 0 END) AS VendBOnPo2,
+    SUM(CASE WHEN pol.VendorCode IS NOT NULL                     THEN 1 ELSE 0 END) AS AnyVendorSet
 FROM dbo.PurchaseOrderLines pol
 JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber LIKE 'P127TEST-%';
 "@) -join '' -replace '\s',''
 
 $lp = ($lineCheck -split '\|')
-if ($lp.Count -lt 10) { Fail "Could not parse line check output: '$lineCheck'" }
+if ($lp.Count -lt 13) { Fail "Could not parse line check output: '$lineCheck'" }
 if ([int]$lp[0] -ne 4) { Fail "PurchaseOrderLines total=$($lp[0]), expected 4" }
 if ([int]$lp[1] -ne 4) { Fail "ReceivedQty not 0 on $(4 - [int]$lp[1]) of 4 lines" }
 if ([int]$lp[2] -ne 1) { Fail "TST-WIDGET-001/qty=12 not found exactly once (got $($lp[2]))" }
@@ -302,7 +314,11 @@ if ([int]$lp[6] -ne 4) { Fail "OrderId NULL on $(4 - [int]$lp[6]) of 4 lines —
 if ([int]$lp[7] -ne 4) { Fail "PalletId NULL on $(4 - [int]$lp[7]) of 4 lines — db/021 column not populated" }
 if ([int]$lp[8] -ne 4) { Fail "LineNumber outside {1,2} on $(4 - [int]$lp[8]) of 4 lines" }
 if ([int]$lp[9] -ne 4) { Fail "DeliveryDate NULL or outside 2024..2030 on $(4 - [int]$lp[9]) of 4 lines — parser dropped dd/MM/yyyy or misread century" }
-OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2} · DeliveryDate parsed (in-range)"
+# Phase 14 vendor-at-line assertions
+if ([int]$lp[10] -ne 2) { Fail "P127TEST-001 lines without VEND-A/Vendor Alpha — got $($lp[10])/2 (regression: vendor not landing on POL from STORER columns)" }
+if ([int]$lp[11] -ne 2) { Fail "P127TEST-002 lines without VEND-B/Vendor Beta — got $($lp[11])/2 (regression: PoImportJob used firstRow.VendorCode for whole PO?)" }
+if ([int]$lp[12] -ne 4) { Fail "Vendor NULL on $(4 - [int]$lp[12]) of 4 POL rows — db/036 column or PoImportJob INSERT regression" }
+OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2} · DeliveryDate parsed · Phase 14 vendor at POL (VEND-A x2 + VEND-B x2)"
 
 # ----------------------------------------------------------------------------
 # 11b. A1 (db/033) — PullExternalRef surfaces via /api/pos/{id} +

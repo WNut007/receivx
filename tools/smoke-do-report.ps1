@@ -41,10 +41,37 @@ INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PL-DOR-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-DOR-%';
+DELETE FROM dbo.PurchaseOrderLines
+ WHERE PurchaseOrderId IN (SELECT Id FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-DOR-%');
+DELETE FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-DOR-%';
 '@
     sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
 }
+
+function SqlSeedSummaryPo {
+    # Phase 14: the smoke historically relied on a SUMMARY PO line that
+    # earlier smoke runs had left in the dev DB. After db/035's wipe that
+    # residue is gone, so we explicitly seed a dedicated PO for this smoke.
+    # PoNumber prefix PO-DOR-* matches the SqlCleanup wipe so the smoke is
+    # idempotent across reruns. The 1000-qty line covers two 50/30 receipts
+    # with room to spare.
+    $sql = @'
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+DECLARE @poId UNIQUEIDENTIFIER = NEWID();
+INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, ExpectedDate, Status, Notes, CreatedAt)
+VALUES (@poId, 'PO-DOR-SUMMARY',
+        '22222222-2222-2222-2222-000000000001',
+        '2026-01-01', NULL, 'open',
+        N'DO smoke dedicated PO — SUMMARY backfill target', SYSUTCDATETIME());
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
+VALUES (NEWID(), @poId, 1, 'SUMMARY', N'DO smoke SUMMARY', 1000, 0);
+'@
+    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+}
+
 SqlCleanup
+SqlSeedSummaryPo
 
 function Login($user, $pass, $whId) {
     $body = @{ username = $user; password = $pass; warehouseId = $whId; remember = $false } | ConvertTo-Json
@@ -101,14 +128,20 @@ foreach ($w in @(@{ h = 10; q = 50 }, @{ h = 14; q = 30 })) {
     Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $recvBody -ContentType 'application/json' -WebSession $sv | Out-Null
 }
 
-# Stamp the 8 ERP-sourced fields on the PoLine(s) the smoke's receipts hit.
-# /api/pos has no PUT for these (ERP-source-of-truth per Phase 9), so the
-# smoke writes them directly with sqlcmd, same way SqlCleanup tears down.
+# Stamp the 8 ERP-sourced fields + Phase 14 vendor on the PoLine(s) the
+# smoke's receipts hit. /api/pos has no PUT for ERP fields (ERP source-of-
+# truth per Phase 9), so the smoke writes them directly with sqlcmd, same
+# way SqlCleanup tears down. Phase 14: vendor is now per-line — the same
+# UPDATE that stamps PalletId/SubInventory/ToLocation also stamps
+# VendorCode/VendorName so the DO grouping triple (Vendor x SubInv x ToLoc)
+# materializes cleanly and the DO header has a vendor to display.
 $stampSql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
 UPDATE pol
-SET PalletId     = 'PALLET-DOR-001',
+SET VendorCode   = 'V-DOR',
+    VendorName   = 'Vendor DOR Inc',
+    PalletId     = 'PALLET-DOR-001',
     OrderId      = 'ORD-DOR-001',
     InvoiceNo    = 'INV-DOR-001',
     KanbanNo     = 'KBN-DOR-001',
@@ -179,6 +212,29 @@ foreach ($val in 'PALLET-DOR-001','ORD-DOR-001','INV-DOR-001','KBN-DOR-001','SUB
     }
 }
 OK "All 8 labels + 8 stamped values present in detail row"
+
+# Phase 14 — DO grouping = (Vendor × FromSubInv × ToLoc). The header should
+# now show the vendor as the do-number (replacing the legacy PoNumber) and
+# expose From sub-inventory / To location as first-class metadata.
+Step "Phase 14: DO header shows vendor + From/To metadata (not legacy PoNumber)"
+$doNumberMatch = [regex]::Match($prev.Content, '<div class="do-number">([^<]*)</div>')
+if (-not $doNumberMatch.Success) { Fail "DO preview missing .do-number element" }
+$doNumber = $doNumberMatch.Groups[1].Value.Trim()
+if ($doNumber -ne 'Vendor DOR Inc') {
+    Fail "do-number expected vendor name 'Vendor DOR Inc' (Phase 14), got '$doNumber'"
+}
+# From + To rows must be present as <dt>/<dd> pairs
+if ($prev.Content -notmatch '>From sub-inventory<') {
+    Fail "Phase 14 'From sub-inventory' metadata row missing from DO header"
+}
+if ($prev.Content -notmatch '>To location<') {
+    Fail "Phase 14 'To location' metadata row missing from DO header"
+}
+# Vendor block in the dl should still surface the code under the name
+if ($prev.Content -notmatch 'class="vendor-code">V-DOR<') {
+    Fail "Vendor block missing the code 'V-DOR' under the vendor name — DoOrder.VendorCode not surfacing"
+}
+OK "DO header: do-number='Vendor DOR Inc' + From sub-inv + To location + vendor-code (V-DOR) all present"
 
 # ----------------------------------------------------------------------------
 # 2b. Footer — aligned RECEIVED BY (text-only) + AUTHORIZED BY (signature)

@@ -59,10 +59,13 @@ $poNum   = $parts[2]
 $itemCode = $parts[3]
 OK "Using $poNum line $itemCode (poId=$poId, lineId=$lineId)"
 
-# Save current state so cleanup can restore it
+# Save current state so cleanup can restore it.
+# Phase 14: VendorCode + VendorName captured first (DB column order matches
+# the modal's Tracking section, where vendor sits at the top).
 $preState = (SqlRow @"
 SET NOCOUNT ON;
-SELECT ISNULL(OrderId,''),         ISNULL(AsnNo,''),
+SELECT ISNULL(VendorCode,''),      ISNULL(VendorName,''),
+       ISNULL(OrderId,''),         ISNULL(AsnNo,''),
        ISNULL(KanbanNo,''),        ISNULL(VendorItem,''),
        ISNULL(Location,''),        ISNULL(SubInventory,''),
        ISNULL(ToLocation,''),      ISNULL(Building,''),
@@ -80,7 +83,12 @@ FROM   dbo.PurchaseOrderLines WHERE Id = '$lineId';
 # ----------------------------------------------------------------------------
 Step "Admin PUT extended-fields → 200 with refreshed PoDetail"
 $admin = Login 'sadmin' 'admin' $WH_01
+# Phase 14: vendor at line grain (db/036) — VendorCode (≤64) + VendorName
+# (≤160) sit at the top of the modal's Tracking section. The payload below
+# exercises the round-trip + validator widths.
 $payload = @{
+    vendorCode               = 'V-SMK-92'
+    vendorName               = 'Smoke Vendor 92 Inc'
     orderId                  = 'SMOKE-92-ORD'
     asnNo                    = 'SMOKE-92-ASN'
     kanbanNo                 = 'SMOKE-92-KBN'
@@ -121,6 +129,8 @@ $detail = Invoke-RestMethod -Uri "$base/api/pos/$poId" -WebSession $admin
 $line = $detail.lines | Where-Object { $_.id -eq $lineId }
 if (-not $line)                              { Fail "Updated line missing from GET PoDetail" }
 foreach ($pair in @(
+    @{Key='vendorCode';               Want='V-SMK-92'},
+    @{Key='vendorName';               Want='Smoke Vendor 92 Inc'},
     @{Key='orderId';                  Want='SMOKE-92-ORD'},
     @{Key='asnNo';                    Want='SMOKE-92-ASN'},
     @{Key='subInventory';             Want='SMOKE-SUB'},
@@ -133,7 +143,7 @@ foreach ($pair in @(
         Fail "GET roundtrip mismatch on $($pair.Key): got '$($line.($pair.Key))', expected '$($pair.Want)'"
     }
 }
-OK "7 sampled fields round-trip cleanly via GET (covers all 6 sections)"
+OK "9 sampled fields round-trip cleanly via GET (Phase 14 vendor at line + 6 modal sections)"
 
 # ----------------------------------------------------------------------------
 # 4. Supervisor (same WH) — 200
@@ -236,15 +246,18 @@ OK "$auditCount recent audit rows; latest message contains PoNumber + ItemCode"
 # ----------------------------------------------------------------------------
 # 8. UI markup — Order ID header + modal block present in /Pos page
 # ----------------------------------------------------------------------------
-Step "/Pos page contains Order ID column + extended-fields modal markup"
+Step "/Pos page contains Vendor + Order ID columns + extended-fields modal markup"
 $pos = Invoke-WebRequest -Uri "$base/Pos" -WebSession $admin -MaximumRedirection 0
 if ($pos.StatusCode -ne 200) { Fail "GET /Pos → $($pos.StatusCode), expected 200" }
 $body = $pos.Content
 foreach ($marker in @(
-    '>Order ID<',                     # new column header
-    'erp-col-first',                  # column class (now on Order ID, not Invoice)
+    '>Vendor<',                       # Phase 14 — new leftmost ERP column header
+    '>Order ID<',                     # Phase 9.2 column header
+    'erp-col-first',                  # column class (Phase 14 moved to Vendor)
     'poLineExtendedFieldsModal',      # modal container
-    'ef-orderId',                     # specific input id
+    'ef-vendorCode',                  # Phase 14 — Tracking section input
+    'ef-vendorName',                  # Phase 14 — Tracking section input
+    'ef-orderId',                     # Phase 9.2 input id
     'ef-note',                        # textarea id
     'ef-section-label'                # section divider class
 )) {
@@ -252,7 +265,7 @@ foreach ($marker in @(
         Fail "Required /Pos markup missing: $marker"
     }
 }
-OK "All 6 UI markers present in /Pos page source"
+OK "All 9 UI markers present in /Pos page source (incl. Phase 14 vendor surface)"
 
 # ----------------------------------------------------------------------------
 # 9. Cleanup — restore the line to its pre-smoke state
@@ -262,27 +275,31 @@ $preFields = $preState -split '\|'
 # Build a payload that mirrors the original — null where the field was empty,
 # string otherwise. SQL NULL ↔ JSON null ↔ '' from the ISNULL above.
 function NullIfEmpty([string]$s) { if ([string]::IsNullOrEmpty($s)) { return $null } else { return $s } }
+# Phase 14: VendorCode + VendorName at indices 0 + 1 (DB SELECT order),
+# remaining 20 fields shift to indices 2..21.
 $cleanupPayload = @{
-    orderId                  = NullIfEmpty $preFields[0]
-    asnNo                    = NullIfEmpty $preFields[1]
-    kanbanNo                 = NullIfEmpty $preFields[2]
-    vendorItem               = NullIfEmpty $preFields[3]
-    location                 = NullIfEmpty $preFields[4]
-    subInventory             = NullIfEmpty $preFields[5]
-    toLocation               = NullIfEmpty $preFields[6]
-    building                 = NullIfEmpty $preFields[7]
-    productionLine           = NullIfEmpty $preFields[8]
-    palletId                 = NullIfEmpty $preFields[9]
-    vmiPalletId              = NullIfEmpty $preFields[10]
-    batchNo                  = NullIfEmpty $preFields[11]
-    invoiceNo                = NullIfEmpty $preFields[12]
-    pccNo                    = NullIfEmpty $preFields[13]
-    manufacturingControlNo   = NullIfEmpty $preFields[14]
-    orderRound               = NullIfEmpty $preFields[15]
-    exportDeclarationNo      = NullIfEmpty $preFields[16]
-    customerReferenceNo      = NullIfEmpty $preFields[17]
-    manufacturingReferenceNo = NullIfEmpty $preFields[18]
-    note                     = NullIfEmpty $preFields[19]
+    vendorCode               = NullIfEmpty $preFields[0]
+    vendorName               = NullIfEmpty $preFields[1]
+    orderId                  = NullIfEmpty $preFields[2]
+    asnNo                    = NullIfEmpty $preFields[3]
+    kanbanNo                 = NullIfEmpty $preFields[4]
+    vendorItem               = NullIfEmpty $preFields[5]
+    location                 = NullIfEmpty $preFields[6]
+    subInventory             = NullIfEmpty $preFields[7]
+    toLocation               = NullIfEmpty $preFields[8]
+    building                 = NullIfEmpty $preFields[9]
+    productionLine           = NullIfEmpty $preFields[10]
+    palletId                 = NullIfEmpty $preFields[11]
+    vmiPalletId              = NullIfEmpty $preFields[12]
+    batchNo                  = NullIfEmpty $preFields[13]
+    invoiceNo                = NullIfEmpty $preFields[14]
+    pccNo                    = NullIfEmpty $preFields[15]
+    manufacturingControlNo   = NullIfEmpty $preFields[16]
+    orderRound               = NullIfEmpty $preFields[17]
+    exportDeclarationNo      = NullIfEmpty $preFields[18]
+    customerReferenceNo      = NullIfEmpty $preFields[19]
+    manufacturingReferenceNo = NullIfEmpty $preFields[20]
+    note                     = NullIfEmpty $preFields[21]
 } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/pos/$poId/lines/$lineId/extended-fields" `
     -Method PUT -Body $cleanupPayload -ContentType 'application/json' -WebSession $admin | Out-Null
