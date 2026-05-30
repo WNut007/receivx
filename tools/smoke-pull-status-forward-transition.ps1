@@ -85,20 +85,21 @@ OK "Fixture slate clean"
 # ----------------------------------------------------------------------------
 Step "Insert fixture: PO line + Pull + item + window (all sized 5)"
 # sadmin = 11111111-1111-1111-1111-000000000001 (per seed)
+# Phase 14 (db/036): vendor moved from PO header to POL.
 Sql @"
 SET NOCOUNT ON;
 INSERT INTO dbo.PurchaseOrders
-    (Id, PoNumber, WarehouseId, PullId, VendorCode, VendorName,
+    (Id, PoNumber, WarehouseId, PullId,
      OrderDate, Status, CreatedBy, CreatedAt)
 VALUES
-    ('$PoId', '$PoNumber', '$WH_01', NULL, 'VEND-PFT', 'PFT Vendor',
+    ('$PoId', '$PoNumber', '$WH_01', NULL,
      CAST(SYSUTCDATETIME() AS DATE), 'open',
      '11111111-1111-1111-1111-000000000001', SYSUTCDATETIME());
 
 INSERT INTO dbo.PurchaseOrderLines
-    (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
+    (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName)
 VALUES
-    ('$PoLineId', '$PoId', 1, '$ItemCode', 'PFT smoke item', 5, 0);
+    ('$PoLineId', '$PoId', 1, '$ItemCode', 'PFT smoke item', 5, 0, 'VEND-PFT', 'PFT Vendor');
 
 INSERT INTO dbo.Pulls
     (Id, PullNumber, WarehouseId, PullDate, Status,
