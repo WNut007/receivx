@@ -1337,7 +1337,7 @@
         setBusy(false);
         if (state === 'Succeeded') {
           modal.hide();
-          showToast('ERP sync complete', 'Check Hangfire dashboard for details');
+          showToast('ERP sync complete', 'See details at /Admin/ErpSync');
           if (typeof loadPulls === 'function') loadPulls();
         } else {
           setStatus(
