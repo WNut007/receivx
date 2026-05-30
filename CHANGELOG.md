@@ -10,6 +10,60 @@ for fine-grained authorship.
 
 ---
 
+## [3.4.1] — 2026-05-30 — Receipt seed gap closure
+
+Restores the historical PL-2847 Receipts that db/006 §5 seeded under v1
+but couldn't recreate against the v2 strict schema (Receipts
+.PurchaseOrderLineId NOT NULL since db/011). After v3.4's db/035 wipe,
+the dev test bed lost all receipts; this migration brings them back.
+
+### Migrations
+
+- `db/038_phase_14_receipt_backfill.sql` — resolves PurchaseOrderLineId
+  up-front via the same FIFO logic db/012 used during the v1→v2 cutover
+  (oldest open PO line per item code), then INSERTs 18 receipts
+  (16 positives + 2 reversal pairs) with explicit PurchaseOrderId +
+  PurchaseOrderLineId. Set-from-truth POL/PIW cache recalcs at the
+  end make it idempotent. NOT EXISTS guards on the receipt GUIDs.
+  Same invariants as db/012 §2.4 are enforced before COMMIT.
+
+### Fixed
+
+- `smoke-pull-status-forward-transition` — fixture INSERT carried
+  VendorCode/VendorName at the PO header (silently 0-row insert
+  post-Phase-14 because those columns were dropped). Moved vendor
+  to the POL INSERT per the db/036 shape.
+
+### Smoke status delta vs v3.4
+
+  Seed-gap failures at v3.4 ship: 4
+  After v3.4.1:
+    PASS  smoke-phase-9-1-pull-extended-fields  (regained Receipts coverage)
+    PASS  smoke-phase-9-extended-fields          (regained Receipts coverage)
+    PASS  smoke-pull-status-forward-transition   (Phase 14 INSERT patched)
+    FAIL  smoke-stage-b                          (different gap — see below)
+
+### Known gaps remaining for v3.4.2
+
+- **smoke-stage-b** — PL-2844 carries `SUMMARY` (a db/006 §4 mockup
+  placeholder with no PO backing), so by-number lookup returns an
+  unreceivable item. The smoke worked pre-Phase-14 only via dev-DB
+  residue from prior runs. Honest fix is a smoke refactor (use
+  PL-2847 with a known-receivable item that has window headroom
+  post-backfill, or inline-seed a real PullItem on PL-2844) — outside
+  the Receipts-backfill scope this version closed.
+- **New PO modal + PO Detail header form** still show Vendor Code /
+  Vendor Name inputs at PO-header grain. Operator confusion risk
+  (silently dropped post-Phase-14). Carried forward from v3.4 backlog.
+- **PoListRow "Mixed" badge** when MIN=MAX collapse returns null —
+  blank vs "Mixed" UI cue. Carried forward.
+
+### Commits
+
+- `4891ac9` feat(db): db/038 receipt backfill + smoke alignment
+
+---
+
 ## [3.4.0] — 2026-05-30 — Phase 14: vendor at line grain
 
 Mixed-vendor purchase orders are a real production case. The v3.2

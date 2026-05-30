@@ -4,25 +4,34 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
 + Phase 10 ERP integration + Phase 11 admin config editor + Phase 12
 PO Excel importer).
-**Status:** v3.4 shipped on `main` (2026-05-30, tag `v3.4`, pushed to
-origin). v3.4 closes **Phase 14** — vendor moves from
-`dbo.PurchaseOrders` (header) to `dbo.PurchaseOrderLines` (line) so
-mixed-vendor POs are first-class (the v3.2 importer was silently
-dropping lines 2..N's vendor). Two migrations: `db/035` destructively
-wipes all transactional data (dev-only guard via `@@SERVERNAME`);
-`db/036` re-ALTERs two views, adds VendorCode/Name to POL, creates
-filtered `IX_POL_Vendor`, drops the columns from PurchaseOrders. DO
-report reshaped: a single pull now spawns multiple DOs split by
-(Vendor × FromSubInventory × ToLocation). PO list/detail keep their
-header `VendorCode/Name` surface via MIN=MAX collapse subqueries
-in the repo (null when mixed). Phase 9.2 edit modal Tracking section
-gains VendorCode + VendorName at line grain. 2 new Phase 14 smokes
-+ 4 patched smokes. Known seed-gap: historical Receipts seed (db/006 §5)
-can't run against the v2 strict schema; smokes that depend on
-PO-2401-018 receipts (`smoke-stage-b`, `smoke-pull-status-forward-transition`,
-`smoke-phase-9-1-pull-extended-fields`, `smoke-phase-9-extended-fields`)
-will fail until that gap is closed. See the v3.4 handoff block at
-the end of this file.
+**Status:** v3.4.1 shipped on `main` (2026-05-30, tag `v3.4.1`, pushed
+to origin). v3.4.1 closes the Receipt seed gap that v3.4 left behind:
+`db/038` resolves PurchaseOrderLineId via the same FIFO logic db/012
+used during the v1→v2 cutover and INSERTs the 18 historical PL-2847
+receipts (incl. 2 reversal pairs) with explicit
+PurchaseOrderId/PurchaseOrderLineId so the v2 strict schema is
+satisfied. POL.ReceivedQty + PIW.ReceivedQty caches recalculated
+from truth. 3 of v3.4's 4 known seed-gap smokes regain coverage:
+`smoke-phase-9-1-pull-extended-fields`, `smoke-phase-9-extended-fields`,
+`smoke-pull-status-forward-transition` (the last one needed a Phase 14
+INSERT alignment patch in addition to the backfill). `smoke-stage-b`
+still fails — its by-number lookup hits PL-2844 which carries a
+`SUMMARY` mockup item without PO backing; the gap is independent
+of receipts and is parked for v3.4.2.
+
+**Previous ship:** v3.4 (2026-05-30, tag `v3.4`) closed **Phase 14** —
+vendor moves from `dbo.PurchaseOrders` (header) to
+`dbo.PurchaseOrderLines` (line) so mixed-vendor POs are first-class
+(the v3.2 importer was silently dropping lines 2..N's vendor). Two
+migrations: `db/035` destructively wipes all transactional data
+(dev-only guard via `@@SERVERNAME`); `db/036` re-ALTERs two views,
+adds VendorCode/Name to POL, creates filtered `IX_POL_Vendor`, drops
+the columns from PurchaseOrders. DO report reshaped: a single pull
+now spawns multiple DOs split by (Vendor × FromSubInventory × ToLocation).
+PO list/detail keep their header `VendorCode/Name` surface via MIN=MAX
+collapse subqueries in the repo (null when mixed). Phase 9.2 edit
+modal Tracking section gains VendorCode + VendorName at line grain.
+2 new Phase 14 smokes + 4 patched smokes. See the v3.4 handoff block.
 
 **Previous ship:** v3.3 (2026-05-29, tag `v3.3`) bundled 6 threads
 on top of v3.2: Phase 9.2 (PO line extended-fields edit modal), A1
@@ -744,6 +753,78 @@ hardcoded SQL login.
 
 ## Out of scope (don't add unless asked)
 See BUILD_PROMPT.md §14.
+
+# Session handoff — 2026-05-30 (v3.4.1)
+
+Latest tag: **v3.4.1**. Pushed to origin. Closes the Receipt seed gap
+that v3.4 left behind. Single migration + one smoke patch.
+
+## v3.4.1 — Done
+
+### db/038 — Phase 14 receipt backfill
+
+- ✅ Restores 18 PL-2847 receipts (16 positives + 2 reversal pairs)
+  with explicit `PurchaseOrderId` + `PurchaseOrderLineId` resolved
+  via the same FIFO logic db/012 used during the v1→v2 cutover
+  (oldest open PO line per item code at the pull's warehouse).
+- ✅ Per-item resolution lands every receipt on PO-2401-018 (the
+  oldest open WH-01 PO). L1 PCBA-AX450-R2 net 2100/5500, L2
+  PCBA-AX451-R2 net 1300/2000, L3 CAP-470UF-25V net 3500/7000,
+  L4 RES-10K-1% net 8200/20000 (incl. reversal pairs), L5
+  CONN-USB-C-16 net 200/500, L6 LCD-3.5-IPS net 50/100, L7
+  SHIELD-RF-A1 net 300/500.
+- ✅ Set-from-truth POL.ReceivedQty + PIW.ReceivedQty recalcs at
+  the end → idempotent. NOT EXISTS guards on the 18 receipt GUIDs.
+- ✅ Same invariants as db/012 §2.4 enforced before COMMIT (zero
+  orphan PO columns, ReceivedQty in [0, OrderedQty], cache equals
+  SUM(Receipts.QtyReceived)).
+
+### smoke-pull-status-forward-transition — Phase 14 INSERT alignment
+
+- ✅ Fixture INSERT carried `VendorCode/VendorName` at the PO
+  header — those columns are dropped post-db/036, so the INSERT
+  silently inserted 0 rows and the next SELECT returned empty.
+  Moved vendor to the POL INSERT (db/036 shape).
+
+## Smoke status delta vs v3.4
+
+| Smoke | v3.4 | v3.4.1 |
+|-------|------|--------|
+| smoke-phase-9-1-pull-extended-fields | FAIL | **PASS** |
+| smoke-phase-9-extended-fields        | FAIL | **PASS** |
+| smoke-pull-status-forward-transition | FAIL | **PASS** |
+| smoke-stage-b                        | FAIL | FAIL (deferred) |
+
+## Remaining gaps — v3.4.2 backlog
+
+- **smoke-stage-b** — PL-2844 carries `SUMMARY` (a db/006 §4 mockup
+  placeholder with no PO backing), so by-number lookup returns an
+  unreceivable item. Pre-Phase-14 the smoke passed only via dev-DB
+  residue from prior runs (someone had manually added a real item
+  to PL-2844 at some point). Honest fix: refactor the smoke to use
+  PL-2847 (real PO-backed items) with a known-headroom window, or
+  inline-seed a real PullItem on PL-2844. Either approach is a
+  smoke refactor, not a seed migration — separate concern from
+  the Receipts backfill this version closed.
+- **New PO modal + PO Detail header form** still show Vendor Code /
+  Vendor Name inputs at PO-header grain. PoCreateRequest +
+  PoUpdateRequest silently drop them post-Phase-14. Operator
+  confusion risk. Carried forward from v3.4 backlog.
+- **PoListRow "Mixed" badge** when MIN=MAX collapse returns null
+  on a multi-vendor PO. Currently renders blank. Carried forward.
+- **Wider battery untested at v3.4.1 ship** — 22 smokes verified
+  at v3.4 ship plus the 4 above (3 newly PASS, 1 still FAIL). The
+  other ~38 smokes in the battery haven't been re-verified; the
+  Receipts backfill is expected to unblock most receipts-dependent
+  paths, but a full battery run hasn't been performed.
+
+## Migrations new in v3.4.1
+
+- `db/038_phase_14_receipt_backfill.sql` — historical Receipts restore
+
+## Commits since v3.4
+
+- `4891ac9` feat(db): db/038 receipt backfill + smoke-pull-status-forward Phase 14 alignment
 
 # Session handoff — 2026-05-30
 
