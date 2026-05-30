@@ -27,19 +27,32 @@
 
    FK-safe deletion order (children → parents) so each DELETE never violates
    a foreign key:
-     1. Receipts has TWO self-ref FKs — ReversesReceiptId AND ReversedById,
-        both NO_ACTION. A reversal row points its ReversesReceiptId at the
-        original; the original carries ReversedById pointing back at the
-        reversal. A single-pass DELETE FROM Receipts processes rows in an
-        undefined order — whichever side is processed first will violate
-        the still-live FK from its pair. Both columns must be nulled
-        before the row delete.
-     2. Receipts → PullItemWindows → PullItems → Pulls
-     3. PurchaseOrderLines → PurchaseOrders (POL also cascades from PO
-        per FK_POL_PurchaseOrder; explicit DELETE first is clearer in
-        the audit trail and survives any future schema change that
-        drops the cascade).
-     4. PoImportLog, ErpSyncLog, AuditLog — leaves, no FK pressure.
+     1. Receipts is special. The table has TWO self-ref FKs
+        (ReversesReceiptId, ReversedById, both NO_ACTION) so a single-pass
+        DELETE will violate whichever side gets processed first. The
+        obvious workaround — null both columns before the delete — does
+        not work because CK_Receipts_ReversalIntegrity (§7.10) requires
+        a negative-qty row to keep ReversesReceiptId non-null.
+        Resolution: temporarily disable every constraint on Receipts with
+        NOCHECK CONSTRAINT ALL, DELETE, then re-enable WITH CHECK CHECK
+        CONSTRAINT ALL. The post-wipe table is empty, so the re-enable
+        revalidates trivially and the constraints' trusted state (used
+        by the optimizer for view/query plans) is preserved.
+     2. Receipts → PullItemWindows → PullItems
+        (FK_Receipts_Item: Receipts → PullItems;
+         FK_PIW_PullItem: PullItemWindows → PullItems;
+         FK_PullItems_Pull: PullItems → Pulls — so PullItems must clear
+         before Pulls, but POs also reference Pulls via FK_PO_Pull,
+         so Pulls cannot drop until BOTH PullItems AND POs are gone.)
+     3. PurchaseOrderLines → PurchaseOrders (POL cascades from PO via
+        FK_POL_PurchaseOrder; explicit DELETE first is clearer in the
+        audit trail and survives any future schema change that drops
+        the cascade).
+     4. Pulls — only after PullItems AND PurchaseOrders are empty,
+        because both reference Pulls.Id (FK_PullItems_Pull and
+        FK_PO_Pull respectively).
+     5. PoImportLog, ErpSyncLog, AuditLog — leaves, no FK pressure
+        from anything that we just wiped.
 
    Production guard:
      Hard-coded ServerName check. Aborts with RAISERROR if the script
@@ -66,10 +79,7 @@ GO
 DECLARE @ServerName SYSNAME = CAST(SERVERPROPERTY('ServerName') AS SYSNAME);
 IF @ServerName <> N'LAPTOP-CSB3KO3E'
 BEGIN
-    RAISERROR(
-        'db/035 refuses to run on server %s. Phase 14 wipe is dev-only (LAPTOP-CSB3KO3E). '
-        + 'Edit the allowed name in db/035 if intentional.',
-        16, 1, @ServerName);
+    RAISERROR('db/035 refuses to run on server %s. Phase 14 wipe is dev-only (LAPTOP-CSB3KO3E). Edit the allowed name in db/035 if intentional.', 16, 1, @ServerName);
     RETURN;
 END
 PRINT 'Pre-flight OK — running on dev (LAPTOP-CSB3KO3E).';
@@ -96,26 +106,32 @@ GO
 BEGIN TRY
     BEGIN TRAN;
 
-    -- 1. Break both Receipts self-refs so the row delete can proceed.
-    --    See header §1 for why both columns must be nulled.
-    PRINT 'Nulling Receipts self-ref FKs (ReversesReceiptId + ReversedById)...';
-    UPDATE dbo.Receipts SET ReversesReceiptId = NULL WHERE ReversesReceiptId IS NOT NULL;
-    UPDATE dbo.Receipts SET ReversedById     = NULL WHERE ReversedById     IS NOT NULL;
+    -- 1. Suspend Receipts constraints so the bulk delete bypasses both
+    --    self-ref FKs and the §7.10 CHECK. See header §1 for the rationale.
+    PRINT 'Disabling Receipts constraints for bulk delete...';
+    ALTER TABLE dbo.Receipts NOCHECK CONSTRAINT ALL;
 
-    -- 2. Receive transactions + planning hierarchy.
+    -- 2. Receive transactions + PullItem hierarchy.
     PRINT 'Deleting Receipts...';           DELETE FROM dbo.Receipts;
     PRINT 'Deleting PullItemWindows...';    DELETE FROM dbo.PullItemWindows;
     PRINT 'Deleting PullItems...';          DELETE FROM dbo.PullItems;
-    PRINT 'Deleting Pulls...';              DELETE FROM dbo.Pulls;
 
     -- 3. PO hierarchy (POL first; cascade is defensive but explicit is auditable).
     PRINT 'Deleting PurchaseOrderLines...'; DELETE FROM dbo.PurchaseOrderLines;
     PRINT 'Deleting PurchaseOrders...';     DELETE FROM dbo.PurchaseOrders;
 
-    -- 4. Leaf logs.
+    -- 4. Pulls — only safe now that both PullItems and POs are gone.
+    PRINT 'Deleting Pulls...';              DELETE FROM dbo.Pulls;
+
+    -- 5. Leaf logs.
     PRINT 'Deleting PoImportLog...';        DELETE FROM dbo.PoImportLog;
     PRINT 'Deleting ErpSyncLog...';         DELETE FROM dbo.ErpSyncLog;
     PRINT 'Deleting AuditLog...';           DELETE FROM dbo.AuditLog;
+
+    -- 6. Re-arm Receipts constraints. WITH CHECK CHECK validates and
+    --    restores the trusted state (empty table → trivially valid).
+    PRINT 'Re-enabling Receipts constraints (WITH CHECK CHECK)...';
+    ALTER TABLE dbo.Receipts WITH CHECK CHECK CONSTRAINT ALL;
 
     COMMIT TRAN;
     PRINT 'Wipe transaction committed.';

@@ -7,23 +7,29 @@
    "take firstRow.VendorCode and stamp the whole PO" was silently
    discarding lines 2..N's vendor.
 
-   Order of operations matters:
-     1a. Re-CREATE OR ALTER vw_TransactionsJournal to source vendor from
-         pol.* instead of po.*. The existing view (db/027) selects
-         po.VendorCode / po.VendorName; if we DROP those columns first
-         the view falls into a deferred-compile failure that surfaces
-         as runtime breakage on every Transactions/Reports query.
-         Re-altering first keeps the view valid across the transition.
-     1b. Re-CREATE OR ALTER vw_PurchaseOrderAvailability — same
-         reasoning. db/015 originally bound vendor from po.*; the
-         view feeds PurchaseOrderRepository.GetAvailabilityAsync
-         which is the §3.5 lock-aware FIFO scan that ReceiptService
-         walks on every receive. DROP first would break receives the
-         moment any operator picks up an item.
-     2. ADD VendorCode (VARCHAR(64) NULL) + VendorName (NVARCHAR(160) NULL)
+   Order of operations matters. Two competing constraints:
+     • The view re-ALTERs reference pol.VendorCode/Name, so those columns
+       must EXIST on POL before the views can compile against them.
+     • The PO column DROP must happen AFTER the view re-ALTERs, otherwise
+       the views fall into deferred-compile failure (runtime breakage on
+       every Transactions/Reports query + every receive).
+   Resolution: ADD POL columns first, THEN re-ALTER views, THEN DROP PO
+   columns. The window between step 1 and steps 2a/2b leaves the views
+   still binding po.VendorCode/Name — but those columns still exist at
+   that point, so the views remain valid throughout the transition.
+
+   Steps:
+     1. ADD VendorCode (VARCHAR(64) NULL) + VendorName (NVARCHAR(160) NULL)
         on dbo.PurchaseOrderLines. Sizing matches the columns being
         dropped from PurchaseOrders so DTOs + Dapper stay byte-for-byte
         compatible.
+     2a. Re-CREATE OR ALTER vw_TransactionsJournal to source vendor from
+         pol.* instead of po.*. The existing view (db/027) selects
+         po.VendorCode / po.VendorName.
+     2b. Re-CREATE OR ALTER vw_PurchaseOrderAvailability — same reasoning.
+         db/015 originally bound vendor from po.*; the view feeds
+         PurchaseOrderRepository.GetAvailabilityAsync which is the §3.5
+         lock-aware FIFO scan that ReceiptService walks on every receive.
      3. CREATE filtered index IX_POL_Vendor on POL.VendorCode WHERE NOT NULL.
         Phase 14 DO grouping reads vendor from POL for every closed
         pull's report (DeliveryOrderService groups by FromSubInventory ×
@@ -31,7 +37,7 @@
         legacy/manual POs without vendor data pay nothing.
      4. DROP VendorCode + VendorName from dbo.PurchaseOrders. Safe to
         DROP because (a) db/035 wiped the tables, (b) view re-alters
-        in steps 1a + 1b stopped referencing these columns, and
+        in steps 2a + 2b stopped referencing these columns, and
         (c) no other index or FK binds to either column (verified:
         IX_PO_FIFO leads with WarehouseId + Status + OrderDate;
         IX_PO_PullExternalRef leads with WarehouseId + PullExternalRef;
@@ -56,7 +62,35 @@ USE [ReceivingOps];
 GO
 
 ------------------------------------------------------------------------------
--- 1a. Re-alter vw_TransactionsJournal to source vendor from POL.
+-- 1. ADD vendor to PurchaseOrderLines. Must precede the view re-ALTERs so
+--    the views can bind pol.VendorCode/Name when they compile.
+--    Sizing matches the columns being dropped from PurchaseOrders
+--    (db/001 + db/010): VARCHAR(64) + NVARCHAR(160).
+------------------------------------------------------------------------------
+IF COL_LENGTH('dbo.PurchaseOrderLines', 'VendorCode') IS NULL
+BEGIN
+    PRINT 'Adding PurchaseOrderLines.VendorCode (VARCHAR(64) NULL)...';
+    ALTER TABLE dbo.PurchaseOrderLines ADD VendorCode VARCHAR(64) NULL;
+END
+ELSE
+BEGIN
+    PRINT 'PurchaseOrderLines.VendorCode already exists — no change.';
+END
+GO
+
+IF COL_LENGTH('dbo.PurchaseOrderLines', 'VendorName') IS NULL
+BEGIN
+    PRINT 'Adding PurchaseOrderLines.VendorName (NVARCHAR(160) NULL)...';
+    ALTER TABLE dbo.PurchaseOrderLines ADD VendorName NVARCHAR(160) NULL;
+END
+ELSE
+BEGIN
+    PRINT 'PurchaseOrderLines.VendorName already exists — no change.';
+END
+GO
+
+------------------------------------------------------------------------------
+-- 2a. Re-alter vw_TransactionsJournal to source vendor from POL.
 --     Diff vs db/027: po.VendorCode → pol.VendorCode, po.VendorName → pol.VendorName.
 --     Everything else identical.
 ------------------------------------------------------------------------------
@@ -116,7 +150,7 @@ INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId;
 GO
 
 ------------------------------------------------------------------------------
--- 1b. Re-alter vw_PurchaseOrderAvailability to source vendor from POL.
+-- 2b. Re-alter vw_PurchaseOrderAvailability to source vendor from POL.
 --     Diff vs db/015: po.VendorCode/Name → pol.VendorCode/Name.
 --     Used by §3.5 lock-aware FIFO availability scan in
 --     PurchaseOrderRepository.GetAvailabilityAsync; ReceiptService walks
@@ -148,32 +182,6 @@ WHERE   po.Status = 'open'
 GO
 
 ------------------------------------------------------------------------------
--- 2. ADD vendor to PurchaseOrderLines. Sizing matches the columns being
---    dropped from PurchaseOrders (db/001 + db/010): VARCHAR(64) + NVARCHAR(160).
-------------------------------------------------------------------------------
-IF COL_LENGTH('dbo.PurchaseOrderLines', 'VendorCode') IS NULL
-BEGIN
-    PRINT 'Adding PurchaseOrderLines.VendorCode (VARCHAR(64) NULL)...';
-    ALTER TABLE dbo.PurchaseOrderLines ADD VendorCode VARCHAR(64) NULL;
-END
-ELSE
-BEGIN
-    PRINT 'PurchaseOrderLines.VendorCode already exists — no change.';
-END
-GO
-
-IF COL_LENGTH('dbo.PurchaseOrderLines', 'VendorName') IS NULL
-BEGIN
-    PRINT 'Adding PurchaseOrderLines.VendorName (NVARCHAR(160) NULL)...';
-    ALTER TABLE dbo.PurchaseOrderLines ADD VendorName NVARCHAR(160) NULL;
-END
-ELSE
-BEGIN
-    PRINT 'PurchaseOrderLines.VendorName already exists — no change.';
-END
-GO
-
-------------------------------------------------------------------------------
 -- 3. Filtered index on POL.VendorCode. Phase 14 DO grouping reads vendor
 --    per line; legacy/manual POs without vendor pay no index cost.
 ------------------------------------------------------------------------------
@@ -197,7 +205,7 @@ GO
 
 ------------------------------------------------------------------------------
 -- 4. DROP vendor from PurchaseOrders. Safe because (a) db/035 wiped rows,
---    (b) view re-alters in steps 1a + 1b stopped referencing these columns,
+--    (b) view re-alters in steps 2a + 2b stopped referencing these columns,
 --    and (c) no other index or FK binds to vendor on the PO header.
 ------------------------------------------------------------------------------
 IF COL_LENGTH('dbo.PurchaseOrders', 'VendorName') IS NOT NULL
