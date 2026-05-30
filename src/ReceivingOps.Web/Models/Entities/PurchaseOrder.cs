@@ -5,8 +5,6 @@ public class PurchaseOrder
     public Guid Id { get; set; }
     public string PoNumber { get; set; } = "";
     public Guid WarehouseId { get; set; }
-    public string? VendorCode { get; set; }
-    public string? VendorName { get; set; }
     public DateTime OrderDate { get; set; }       // the FIFO key for allocation
     public DateTime? ExpectedDate { get; set; }
     public string Status { get; set; } = "open";  // open|closed|canceled
@@ -24,4 +22,8 @@ public class PurchaseOrder
     // is NULL, letting an imported PO join a live receive without a
     // Pulls row ever existing for that PRS_ID.
     public string? PullExternalRef { get; set; }
+
+    // Phase 14 (db/036): VendorCode / VendorName moved to PurchaseOrderLine.
+    // A single PO may now legitimately carry mixed vendors across its lines
+    // (the v3.2 importer was silently dropping lines 2..N's vendor).
 }

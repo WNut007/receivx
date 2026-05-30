@@ -7,6 +7,10 @@ public class PoListRow
     public string PoNumber { get; set; } = "";
     public Guid WarehouseId { get; set; }
     public string WarehouseCode { get; set; } = "";
+    // Phase 14 (db/036): vendor lives on the PO line. The repo collapses
+    // line-level values into a single PO-header summary — non-null iff every
+    // line of the PO carries the same vendor; null when mixed or absent.
+    // The list-row UI treats null as "Mixed / —".
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
     public DateTime OrderDate { get; set; }
@@ -40,6 +44,12 @@ public class PoLineRow
     public int OrderedQty { get; set; }
     public int ReceivedQty { get; set; }
     public int RemainingQty { get; set; }    // OrderedQty - ReceivedQty
+
+    // Phase 14 (db/036): vendor at the line level. The Phase 9.2 extended-fields
+    // modal edits these via the Tracking section; the PoImportJob writes them
+    // per row from the workbook's STORER CODE / STORER NAME columns.
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
 
     // Phase 9 — ERP-sourced fields (migration db/021). All nullable; populated
     // by Phase 10's POST /api/erp/pos. The PO Detail UI surfaces 5 of these
@@ -76,6 +86,10 @@ public class PoDetail
     public Guid WarehouseId { get; set; }
     public string WarehouseCode { get; set; } = "";
     public string WarehouseName { get; set; } = "";
+    // Phase 14 (db/036): same line-level collapse as PoListRow — non-null
+    // when every line agrees, null when mixed or unset. The PO Detail page
+    // shows vendor at the line grid (line-level truth) and treats this
+    // header summary as a courtesy hint.
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
     public DateTime OrderDate { get; set; }
@@ -185,8 +199,6 @@ public class PoCreateRequest
 {
     public string PoNumber { get; set; } = "";
     public Guid WarehouseId { get; set; }
-    public string? VendorCode { get; set; }
-    public string? VendorName { get; set; }
     public DateTime OrderDate { get; set; }
     public DateTime? ExpectedDate { get; set; }
     public string? Notes { get; set; }
@@ -204,13 +216,17 @@ public class PoLineCreateRequest
     public string ItemCode { get; set; } = "";
     public string Description { get; set; } = "";
     public int OrderedQty { get; set; }
+
+    // Phase 14 (db/036): vendor at line grain. Optional — UI may leave both
+    // blank when the operator doesn't know; the importer fills them from the
+    // workbook's STORER columns.
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
 }
 
 public class PoUpdateRequest
 {
     // Refused (§7.13) if any receipt references this PO.
-    public string? VendorCode { get; set; }
-    public string? VendorName { get; set; }
     public DateTime OrderDate { get; set; }
     public DateTime? ExpectedDate { get; set; }
     public string? Notes { get; set; }
@@ -239,7 +255,11 @@ public class PoCloseRequest
 /// </summary>
 public class PoLineExtendedFieldsUpdateRequest
 {
-    // Tracking IDs
+    // Tracking IDs (Phase 14 added VendorCode + VendorName at the top of this
+    // group — they're conceptually the line's owning vendor, displayed first
+    // so the operator sees who shipped the part before scanning supporting IDs).
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
     public string? OrderId { get; set; }
     public string? AsnNo { get; set; }
     public string? KanbanNo { get; set; }

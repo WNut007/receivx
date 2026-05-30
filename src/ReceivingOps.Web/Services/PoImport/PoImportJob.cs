@@ -237,23 +237,24 @@ public class PoImportJob
         {
             var firstRow = group.First().Row;
 
+            // Phase 14: vendor moved to PurchaseOrderLines. The v3.2 behavior
+            // of "take firstRow.VendorCode for the whole PO" silently lost
+            // lines 2..N's vendor whenever the workbook carried mixed vendors
+            // under a single PRS_ID — which is a real production case.
+            // Each line now writes its own VendorCode/Name below.
             var newPoId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.PurchaseOrders
                     (Id, PoNumber, WarehouseId, PullId, PullExternalRef,
-                     VendorCode, VendorName,
                      OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
                 OUTPUT INSERTED.Id
                 VALUES
                     (NEWID(), @PoNumber, @WarehouseId, NULL, @PullExternalRef,
-                     @VendorCode, @VendorName,
                      @OrderDate, NULL, 'open', NULL, @CreatedBy, SYSUTCDATETIME());",
                 new
                 {
                     firstRow.PoNumber,
                     log.WarehouseId,
                     PullExternalRef = firstRow.PoNumber,   // db/033 — Q1=B denormalized
-                    firstRow.VendorCode,
-                    firstRow.VendorName,
                     OrderDate = orderDate,
                     CreatedBy = log.UploadedByUserId,
                 }, transaction: tx));
@@ -265,12 +266,14 @@ public class PoImportJob
             {
                 lineNumber++;
 
-                // 24 parser fields + 4 server-set fields (Id, PoId, LineNumber,
-                // ReceivedQty=0). Description NOT NULL — coalesce parser null.
+                // Phase 14: 26 parser fields (vendor moved here from PO header)
+                // + 4 server-set fields (Id, PoId, LineNumber, ReceivedQty=0).
+                // Description NOT NULL — coalesce parser null.
                 await conn.ExecuteAsync(new CommandDefinition(@"
                     INSERT INTO dbo.PurchaseOrderLines (
                         Id, PurchaseOrderId, LineNumber,
                         ItemCode, Description, OrderedQty, ReceivedQty,
+                        VendorCode, VendorName,
                         OrderId, AsnNo, InvoiceNo, KanbanNo, PCCNo, BatchNo,
                         ManufacturingControlNo, ManufacturingReferenceNo,
                         CustomerReferenceNo, ExportDeclarationNo, VendorItem,
@@ -279,6 +282,7 @@ public class PoImportJob
                     ) VALUES (
                         NEWID(), @PoId, @LineNumber,
                         @ItemCode, @Description, @OrderedQty, 0,
+                        @VendorCode, @VendorName,
                         @OrderId, @AsnNo, @InvoiceNo, @KanbanNo, @PCCNo, @BatchNo,
                         @ManufacturingControlNo, @ManufacturingReferenceNo,
                         @CustomerReferenceNo, @ExportDeclarationNo, @VendorItem,
@@ -292,6 +296,7 @@ public class PoImportJob
                         row.ItemCode,
                         Description = row.Description ?? "",
                         row.OrderedQty,
+                        row.VendorCode, row.VendorName,
                         row.OrderId, row.AsnNo, row.InvoiceNo, row.KanbanNo,
                         row.PCCNo, row.BatchNo,
                         row.ManufacturingControlNo, row.ManufacturingReferenceNo,

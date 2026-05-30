@@ -302,12 +302,19 @@ public class PullRepository : IPullRepository
         // (PoId, LineNumber). MAX() lets us surface them without extending
         // GROUP BY (which would otherwise need duplicate listing of every
         // attribute) and is a no-op on uniqueness — never multiplies rows.
+        // Phase 14: vendor moved from PO header to POL. MAX(pol.Vendor*) is
+        // exact because vendor is invariant within a single (PoId, LineNumber)
+        // — same pattern as the other ERP extended-field aggregations below.
+        // Stage 5 will revise the grouping key to split DOs per (FromSubInventory,
+        // ToLocation, VendorCode); this Stage-4 patch only changes the SOURCE
+        // of vendor, not the grouping shape, so the existing one-DO-per-PO
+        // semantics survive until the report rewrite lands.
         const string sql = @"
             SELECT  po.Id           AS PoId,
                     po.PoNumber,
                     po.OrderDate,
-                    po.VendorCode,
-                    po.VendorName,
+                    MAX(pol.VendorCode)   AS VendorCode,
+                    MAX(pol.VendorName)   AS VendorName,
                     pol.LineNumber  AS PoLineNumber,
                     pol.ItemCode,
                     pol.Description,
@@ -326,7 +333,7 @@ public class PullRepository : IPullRepository
             INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
             WHERE   pi.PullId = @PullId
               AND   r.ReversedById IS NULL
-            GROUP BY po.Id, po.PoNumber, po.OrderDate, po.VendorCode, po.VendorName,
+            GROUP BY po.Id, po.PoNumber, po.OrderDate,
                      pol.LineNumber, pol.ItemCode, pol.Description
             HAVING  SUM(r.QtyReceived) > 0
             ORDER BY po.PoNumber, pol.LineNumber, pol.ItemCode;";

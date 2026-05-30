@@ -47,13 +47,20 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
         }
         if (!string.IsNullOrWhiteSpace(q))
         {
-            // Multi-token AND across PoNumber, VendorCode, VendorName.
+            // Multi-token AND across PoNumber + any line's vendor. Phase 14
+            // moved vendor to POL, so the vendor branch is now an EXISTS
+            // subquery — a token matches if ANY line of the PO has a vendor
+            // value that matches.
             var tokens = q.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             for (var i = 0; i < tokens.Length; i++)
             {
                 var name = $"Q{i}";
                 p.Add(name, $"%{tokens[i]}%");
-                where.Add($"(po.PoNumber LIKE @{name} OR ISNULL(po.VendorCode,'') LIKE @{name} OR ISNULL(po.VendorName,'') LIKE @{name})");
+                where.Add($@"(po.PoNumber LIKE @{name}
+                    OR EXISTS (SELECT 1 FROM dbo.PurchaseOrderLines polq
+                               WHERE polq.PurchaseOrderId = po.Id
+                                 AND (ISNULL(polq.VendorCode,'') LIKE @{name}
+                                   OR ISNULL(polq.VendorName,'') LIKE @{name})))");
             }
         }
 
@@ -62,9 +69,18 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
         // Two queries in one round-trip via QueryMultiple: the page slice +
         // the unfiltered-by-paging total. Po.Id deterministic tiebreaker so
         // OFFSET stays stable across requests when many POs share OrderDate.
+        // Phase 14: VendorCode/VendorName collapse from POL up to a single
+        // header summary. MIN = MAX is true only when every non-null line
+        // value agrees; the CASE returns that value, otherwise NULL.
+        // (NULLs are skipped by MIN/MAX, so a mix of NULLs + one vendor
+        // still collapses to that vendor. UI treats null as "Mixed / —".)
         var pageSql = $@"
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode,
-                    po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate,
+                    (SELECT CASE WHEN MIN(polv.VendorCode) = MAX(polv.VendorCode) THEN MAX(polv.VendorCode) END
+                       FROM dbo.PurchaseOrderLines polv WHERE polv.PurchaseOrderId = po.Id) AS VendorCode,
+                    (SELECT CASE WHEN MIN(polv.VendorName) = MAX(polv.VendorName) THEN MAX(polv.VendorName) END
+                       FROM dbo.PurchaseOrderLines polv WHERE polv.PurchaseOrderId = po.Id) AS VendorName,
+                    po.OrderDate, po.ExpectedDate,
                     po.Status, po.CreatedAt, po.ClosedAt,
                     po.PullId, p.PullNumber, po.PullExternalRef,
                     (SELECT COUNT(*)          FROM dbo.PurchaseOrderLines pol WHERE pol.PurchaseOrderId = po.Id) AS LineCount,
@@ -91,9 +107,16 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
 
     public async Task<PoDetail?> GetDetailAsync(Guid id, CancellationToken ct = default)
     {
+        // Phase 14: header VendorCode/Name are collapsed line-level values —
+        // same MIN=MAX pattern as the list query. Single-PO scope so the
+        // subqueries are O(line count) and cheap.
         const string headerSql = @"
             SELECT  po.Id, po.PoNumber, po.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
-                    po.VendorCode, po.VendorName, po.OrderDate, po.ExpectedDate, po.Status, po.Notes,
+                    (SELECT CASE WHEN MIN(polv.VendorCode) = MAX(polv.VendorCode) THEN MAX(polv.VendorCode) END
+                       FROM dbo.PurchaseOrderLines polv WHERE polv.PurchaseOrderId = po.Id) AS VendorCode,
+                    (SELECT CASE WHEN MIN(polv.VendorName) = MAX(polv.VendorName) THEN MAX(polv.VendorName) END
+                       FROM dbo.PurchaseOrderLines polv WHERE polv.PurchaseOrderId = po.Id) AS VendorName,
+                    po.OrderDate, po.ExpectedDate, po.Status, po.Notes,
                     po.CreatedBy, cb.Name AS CreatedByName, po.CreatedAt, po.ClosedAt,
                     po.PullId, p.PullNumber, po.PullExternalRef
             FROM    dbo.PurchaseOrders po
@@ -111,6 +134,7 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
             SELECT  Id, PurchaseOrderId, LineNumber, ItemCode, Description,
                     OrderedQty, ReceivedQty,
                     (OrderedQty - ReceivedQty) AS RemainingQty,
+                    VendorCode, VendorName,
                     InvoiceNo, KanbanNo, AsnNo, OrderId, PCCNo, BatchNo,
                     ManufacturingControlNo, ManufacturingReferenceNo,
                     CustomerReferenceNo, ExportDeclarationNo, VendorItem,
@@ -163,9 +187,12 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
         // Page caps live in the caller (PosExportJob.MaxRows clamps PO count);
         // line count is unbounded but practical PO sets stay well under XLSX
         // limits even with hundreds of lines per PO.
+        // Phase 14: vendor is per-line. The export still surfaces it
+        // alongside the PO header context but sources it from pol.* —
+        // every exported row carries its own vendor.
         const string sql = @"
             SELECT  pol.PurchaseOrderId, po.PoNumber, po.OrderDate, po.ExpectedDate,
-                    po.VendorCode, po.VendorName, w.Code AS WarehouseCode,
+                    pol.VendorCode, pol.VendorName, w.Code AS WarehouseCode,
                     po.Status AS PoStatus,
                     pol.Id AS LineId, pol.LineNumber, pol.ItemCode, pol.Description,
                     pol.OrderedQty, pol.ReceivedQty,

@@ -62,16 +62,16 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
             }
 
             // WarehouseId must point to an existing warehouse (FK enforces).
+            // Phase 14: vendor lives on the line, not the header.
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
-                INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, PullId, VendorCode, VendorName,
+                INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, PullId,
                                                 OrderDate, ExpectedDate, Status, Notes, CreatedBy, CreatedAt)
                 OUTPUT INSERTED.Id
-                VALUES (NEWID(), @PoNumber, @WarehouseId, @PullId, @VendorCode, @VendorName,
+                VALUES (NEWID(), @PoNumber, @WarehouseId, @PullId,
                         @OrderDate, @ExpectedDate, 'open', @Notes, @CreatedBy, SYSUTCDATETIME());",
                 new
                 {
                     req.PoNumber, req.WarehouseId, req.PullId,
-                    req.VendorCode, req.VendorName,
                     req.OrderDate, req.ExpectedDate, req.Notes,
                     CreatedBy = actorId,
                 }, transaction: tx, cancellationToken: ct));
@@ -80,12 +80,15 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
             {
                 ValidateLine(line);
                 await conn.ExecuteAsync(new CommandDefinition(@"
-                    INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
-                    VALUES (NEWID(), @PoId, @LineNumber, @ItemCode, @Description, @OrderedQty, 0);",
+                    INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description,
+                                                       OrderedQty, ReceivedQty, VendorCode, VendorName)
+                    VALUES (NEWID(), @PoId, @LineNumber, @ItemCode, @Description,
+                            @OrderedQty, 0, @VendorCode, @VendorName);",
                     new
                     {
                         PoId = newId,
                         line.LineNumber, line.ItemCode, line.Description, line.OrderedQty,
+                        line.VendorCode, line.VendorName,
                     }, transaction: tx, cancellationToken: ct));
             }
 
@@ -149,17 +152,18 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 throw new BusinessException(
                     $"Cannot update PO {po.PoNumber}: {refCount} receipt(s) reference it. Cancel and reissue the PO instead.");
 
+            // Phase 14: vendor moved to PO lines; header UPDATE no longer
+            // carries it. Line-level vendor edits go through the Phase 9.2
+            // extended-fields endpoint (UpdateLineExtendedFieldsAsync).
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.PurchaseOrders
-                   SET VendorCode   = @VendorCode,
-                       VendorName   = @VendorName,
-                       OrderDate    = @OrderDate,
+                   SET OrderDate    = @OrderDate,
                        ExpectedDate = @ExpectedDate,
                        Notes        = @Notes
                  WHERE Id = @Id;",
                 new
                 {
-                    Id = id, req.VendorCode, req.VendorName,
+                    Id = id,
                     req.OrderDate, req.ExpectedDate, req.Notes,
                 }, transaction: tx, cancellationToken: ct));
 
@@ -250,13 +254,16 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 throw new BusinessException($"Cannot add line: PO is {po.Status}");
 
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
-                INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
+                INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description,
+                                                   OrderedQty, ReceivedQty, VendorCode, VendorName)
                 OUTPUT INSERTED.Id
-                VALUES (NEWID(), @PoId, @LineNumber, @ItemCode, @Description, @OrderedQty, 0);",
+                VALUES (NEWID(), @PoId, @LineNumber, @ItemCode, @Description,
+                        @OrderedQty, 0, @VendorCode, @VendorName);",
                 new
                 {
                     PoId = poId,
                     req.LineNumber, req.ItemCode, req.Description, req.OrderedQty,
+                    req.VendorCode, req.VendorName,
                 }, transaction: tx, cancellationToken: ct));
 
             await _audit.WriteAsync(conn, tx, "create", "PurchaseOrderLine", newId.ToString(),
@@ -355,9 +362,12 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 transaction: tx, cancellationToken: ct))
                 ?? throw new NotFoundException("PO line not found");
 
+            // Phase 14: VendorCode + VendorName added to the Tracking group.
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.PurchaseOrderLines
-                   SET OrderId                  = @OrderId,
+                   SET VendorCode               = @VendorCode,
+                       VendorName               = @VendorName,
+                       OrderId                  = @OrderId,
                        AsnNo                    = @AsnNo,
                        KanbanNo                 = @KanbanNo,
                        VendorItem               = @VendorItem,
@@ -381,6 +391,7 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 new
                 {
                     Id = lineId,
+                    req.VendorCode, req.VendorName,
                     req.OrderId, req.AsnNo, req.KanbanNo, req.VendorItem,
                     req.Location, req.SubInventory, req.ToLocation, req.Building, req.ProductionLine,
                     req.PalletId, req.VmiPalletId, req.BatchNo,
@@ -407,6 +418,8 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
     // Phase 9.2 — schema is NVARCHAR(50) on all 19 short fields + NVARCHAR(500)
     // on Note. UI maxlength mirrors this so the validator catches only the
     // copy-paste-too-long edge case rather than firing on every input.
+    // Phase 14: VendorCode (VARCHAR(64)) + VendorName (NVARCHAR(160)) have
+    // their own widths — checked separately so the operator sees the right cap.
     private static void ValidateLineExtendedFields(PoLineExtendedFieldsUpdateRequest req)
     {
         static void CheckShort(string field, string? value)
@@ -414,6 +427,10 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
             if (value is not null && value.Length > 50)
                 throw new BusinessException($"{field} is too long (≤ 50 chars)");
         }
+        if (req.VendorCode is not null && req.VendorCode.Length > 64)
+            throw new BusinessException("VendorCode is too long (≤ 64 chars)");
+        if (req.VendorName is not null && req.VendorName.Length > 160)
+            throw new BusinessException("VendorName is too long (≤ 160 chars)");
         CheckShort(nameof(req.OrderId),                  req.OrderId);
         CheckShort(nameof(req.AsnNo),                    req.AsnNo);
         CheckShort(nameof(req.KanbanNo),                 req.KanbanNo);
