@@ -4,9 +4,17 @@ namespace ReceivingOps.Web.Models.Dtos;
 
 /// <summary>
 /// Aggregated Delivery Order report data — what both the HTML preview
-/// partial and the PDF builder consume. One DO per PO that the pull
-/// touched; lines within a DO are aggregated by (ItemCode × PoLineNumber)
-/// with SUM(QtyReceived). v2.x Phase 7.4.
+/// partial and the PDF builder consume.
+///
+/// Phase 14: a DO is now identified by the triple
+/// (VendorCode × SubInventory × ToLocation). One pull may spawn multiple
+/// DOs when its receipts span multiple vendors, source sub-inventories,
+/// or destination locations. Lines within a DO carry their own PoNumber
+/// (via PoLineRef) so the operator can trace each row back to a
+/// purchase order on paper.
+///
+/// Originally v2.x Phase 7.4 grouped by PO alone; the Phase 14 schema
+/// move (vendor → POL) made that grouping wrong for mixed-vendor POs.
 /// </summary>
 public class DoReportData
 {
@@ -37,16 +45,22 @@ public class DoPullHeader
     public int TotalQty { get; set; }
 }
 
-/// <summary>One Delivery Order = one PO's slice of the pull.</summary>
+/// <summary>
+/// One Delivery Order — Phase 14: identified by the triple
+/// (VendorCode × SubInventory × ToLocation). Lines may come from multiple
+/// purchase orders; each carries its own PoLineRef so the source PO is
+/// preserved at line grain.
+/// </summary>
 public class DoOrder
 {
-    public Guid PoId { get; set; }
-    public string PoNumber { get; set; } = "";
-    public DateTime OrderDate { get; set; }
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
+    /// <summary>Source sub-inventory (the "from" side of the move).</summary>
+    public string? SubInventory { get; set; }
+    /// <summary>Destination location (the "to" side of the move).</summary>
+    public string? ToLocation { get; set; }
     public List<DoLine> Lines { get; set; } = new();
-    /// <summary>Sum of TotalQty across lines for this PO.</summary>
+    /// <summary>Sum of TotalQty across lines for this DO.</summary>
     public int TotalQty { get; set; }
 }
 
@@ -76,28 +90,34 @@ public class DoLine
 
 /// <summary>
 /// Flat row returned by the aggregation query — one per
-/// (PO × ItemCode × PoLineNumber). The service groups these by PoId into
-/// DoOrder.Lines before serving the DTO.
+/// (VendorCode × SubInventory × ToLocation × PO × ItemCode × PoLineNumber).
+/// The service groups these by (VendorCode, SubInventory, ToLocation) into
+/// DoOrders, with each row contributing one DoLine that carries its own
+/// PoNumber + PoLineNumber for the PoLineRef display.
 /// </summary>
 public class DoReportRow
 {
-    public Guid PoId { get; set; }
-    public string PoNumber { get; set; } = "";
-    public DateTime OrderDate { get; set; }
+    // Grouping keys (Phase 14 — DO identity = this triple).
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
+    public string? SubInventory { get; set; }
+    public string? ToLocation { get; set; }
+
+    // Per-line context — PoNumber is kept so PoLineRef can identify the
+    // source PO on each line even when a DO spans multiple POs.
+    public Guid PoId { get; set; }
+    public string PoNumber { get; set; } = "";
     public int PoLineNumber { get; set; }
     public string ItemCode { get; set; } = "";
     public string Description { get; set; } = "";
     public int TotalQty { get; set; }
 
-    // ERP-sourced PoLine attributes (MAX() over the aggregation grain).
+    // Remaining ERP-sourced PoLine attributes (MAX() over the aggregation
+    // grain — invariant per (PoId, LineNumber) so MAX is exact).
     public string? PalletId { get; set; }
     public string? OrderId { get; set; }
     public string? InvoiceNo { get; set; }
     public string? KanbanNo { get; set; }
-    public string? SubInventory { get; set; }
-    public string? ToLocation { get; set; }
     public string? AsnNo { get; set; }
     public string? OrderRound { get; set; }
 }

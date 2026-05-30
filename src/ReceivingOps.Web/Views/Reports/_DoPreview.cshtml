@@ -1,15 +1,15 @@
 @model ReceivingOps.Web.Models.Dtos.DoReportData
 @*
-   v2.x Phase 7.4 — Delivery Order HTML preview partial.
+   Delivery Order HTML preview partial.
 
-   Rendered as an HTML fragment by /api/reports/do/{id}/preview and
-   injected into the .preview-body on the Reports page. One <article>
-   per DoOrder (one PO that the pull touched); lines are pre-aggregated
-   by (ItemCode × PoLineNumber) in the service so the table has no
-   duplicates and no hour column.
+   Phase 14: one <article> per DoOrder, where a DoOrder is identified by
+   the triple (VendorCode × SubInventory × ToLocation). A pull may spawn
+   multiple DOs when its receipts span multiple vendors, source sub-
+   inventories, or destination locations. Each line keeps its own
+   PoLineRef so the source purchase order is visible per row.
 
    Vendor fallback: VendorName, else VendorCode, else em-dash. Reference
-   number falls back the same way.
+   number + From/To fall back the same way.
 
    All colors via CSS variables so theme switches (light / midnight /
    slate) reflow correctly without re-rendering.
@@ -20,7 +20,7 @@
         <header class="do-header">
             <div>
                 <div class="do-label">DELIVERY ORDER</div>
-                <div class="do-number">@order.PoNumber</div>
+                <div class="do-number">@(order.VendorName ?? order.VendorCode ?? "—")</div>
                 <div class="do-context">
                     delivered against pull <b>@Model.Pull.PullNumber</b>
                 </div>
@@ -51,14 +51,17 @@
                     }
                 </dd>
 
+                <dt>From sub-inventory</dt>
+                <dd>@(string.IsNullOrWhiteSpace(order.SubInventory) ? "—" : order.SubInventory)</dd>
+
+                <dt>To location</dt>
+                <dd>@(string.IsNullOrWhiteSpace(order.ToLocation) ? "—" : order.ToLocation)</dd>
+
                 <dt>Reference</dt>
                 <dd>@(string.IsNullOrWhiteSpace(Model.Pull.ReferenceNumber) ? "—" : Model.Pull.ReferenceNumber)</dd>
 
                 <dt>Warehouse</dt>
                 <dd>@Model.Pull.WarehouseCode · @Model.Pull.WarehouseName</dd>
-
-                <dt>Order date</dt>
-                <dd>@order.OrderDate.ToString("dd MMM yyyy")</dd>
 
                 @if (Model.Pull.ClosedAt.HasValue)
                 {

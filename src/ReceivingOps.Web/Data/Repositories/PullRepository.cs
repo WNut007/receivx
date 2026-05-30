@@ -302,19 +302,23 @@ public class PullRepository : IPullRepository
         // (PoId, LineNumber). MAX() lets us surface them without extending
         // GROUP BY (which would otherwise need duplicate listing of every
         // attribute) and is a no-op on uniqueness — never multiplies rows.
-        // Phase 14: vendor moved from PO header to POL. MAX(pol.Vendor*) is
-        // exact because vendor is invariant within a single (PoId, LineNumber)
-        // — same pattern as the other ERP extended-field aggregations below.
-        // Stage 5 will revise the grouping key to split DOs per (FromSubInventory,
-        // ToLocation, VendorCode); this Stage-4 patch only changes the SOURCE
-        // of vendor, not the grouping shape, so the existing one-DO-per-PO
-        // semantics survive until the report rewrite lands.
+        // Phase 14: DO grouping = (VendorCode × SubInventory × ToLocation).
+        // Promoted these four columns (vendor pair + sub-inv + to-loc) from
+        // MAX'd line metadata to first-class GROUP BY keys; the service then
+        // groups the resulting rows by the triple to spawn one DO per tuple.
+        //
+        // PoNumber + LineNumber + ItemCode + Description stay in GROUP BY so
+        // every line keeps its source PO identity for PoLineRef. The
+        // remaining ERP fields (PalletId, OrderId, etc.) are still invariant
+        // per (PoId, LineNumber) so MAX() returns the exact value with no
+        // GROUP BY churn.
         const string sql = @"
-            SELECT  po.Id           AS PoId,
+            SELECT  pol.VendorCode,
+                    pol.VendorName,
+                    pol.SubInventory,
+                    pol.ToLocation,
+                    po.Id           AS PoId,
                     po.PoNumber,
-                    po.OrderDate,
-                    MAX(pol.VendorCode)   AS VendorCode,
-                    MAX(pol.VendorName)   AS VendorName,
                     pol.LineNumber  AS PoLineNumber,
                     pol.ItemCode,
                     pol.Description,
@@ -323,8 +327,6 @@ public class PullRepository : IPullRepository
                     MAX(pol.OrderId)      AS OrderId,
                     MAX(pol.InvoiceNo)    AS InvoiceNo,
                     MAX(pol.KanbanNo)     AS KanbanNo,
-                    MAX(pol.SubInventory) AS SubInventory,
-                    MAX(pol.ToLocation)   AS ToLocation,
                     MAX(pol.AsnNo)        AS AsnNo,
                     MAX(pol.OrderRound)   AS OrderRound
             FROM    dbo.Receipts r
@@ -333,10 +335,13 @@ public class PullRepository : IPullRepository
             INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
             WHERE   pi.PullId = @PullId
               AND   r.ReversedById IS NULL
-            GROUP BY po.Id, po.PoNumber, po.OrderDate,
+            GROUP BY pol.VendorCode, pol.VendorName,
+                     pol.SubInventory, pol.ToLocation,
+                     po.Id, po.PoNumber,
                      pol.LineNumber, pol.ItemCode, pol.Description
             HAVING  SUM(r.QtyReceived) > 0
-            ORDER BY po.PoNumber, pol.LineNumber, pol.ItemCode;";
+            ORDER BY pol.VendorCode, pol.SubInventory, pol.ToLocation,
+                     po.PoNumber, pol.LineNumber, pol.ItemCode;";
 
         using var conn = _factory.Create();
         var rows = await conn.QueryAsync<DoReportRow>(
