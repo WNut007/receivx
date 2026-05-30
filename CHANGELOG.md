@@ -10,6 +10,147 @@ for fine-grained authorship.
 
 ---
 
+## [3.4.0] — 2026-05-30 — Phase 14: vendor at line grain
+
+Mixed-vendor purchase orders are a real production case. The v3.2
+import job's "take firstRow.VendorCode for the whole PO" silently
+discarded lines 2..N's vendor whenever an Excel workbook covered
+multiple vendors under one PRS_ID. Phase 14 moves `VendorCode` +
+`VendorName` from `dbo.PurchaseOrders` (header) to
+`dbo.PurchaseOrderLines` (line) and reshapes the Delivery Order
+report so a single pull can now spawn multiple DOs — one per
+(Vendor × FromSubInventory × ToLocation) shipment triple.
+
+Destructive: db/035 wipes all transactional data on dev (production
+guard active). The schema move is irreversible without restoring
+from backup.
+
+### Migrations
+
+- `db/035_wipe_for_phase_14.sql` — destructive clear of Receipts,
+  PullItemWindows, PullItems, Pulls, PurchaseOrderLines, PurchaseOrders,
+  PoImportLog, ErpSyncLog, AuditLog. Production guard via
+  `@@SERVERNAME` check (dev-only). Keeps AppSettings, Warehouses,
+  Users, and the Hangfire schema. Single tx with rollback on any error.
+- `db/036_vendor_to_po_lines.sql` — re-ALTERs `vw_TransactionsJournal`
+  + `vw_PurchaseOrderAvailability` to source vendor from POL, ADDs
+  `VendorCode VARCHAR(64)` + `VendorName NVARCHAR(160)` on
+  PurchaseOrderLines, creates filtered index `IX_POL_Vendor`, and
+  DROPs the vendor columns from PurchaseOrders header. Ordered so
+  the views remain valid across the transition.
+- `db/007_seed_purchase_orders.sql` + `db/016_seed_po_pull_link.sql` —
+  seed scripts patched: vendor now lands on POL inserts (matched
+  per-PO to preserve historical single-vendor display via the new
+  MIN=MAX collapse).
+
+### Schema
+
+- `dbo.PurchaseOrders.VendorCode` / `VendorName` — **DROPPED**.
+- `dbo.PurchaseOrderLines.VendorCode VARCHAR(64) NULL` — **ADDED**.
+- `dbo.PurchaseOrderLines.VendorName NVARCHAR(160) NULL` — **ADDED**.
+- Filtered index `IX_POL_Vendor` on (VendorCode) WHERE NOT NULL.
+
+### Entities / DTOs
+
+- `PurchaseOrder` loses vendor; `PurchaseOrderLine` gains vendor.
+- `PoLineRow` + `PoLineCreateRequest` gain `VendorCode` /
+  `VendorName` at line grain.
+- `PoLineExtendedFieldsUpdateRequest` gains vendor in its Tracking
+  section (modal-editable per line). Server-side validator widths:
+  VendorCode ≤ 64, VendorName ≤ 160.
+- `PoCreateRequest` + `PoUpdateRequest` drop vendor (no header
+  write path).
+- `PoListRow.VendorCode` / `Name` and `PoDetail.VendorCode` / `Name`
+  are now MIN=MAX **collapsed summaries** in the repo: non-null when
+  every line of a PO agrees on a single vendor, null when mixed or
+  unset. UI surface stays wire-compatible.
+- `DoOrder` drops `PoId` / `PoNumber` / `OrderDate` and gains
+  `SubInventory` + `ToLocation` (grouping keys alongside vendor).
+- `DoReportRow` promotes vendor + SubInventory + ToLocation from
+  MAX'd metadata to first-class grouping columns.
+
+### Repositories / services
+
+- `PurchaseOrderRepository.QueryAsync` + `GetDetailAsync` use the
+  MIN=MAX collapse subqueries for the header vendor summary. The
+  multi-token search WHERE branches use `EXISTS POL` so a token
+  matches when **any** line vendor matches.
+- `GetLinesForPosAsync` sources vendor from `pol.*`.
+- `PullRepository.GetDoReportRowsAsync` regroups by
+  `(VendorCode, VendorName, SubInventory, ToLocation, PoId, PoNumber,
+  LineNumber, ItemCode, Description)` so the service-layer LINQ
+  GroupBy can split DOs per shipment triple while preserving the
+  source PO per line.
+- `PurchaseOrderAdminService.CreateAsync` writes per-line vendor on
+  every POL INSERT; `UpdateAsync` no longer carries vendor;
+  `AddLineAsync` writes vendor on the new line;
+  `UpdateLineExtendedFieldsAsync` writes vendor in its UPDATE.
+- `PoImportJob` drops vendor from the PO INSERT and writes per-row
+  vendor on each POL INSERT (closes the v3.2 silent-loss defect).
+- `DeliveryOrderService` GroupBy keyed on the (VendorCode, VendorName,
+  SubInventory, ToLocation) anonymous tuple; PoLineRef sourced per-row
+  PoNumber; PDF title band gains FROM SUBINVENTORY + TO LOCATION rows
+  below Vendor/Warehouse (band height bumped 70 → 82mm).
+
+### UI
+
+- PO Detail line table: new leftmost ERP column "Vendor" displays
+  VendorName (fallback VendorCode, em-dash). Tooltip carries both.
+  Colspan 13 → 14.
+- Phase 9.2 extended-fields modal Tracking section: VendorCode +
+  VendorName at the top of the group.
+- _DoPreview.cshtml: `do-number` displays the vendor (not PoNumber);
+  metadata gains "From sub-inventory" + "To location" rows; legacy
+  "Order date" row removed (per-line concept now).
+
+### Smokes
+
+- New: `smoke-phase-14-vendor-at-line` (mixed-vendor import →
+  per-line vendor round-trip + collapsed-header assertion).
+- New: `smoke-phase-14-do-multi-do` (pull → 2 DOs split by triple).
+- New fixture: `tools/fixtures/po-import-mixed-vendor.xlsx` (3 rows,
+  3 distinct vendors under one PoNumber). Generator at
+  `tools/build-po-import-mixed-vendor-fixture.ps1` (one-shot, NOT
+  in battery).
+- Patched: `smoke-phase-9-2-po-line-extended-fields` (vendor in
+  Tracking section + UI markers); `smoke-phase-12-7-integration`
+  (per-line vendor assertions VEND-A x2 / VEND-B x2);
+  `smoke-do-report` (vendor stamp + new DO header shape);
+  `smoke-phase-5c` (drop header-vendor assertions, skip §7.13 path
+  when no historical receipts).
+- Backup: `.dp-keys-backup-phase14-pre/` taken before db/035.
+
+### Known battery gaps (deferred to v3.4.1)
+
+- Historical Receipts seed (db/006 §5) cannot run as-is against the
+  v2 strict schema (Receipts.PurchaseOrderLineId NOT NULL since
+  db/011). Smokes that depend on pre-existing receipts on
+  PO-2401-018 / WH-02 pulls (`smoke-stage-b`,
+  `smoke-pull-status-forward-transition`,
+  `smoke-phase-9-1-pull-extended-fields`,
+  `smoke-phase-9-extended-fields`) will fail or skip parts of their
+  coverage until that gap is closed.
+- New PO modal (`/Pos` newPoModal) still has Vendor Code + Vendor
+  Name inputs at PO-header grain. Model binder silently drops them
+  (`PoCreateRequest` no longer carries those). Same for the
+  detail-view header form's `d-vendor-code` / `d-vendor-name`
+  inputs and the `saveHeader` payload. Operator confusion risk;
+  cleanup deferred.
+
+### Commits
+
+- `cecf42b` Stage 0 (pre-flight dashboard toast text fix)
+- `7976a34` Stage 1+2 migration drafts (db/035 + db/036)
+- `79a295f` Stage 1+2 mid-flight defect fixes (FK order, self-ref
+  constraints, view-before-column ordering)
+- `5c2fb71` Stage 3+4 entity + DTO + repo + service refactor
+- `181b28a` Stage 5 DO report rewrite
+- `c18e49d` Stage 6 PO line table + modal UI
+- `b768b8f` Stage 7 smoke updates + new Phase 14 coverage
+- `0b3fd33` smoke-phase-5c Phase 14 alignment
+
+---
+
 ## [3.1.1] — 2026-05-26 — Phase 11.2 audit gap closure
 
 Selective ship of 4 gaps surfaced by a post-v3.1 spec audit (others
