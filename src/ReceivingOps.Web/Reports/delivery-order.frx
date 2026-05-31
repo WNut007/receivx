@@ -1,0 +1,132 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Report ScriptLanguage="CSharp" ReportInfo.Created="06/01/2026 02:43:02" ReportInfo.Modified="06/01/2026 02:59:09" ReportInfo.CreatorVersion="2023.2.15.0">
+  <Dictionary>
+    <TableDataSource Name="Orders" ReferenceName="DoReport.Orders" DataType="System.Int32" Enabled="true">
+      <Column Name="DeliveryNoteNo" DataType="System.String"/>
+      <Column Name="DoIndex" DataType="System.Int32"/>
+      <Column Name="VendorCode" DataType="System.String"/>
+      <Column Name="VendorName" DataType="System.String"/>
+      <Column Name="SubInventory" DataType="System.String"/>
+      <Column Name="ToLocation" DataType="System.String"/>
+      <Column Name="InvoiceNo" DataType="System.String"/>
+      <Column Name="HeaderPoNumber" DataType="System.String"/>
+      <Column Name="LastReceivedAt" DataType="System.DateTime"/>
+      <Column Name="TotalQty" DataType="System.Int32"/>
+      <Column Name="PullId" DataType="System.Guid"/>
+      <Column Name="PullNumber" DataType="System.String"/>
+      <Column Name="PullDate" DataType="System.DateTime"/>
+      <Column Name="ReferenceNumber" DataType="System.String"/>
+      <Column Name="WarehouseCode" DataType="System.String"/>
+      <Column Name="WarehouseName" DataType="System.String"/>
+      <Column Name="WarehouseAddress" DataType="System.String"/>
+      <Column Name="WarehouseLogoDataUrl" DataType="System.String"/>
+      <Column Name="ClosedAt" DataType="System.DateTime"/>
+      <Column Name="ClosedByName" DataType="System.String"/>
+      <Column Name="ClosedByRole" DataType="System.String"/>
+      <Column Name="SignatureSvg" DataType="System.String"/>
+      <Column Name="WarehouseLogoBytes" DataType="System.Byte[]" BindableControl="Picture"/>
+      <Column Name="SignatureBytes" DataType="System.Byte[]" BindableControl="Picture"/>
+    </TableDataSource>
+    <TableDataSource Name="Lines" ReferenceName="DoReport.Lines" DataType="System.Int32" Enabled="true">
+      <Column Name="DeliveryNoteNo" DataType="System.String"/>
+      <Column Name="LineIndex" DataType="System.Int32"/>
+      <Column Name="ItemCode" DataType="System.String"/>
+      <Column Name="Description" DataType="System.String"/>
+      <Column Name="PoLineNumber" DataType="System.Int32"/>
+      <Column Name="PoLineRef" DataType="System.String"/>
+      <Column Name="TotalQty" DataType="System.Int32"/>
+      <Column Name="LastReceivedAt" DataType="System.DateTime"/>
+      <Column Name="PalletId" DataType="System.String"/>
+      <Column Name="OrderId" DataType="System.String"/>
+      <Column Name="InvoiceNo" DataType="System.String"/>
+      <Column Name="KanbanNo" DataType="System.String"/>
+      <Column Name="SubInventory" DataType="System.String"/>
+      <Column Name="ToLocation" DataType="System.String"/>
+      <Column Name="AsnNo" DataType="System.String"/>
+      <Column Name="OrderRound" DataType="System.String"/>
+    </TableDataSource>
+    <Relation Name="OrdersLines" ParentDataSource="Orders" ChildDataSource="Lines" ParentColumns="DeliveryNoteNo" ChildColumns="DeliveryNoteNo" Enabled="true"/>
+  </Dictionary>
+  <ReportPage Name="DeliveryOrderPage" LeftMargin="15" TopMargin="15" RightMargin="15" BottomMargin="15" Watermark.Font="Arial, 60pt">
+    <DataBand Name="MasterOrders" Width="680.4" Height="389.34" StartNewPage="true" DataSource="Orders">
+      <PictureObject Name="WhLogo" Width="132.3" Height="52.92" DataColumn="Orders.WarehouseLogoBytes"/>
+      <TextObject Name="DnTitle" Left="189" Top="7.56" Width="302.4" Height="34.02" CanGrow="true" Text="DELIVERY NOTE" HorzAlign="Center" Font="Arial, 18pt, style=Bold"/>
+      <TextObject Name="DnNoLabel" Left="491.4" Top="3.78" Width="189" Height="15.12" CanGrow="true" Text="Delivery Note No." HorzAlign="Right" Font="Arial, 7pt"/>
+      <TextObject Name="DnNoValue" Left="491.4" Top="18.9" Width="189" Height="22.68" CanGrow="true" Text="[Orders.DeliveryNoteNo]" HorzAlign="Right" Font="Arial, 12pt, style=Bold"/>
+      <LineObject Name="Rule1" Top="56.7" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="WhBlock" Top="64.26" Width="340.2" Height="45.36" CanGrow="true" Text="[Orders.WarehouseCode] · [Orders.WarehouseName]&#10;[Orders.WarehouseAddress]" Font="Arial, 9pt"/>
+      <TextObject Name="DeliverToLabel" Left="359.1" Top="64.26" Width="321.3" Height="15.12" CanGrow="true" Text="DELIVERY TO" Font="Arial, 7pt, style=Bold"/>
+      <TextObject Name="DeliverToValue" Left="359.1" Top="79.38" Width="321.3" Height="30.24" CanGrow="true" Text="[Orders.WarehouseAddress]" Font="Arial, 9pt"/>
+      <LineObject Name="Rule2" Top="113.4" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="GridLL0" Top="120.96" Width="120.96" Height="18.9" CanGrow="true" Text="P/O NO" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridLV0" Left="120.96" Top="120.96" Width="219.24" Height="18.9" CanGrow="true" Text="[Orders.HeaderPoNumber]" Font="Arial, 10pt"/>
+      <TextObject Name="GridRL0" Left="359.1" Top="120.96" Width="75.6" Height="18.9" CanGrow="true" Text="VENDOR ID" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridRV0" Left="434.7" Top="120.96" Width="245.7" Height="18.9" CanGrow="true" Text="[Orders.VendorCode]" Font="Arial, 10pt"/>
+      <TextObject Name="GridLL1" Top="143.64" Width="120.96" Height="18.9" CanGrow="true" Text="PRS NO" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridLV1" Left="120.96" Top="143.64" Width="219.24" Height="18.9" CanGrow="true" Text="[Orders.PullNumber]" Font="Arial, 10pt"/>
+      <TextObject Name="GridRL1" Left="359.1" Top="143.64" Width="75.6" Height="18.9" CanGrow="true" Text="VENDOR" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridRV1" Left="434.7" Top="143.64" Width="245.7" Height="18.9" CanGrow="true" Text="[Orders.VendorName]" Font="Arial, 10pt"/>
+      <TextObject Name="GridLL2" Top="166.32" Width="120.96" Height="18.9" CanGrow="true" Text="ORDER TYPE" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridLV2" Left="120.96" Top="166.32" Width="219.24" Height="18.9" CanGrow="true" Text="—" Font="Arial, 10pt"/>
+      <TextObject Name="GridRL2" Left="359.1" Top="166.32" Width="75.6" Height="18.9" CanGrow="true" Text="FROM" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridRV2" Left="434.7" Top="166.32" Width="245.7" Height="18.9" CanGrow="true" Text="[Orders.SubInventory]" Font="Arial, 10pt"/>
+      <TextObject Name="GridLL3" Top="189" Width="120.96" Height="18.9" CanGrow="true" Text="DROP ID" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridLV3" Left="120.96" Top="189" Width="219.24" Height="18.9" CanGrow="true" Text="—" Font="Arial, 10pt"/>
+      <TextObject Name="GridRL3" Left="359.1" Top="189" Width="75.6" Height="18.9" CanGrow="true" Text="TO" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridRV3" Left="434.7" Top="189" Width="245.7" Height="18.9" CanGrow="true" Text="[Orders.ToLocation]" Font="Arial, 10pt"/>
+      <TextObject Name="GridLL4" Top="211.68" Width="120.96" Height="18.9" CanGrow="true" Text="DATE OF DELIVERY" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridLV4" Left="120.96" Top="211.68" Width="219.24" Height="18.9" CanGrow="true" Text="[Orders.ClosedAt]" Font="Arial, 10pt"/>
+      <TextObject Name="GridRL4" Left="359.1" Top="211.68" Width="75.6" Height="18.9" CanGrow="true" Text="VENDOR INVOICE" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="GridRV4" Left="434.7" Top="211.68" Width="245.7" Height="18.9" CanGrow="true" Text="[Orders.InvoiceNo]" Font="Arial, 10pt"/>
+      <LineObject Name="Rule3" Top="238.14" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="BcPoCap" Top="245.7" Width="158.76" Height="15.12" CanGrow="true" Text="P/O NO" HorzAlign="Center" Font="Arial, 7pt, style=Bold"/>
+      <BarcodeObject Name="BcPo" Top="260.82" Width="158.76" Height="83.16" AutoSize="false" Text="[Orders.HeaderPoNumber]" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
+      <TextObject Name="BcPrsCap" Left="173.88" Top="245.7" Width="158.76" Height="15.12" CanGrow="true" Text="PRS NO" HorzAlign="Center" Font="Arial, 7pt, style=Bold"/>
+      <BarcodeObject Name="BcPrs" Left="173.88" Top="260.82" Width="158.76" Height="83.16" AutoSize="false" Text="[Orders.PullNumber]" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
+      <TextObject Name="BcDnCap" Left="347.76" Top="245.7" Width="158.76" Height="15.12" CanGrow="true" Text="DELIVERY NOTE" HorzAlign="Center" Font="Arial, 7pt, style=Bold"/>
+      <BarcodeObject Name="BcDn" Left="347.76" Top="260.82" Width="158.76" Height="83.16" AutoSize="false" Text="[Orders.DeliveryNoteNo]" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
+      <TextObject Name="BcInvCap" Left="521.64" Top="245.7" Width="158.76" Height="15.12" CanGrow="true" Text="INVOICE" HorzAlign="Center" Font="Arial, 7pt, style=Bold"/>
+      <BarcodeObject Name="BcInv" Left="521.64" Top="260.82" Width="158.76" Height="83.16" AutoSize="false" Text="[Orders.InvoiceNo]" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
+      <LineObject Name="Rule4" Top="351.54" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="HdrPart" Top="359.1" Width="94.5" Height="22.68" CanGrow="true" Text="PART NUMBER" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrDesc" Left="94.5" Top="359.1" Width="207.9" Height="22.68" CanGrow="true" Text="DESCRIPTION" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrPal" Left="302.4" Top="359.1" Width="94.5" Height="22.68" CanGrow="true" Text="PALLET" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrKan" Left="396.9" Top="359.1" Width="75.6" Height="22.68" CanGrow="true" Text="KANBAN" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrAsn" Left="472.5" Top="359.1" Width="94.5" Height="22.68" CanGrow="true" Text="ASN" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrRnd" Left="567" Top="359.1" Width="49.14" Height="22.68" CanGrow="true" Text="ROUND" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="HdrQty" Left="616.14" Top="359.1" Width="64.26" Height="22.68" CanGrow="true" Text="QTY" HorzAlign="Right" Font="Arial, 8pt, style=Bold"/>
+      <DataBand Name="DetailLines" Top="391.17" Width="680.4" Height="45.36" DataSource="Lines" Relation="OrdersLines">
+        <TextObject Name="ColPart" Top="10.78" Width="94.5" Height="22.68" CanGrow="true" Text="[Lines.ItemCode]" Font="Arial, 9pt"/>
+        <TextObject Name="ColDesc" Left="94.5" Top="10.78" Width="207.9" Height="22.68" CanGrow="true" Text="[Lines.Description]" Font="Arial, 9pt"/>
+        <TextObject Name="ColPal" Left="302.4" Top="10.78" Width="94.5" Height="22.68" CanGrow="true" Text="[Lines.PalletId]" Font="Arial, 8pt"/>
+        <TextObject Name="ColKan" Left="396.9" Top="10.78" Width="75.6" Height="22.68" CanGrow="true" Text="[Lines.KanbanNo]" Font="Arial, 8pt"/>
+        <TextObject Name="ColAsn" Left="472.5" Top="10.78" Width="94.5" Height="22.68" CanGrow="true" Text="[Lines.AsnNo]" Font="Arial, 8pt"/>
+        <TextObject Name="ColRnd" Left="567" Top="10.78" Width="49.14" Height="22.68" CanGrow="true" Text="[Lines.OrderRound]" Font="Arial, 8pt"/>
+        <TextObject Name="ColQty" Left="616.14" Top="10.78" Width="64.26" Height="22.68" CanGrow="true" Text="[Lines.TotalQty]" HorzAlign="Right" Font="Arial, 10pt, style=Bold"/>
+      </DataBand>
+      <DataFooterBand Name="OrderFooter" Top="438.36" Width="680.4" Height="83.16">
+        <LineObject Name="RuleTotal" Top="3.78" Width="680.4" Border.Width="0.5"/>
+        <TextObject Name="TotalLabel" Left="453.6" Top="11.34" Width="113.4" Height="22.68" CanGrow="true" Text="TOTAL QTY" HorzAlign="Right" Font="Arial, 9pt, style=Bold"/>
+        <TextObject Name="TotalValue" Left="574.56" Top="11.34" Width="105.84" Height="22.68" CanGrow="true" Text="[Orders.TotalQty]" HorzAlign="Right" Font="Arial, 12pt, style=Bold"/>
+        <BarcodeObject Name="BcTotal" Left="468.72" Top="41.58" Width="211.68" Height="37.8" AutoSize="false" Text="[Orders.TotalQty]" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
+      </DataFooterBand>
+    </DataBand>
+    <PageFooterBand Name="PageFoot" Top="523.35" Width="680.4" Height="226.8">
+      <LineObject Name="FootRule0" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="StoreLabel" Top="7.56" Width="680.4" Height="18.9" CanGrow="true" Text="STORING NOTE" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="StoreDateLabel" Top="34.02" Width="113.4" Height="18.9" CanGrow="true" Text="Date Received" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="StoreDateValue" Left="113.4" Top="34.02" Width="226.8" Height="18.9" CanGrow="true" Text="[Orders.LastReceivedAt]" Font="Arial, 9pt"/>
+      <TextObject Name="StoreDnLabel" Left="359.1" Top="34.02" Width="151.2" Height="18.9" CanGrow="true" Text="Delivery Note No + Inv" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="StoreDnValue" Left="510.3" Top="34.02" Width="170.1" Height="18.9" CanGrow="true" Text="[Orders.DeliveryNoteNo]+[Orders.InvoiceNo]" Font="Arial, 9pt"/>
+      <LineObject Name="FootRule1" Top="68.04" Width="680.4" Border.Width="0.5"/>
+      <TextObject Name="SigDelLabel" Top="75.6" Width="321.3" Height="18.9" CanGrow="true" Text="DELIVERED BY" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="SigAppLabel" Left="359.1" Top="75.6" Width="321.3" Height="18.9" CanGrow="true" Text="APPROVED FOR DELIVERY BY" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="SigDelBox" Top="98.28" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
+      <TextObject Name="SigAppBox" Left="359.1" Top="98.28" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
+      <PictureObject Name="AuthSig" Left="366.66" Top="102.06" Width="306.18" Height="75.6" DataColumn="Orders.SignatureBytes"/>
+      <TextObject Name="SigDelCap" Top="185.22" Width="321.3" Height="15.12" CanGrow="true" Text="Name / Signature / Date" HorzAlign="Center" Font="Arial, 7pt"/>
+      <TextObject Name="SigAppCap" Left="359.1" Top="185.22" Width="321.3" Height="15.12" CanGrow="true" Text="[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]" HorzAlign="Center" Font="Arial, 7pt"/>
+      <TextObject Name="PageNum" Left="491.4" Top="207.9" Width="189" Height="15.12" CanGrow="true" Text="Page [Page#] of [TotalPages#]" HorzAlign="Right" Font="Arial, 7pt"/>
+    </PageFooterBand>
+  </ReportPage>
+</Report>

@@ -74,12 +74,11 @@ imports/staging/*
 src/ReceivingOps.Web/imports/staging/*
 !src/ReceivingOps.Web/imports/staging/.gitkeep
 
-# Path B Stage 4 — delivery-order.frx is auto-generated on first DO render
-# from DeliveryOrderTemplateBuilder, written into ContentRootPath/Reports/.
-# Through Stages 4–7 the file is a runtime artifact (each TemplateBuilder
-# tweak regenerates). Stage 8 commits the Designer-final version after the
-# round-trip test, at which point this ignore line is removed.
-src/ReceivingOps.Web/Reports/delivery-order.frx
+# Path B — delivery-order.frx is now source-controlled (Stage 8 close).
+# The Designer-edited version is the authoritative layout; the runtime
+# template builder remains as a bootstrap path for fresh environments,
+# but designer edits in source are the truth. *.frx.tmp.* are atomic-
+# write artifacts from EnsureFrxExists and never want to be tracked.
 src/ReceivingOps.Web/Reports/*.frx.tmp.*
 
 # Path B Stage 7 — dsv-parity-capture.ps1 writes side-by-side HTML + PDF
