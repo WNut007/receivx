@@ -595,11 +595,13 @@
     color: var(--text);
   }
 
-  /* Barcodes row */
+  /* Barcodes row — Stage 5 widened from 3 to 4 columns (PO · PRS · DN ·
+     INVOICE). Captions + placeholders are always emitted (em-dash fill on
+     null) so the header layout never reflows when one value is missing. */
   .dsv-barcodes {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
     padding: 12px 0;
     border-bottom: 1px solid var(--border);
   }
@@ -612,14 +614,28 @@
     margin-bottom: 4px;
   }
   .dsv-barcode-placeholder {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
-    padding: 14px 8px;
+    padding: 14px 6px;
     border: 1px dashed var(--border);
     border-radius: 4px;
     background: var(--surface-2);
     color: var(--text);
     letter-spacing: 0.02em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Stage 5 — TOTAL QTY barcode placeholder beneath the items table.
+     Right-aligned, ~30% width to mirror the .frx OrderFooter BcTotal
+     position (124..180mm of the 180mm-wide content area). */
+  .dsv-total-barcode {
+    display: grid;
+    grid-template-columns: minmax(120px, 30%);
+    justify-content: end;
+    margin-top: 6px;
+    text-align: center;
   }
 
   /* Items table */

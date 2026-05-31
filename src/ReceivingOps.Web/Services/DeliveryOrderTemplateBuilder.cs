@@ -125,9 +125,12 @@ public static class DeliveryOrderTemplateBuilder
             "Delivery Note No.", fontSize: 7f, align: HorzAlign.Right));
         master.Objects.Add(MakeText("DnNoValue", 130, 5, 50, 6,
             "[Orders.DeliveryNoteNo]", fontSize: 12f, bold: true, align: HorzAlign.Right));
-        // [Row#] is FastReport's 1-based row counter on the current data band.
-        master.Objects.Add(MakeText("DnSubIdx", 130, 11, 50, 4,
-            "DO [Row#] of [TotalRows#]", fontSize: 7f, align: HorzAlign.Right));
+        // Stage 7 fix: the original "DO [Row#] of [TotalRows#]" subtitle
+        // referenced a non-existent FastReport system variable (TotalRows#
+        // — only Row#, Page#, TotalPages# are in the public surface).
+        // Compilation of any expression in the template would fail the
+        // whole report. Dropped entirely; the DN value above uniquely
+        // identifies which DO this is for the reader.
 
         master.Objects.Add(MakeHRule("Rule1", 0, 15, 180));
 

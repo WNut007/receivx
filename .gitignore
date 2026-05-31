@@ -81,3 +81,8 @@ src/ReceivingOps.Web/imports/staging/*
 # round-trip test, at which point this ignore line is removed.
 src/ReceivingOps.Web/Reports/delivery-order.frx
 src/ReceivingOps.Web/Reports/*.frx.tmp.*
+
+# Path B Stage 7 — dsv-parity-capture.ps1 writes side-by-side HTML + PDF
+# snapshots here for visual review. Snapshots are runtime artifacts; the
+# script itself is committed.
+tools/parity-out/

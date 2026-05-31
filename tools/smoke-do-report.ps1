@@ -175,88 +175,121 @@ if ($page.Content -notmatch 'data-pull-id=') { Fail "List rows missing data-pull
 OK "List page renders with two-pane DOM + smoke pull present"
 
 # ----------------------------------------------------------------------------
-# 2. /api/reports/do/{id}/preview — HTML fragment + aggregated lines
+# 2. /api/reports/do/{id}/preview — DSV HTML fragment + aggregated lines
+#    Path B Stage 7 alignment: HTML preview mirrors the .frx layout authored
+#    by DeliveryOrderTemplateBuilder. Legacy .do-document / "DELIVERY ORDER"
+#    / .do-line-detail shape replaced by the .dsv-* surface.
 # ----------------------------------------------------------------------------
-Step "GET /api/reports/do/{id}/preview → aggregated HTML fragment"
+Step "GET /api/reports/do/{id}/preview → DSV HTML fragment"
 $prev = Invoke-WebRequest -Uri "$base/api/reports/do/$($pull.id)/preview" -Method GET -WebSession $sv -UseBasicParsing
 if ($prev.StatusCode -ne 200) { Fail "Preview returned $($prev.StatusCode)" }
-if ($prev.Content -notmatch '<article class="do-document"') { Fail "Preview missing .do-document element" }
-if ($prev.Content -notmatch 'DELIVERY ORDER') { Fail "Preview missing DELIVERY ORDER label" }
-if ($prev.Content -notmatch 'Total delivered') { Fail "Preview missing total row" }
+if ($prev.Content -notmatch '<article class="dsv-do"') { Fail "Preview missing .dsv-do article element" }
+if ($prev.Content -notmatch '>DELIVERY NOTE<')          { Fail "Preview missing 'DELIVERY NOTE' title" }
+if ($prev.Content -notmatch 'class="dsv-total-label">TOTAL QTY<') {
+    Fail "Preview missing TOTAL QTY label in the table footer"
+}
 # AGGREGATION ASSERTION: SUMMARY item appears in exactly ONE row, not two,
 # and the qty reflects SUM(50, 30) = 80 (not the hour-split 50 / 30).
 $tbody = [regex]::Match($prev.Content, '<tbody>(?s)(.*?)</tbody>').Groups[1].Value
 $summaryRows = ([regex]::Matches($tbody, '<td class="mono">SUMMARY</td>')).Count
 if ($summaryRows -ne 1) { Fail "Expected 1 SUMMARY row after aggregation, got $summaryRows" }
-if ($tbody -notmatch '>80<') { Fail "Aggregated qty 80 not present — hours not summing" }
-# No hour column in the new layout
+# DSV layout wraps the qty cell in <b>, so a plain ">80<" no longer matches.
+# Anchor on the SUMMARY row to be sure the 80 isn't bleeding in from somewhere
+# else (e.g. info grid, TOTAL QTY value).
+if ($tbody -notmatch 'SUMMARY[\s\S]*?\b80\b') {
+    Fail "Aggregated qty 80 not present after SUMMARY row — hours not summing"
+}
+# No hour column in the DSV layout
 $thead = [regex]::Match($prev.Content, '<thead>(?s)(.*?)</thead>').Groups[1].Value
 if ($thead -match '>HOUR<') { Fail "Preview still has HOUR column header — aggregation incomplete" }
-OK "Preview renders 1 aggregated row (qty=80) and no HOUR column"
+OK "Preview renders 1 aggregated SUMMARY row (qty=80) and no HOUR column"
 
 # ----------------------------------------------------------------------------
-# 2c. ERP detail strip — second row under each line carries the 8 PoLine
-#     fields, with the SqlCleanup-stamped sentinel values visible.
+# 2c. DSV ERP coverage — per-line columns + DO-header info grid
+#     The DSV layout split the v3.x per-line detail strip into two surfaces:
+#       - 4 ERP fields are first-class item-table columns (PALLET, KANBAN,
+#         ASN, ROUND).
+#       - 3 fields moved up to the DO-header info grid because they are DO
+#         grouping keys (FROM = SubInventory, TO = ToLocation, VENDOR INVOICE
+#         = InvoiceNo).
+#     Order ID has no home in the DSV delivery note (matches .frx) and is
+#     deliberately dropped from the smoke — there's no place on the printed
+#     paper to surface it.
 # ----------------------------------------------------------------------------
-Step "ERP detail strip carries 8 PoLine fields with stamped sentinel values"
-if ($prev.Content -notmatch 'class="do-line-detail"') { Fail "Preview missing .do-line-detail row" }
-if ($prev.Content -notmatch 'class="do-detail-grid"') { Fail "Preview missing .do-detail-grid container" }
-foreach ($label in 'Pallet','Order ID','Invoice','Kanban','Sub-Inv','To-Loc','ASN','Round') {
-    if ($prev.Content -notmatch ">$([regex]::Escape($label))<") {
-        Fail "Detail grid missing label '$label'"
+Step "DSV item table carries per-line ERP fields (PALLET / KANBAN / ASN / ROUND)"
+foreach ($colHeader in 'PART NUMBER','DESCRIPTION','PALLET','KANBAN','ASN','ROUND','QTY') {
+    if ($prev.Content -notmatch ">$([regex]::Escape($colHeader))<") {
+        Fail "Item table header missing column '$colHeader'"
     }
 }
-foreach ($val in 'PALLET-DOR-001','ORD-DOR-001','INV-DOR-001','KBN-DOR-001','SUB-DOR','TLOC-DOR','ASN-DOR-001','R1') {
+foreach ($val in 'PALLET-DOR-001','KBN-DOR-001','ASN-DOR-001','R1') {
     if ($prev.Content -notmatch [regex]::Escape($val)) {
-        Fail "Detail grid missing stamped value '$val' — repo SELECT or DTO map didn't carry the field through"
+        Fail "Item table missing stamped value '$val' — repo SELECT or DTO map didn't carry the field through"
     }
 }
-OK "All 8 labels + 8 stamped values present in detail row"
+OK "Item table renders 7 column headers + 4 stamped ERP cell values"
 
-# Phase 14 — DO grouping = (Vendor × FromSubInv × ToLoc). The header should
-# now show the vendor as the do-number (replacing the legacy PoNumber) and
-# expose From sub-inventory / To location as first-class metadata.
-Step "Phase 14: DO header shows vendor + From/To metadata (not legacy PoNumber)"
-$doNumberMatch = [regex]::Match($prev.Content, '<div class="do-number">([^<]*)</div>')
-if (-not $doNumberMatch.Success) { Fail "DO preview missing .do-number element" }
-$doNumber = $doNumberMatch.Groups[1].Value.Trim()
-if ($doNumber -ne 'Vendor DOR Inc') {
-    Fail "do-number expected vendor name 'Vendor DOR Inc' (Phase 14), got '$doNumber'"
+Step "DSV info grid carries DO-header ERP fields (Phase 14 grouping)"
+foreach ($infoLabel in 'P/O NO','PRS NO','VENDOR ID','VENDOR','FROM','TO','VENDOR INVOICE','DATE OF DELIVERY') {
+    if ($prev.Content -notmatch ">$([regex]::Escape($infoLabel))<") {
+        Fail "Info grid missing label '$infoLabel'"
+    }
 }
-# From + To rows must be present as <dt>/<dd> pairs
-if ($prev.Content -notmatch '>From sub-inventory<') {
-    Fail "Phase 14 'From sub-inventory' metadata row missing from DO header"
+foreach ($val in 'SUB-DOR','TLOC-DOR','INV-DOR-001','V-DOR','Vendor DOR Inc') {
+    if ($prev.Content -notmatch [regex]::Escape($val)) {
+        Fail "Info grid missing stamped value '$val'"
+    }
 }
-if ($prev.Content -notmatch '>To location<') {
-    Fail "Phase 14 'To location' metadata row missing from DO header"
-}
-# Vendor block in the dl should still surface the code under the name
-if ($prev.Content -notmatch 'class="vendor-code">V-DOR<') {
-    Fail "Vendor block missing the code 'V-DOR' under the vendor name — DoOrder.VendorCode not surfacing"
-}
-OK "DO header: do-number='Vendor DOR Inc' + From sub-inv + To location + vendor-code (V-DOR) all present"
+OK "Info grid renders Phase 14 vendor / FROM / TO / VENDOR INVOICE values"
 
 # ----------------------------------------------------------------------------
-# 2b. Footer — aligned RECEIVED BY (text-only) + AUTHORIZED BY (signature)
+# 2d. Phase 14 DO identity — the DSV header reframes the legacy do-number
+#     element. Delivery Note No (Pull.Id[..8] + DO-letter) now sits in
+#     .dsv-dn-value; vendor lives in the info grid <dd> after the VENDOR <dt>.
 # ----------------------------------------------------------------------------
-Step "Footer aligned: spacer left + signature right, both with divider + labels"
-$footer = [regex]::Match($prev.Content, '(?s)<footer class="do-footer">(.*?)</footer>').Value
-if (-not $footer)                          { Fail "Footer element missing from DO preview" }
-if ($footer -notmatch 'RECEIVED BY')       { Fail "Footer missing 'RECEIVED BY' label (left block)" }
-if ($footer -notmatch 'AUTHORIZED BY')     { Fail "Footer missing 'AUTHORIZED BY' label (right block)" }
-if ($footer -match 'Vendor signature')     { Fail "Footer still has the old 'Vendor signature' label" }
-# Alignment requires: signature-spacer on left, signature-image on right,
-# sig-divider on both sides (NOT the old sig-line / sig-signature classes).
-if ($footer -notmatch 'class="signature-spacer"') { Fail "LEFT block missing .signature-spacer (alignment relies on it)" }
-if ($footer -notmatch 'class="signature-image"')  { Fail "RIGHT block missing .signature-image" }
-$dividerCount = ([regex]::Matches($footer, 'class="sig-divider"')).Count
-if ($dividerCount -ne 2) { Fail "Expected 2 sig-divider elements (one per block), got $dividerCount" }
-if ($footer -match 'class="sig-line"')      { Fail "Old .sig-line class still present — alignment refactor incomplete" }
-if ($footer -match 'class="sig-signature"') { Fail "Old .sig-signature class still present — alignment refactor incomplete" }
+Step "DSV header carries Delivery Note No + vendor in info grid (Phase 14)"
+$dnMatch = [regex]::Match($prev.Content, '<div class="dsv-dn-value">([^<]*)</div>')
+if (-not $dnMatch.Success) { Fail "DSV preview missing .dsv-dn-value element" }
+$dnValue = $dnMatch.Groups[1].Value.Trim()
+if ($dnValue -notmatch '^[0-9A-F]{8}[A-Z]+$') {
+    Fail "dsv-dn-value expected Pull.Id[..8] + DO-letter (e.g. 'A1B2C3D4A'), got '$dnValue'"
+}
+# Vendor <dd> must follow VENDOR <dt> in the info grid
+if ($prev.Content -notmatch '<dt>VENDOR</dt>\s*<dd[^>]*>Vendor DOR Inc</dd>') {
+    Fail "Info grid VENDOR row missing 'Vendor DOR Inc' as <dd>"
+}
+if ($prev.Content -notmatch '<dt>VENDOR ID</dt>\s*<dd[^>]*>V-DOR</dd>') {
+    Fail "Info grid VENDOR ID row missing 'V-DOR' as <dd>"
+}
+OK "DSV header: dsv-dn-value + VENDOR + VENDOR ID rows wired through the info grid"
+
+# ----------------------------------------------------------------------------
+# 2b. DSV footer — STORING NOTE strip + two signature blocks (DELIVERED BY
+#     empty for manual sign, APPROVED FOR DELIVERY BY filled with the
+#     closer's PNG signature).
+# ----------------------------------------------------------------------------
+Step "DSV footer: STORING NOTE + DELIVERED BY (empty) + APPROVED FOR DELIVERY BY (signature)"
+$footer = [regex]::Match($prev.Content, '(?s)<footer class="dsv-footer">(.*?)</footer>').Value
+if (-not $footer)                                       { Fail "Footer element missing (.dsv-footer)" }
+if ($footer -notmatch 'STORING NOTE')                   { Fail "STORING NOTE strip missing" }
+if ($footer -notmatch 'DELIVERED BY')                   { Fail "Footer missing 'DELIVERED BY' label (left block)" }
+if ($footer -notmatch 'APPROVED FOR DELIVERY BY')       { Fail "Footer missing 'APPROVED FOR DELIVERY BY' label (right block)" }
+if ($footer -match 'RECEIVED BY')                       { Fail "Footer still has legacy 'RECEIVED BY' label" }
+if ($footer -match 'AUTHORIZED BY')                     { Fail "Footer still has legacy 'AUTHORIZED BY' label" }
+if ($footer -match 'Vendor signature')                  { Fail "Footer still has the old 'Vendor signature' label" }
+
+# Two signature blocks with framed boxes
+$blockCount = ([regex]::Matches($footer, 'class="dsv-sig-block"')).Count
+if ($blockCount -ne 2) { Fail "Expected 2 .dsv-sig-block elements, got $blockCount" }
+$boxCount = ([regex]::Matches($footer, 'class="dsv-sig-box[^"]*"')).Count
+if ($boxCount -lt 2) { Fail "Expected at least 2 .dsv-sig-box elements, got $boxCount" }
+
+# APPROVED block carries the closer's PNG signature inside .dsv-sig-box-filled
+if ($footer -notmatch 'dsv-sig-box-filled') { Fail "APPROVED block missing .dsv-sig-box-filled" }
 if ($footer -notmatch [regex]::Escape($SAMPLE_SVG.Substring(0, 40))) {
-    Fail "AUTHORIZED BY signature-image missing the PNG dataURL"
+    Fail "APPROVED FOR DELIVERY BY signature missing the PNG dataURL"
 }
-OK "Footer aligned: spacer/image (80px) + 2 dividers + RECEIVED BY/AUTHORIZED BY"
+OK "DSV footer: STORING NOTE + 2 sig blocks + 2 framed boxes + signature dataURL"
 
 # ----------------------------------------------------------------------------
 # 3. /api/reports/do/{id}/export.pdf — attachment + %PDF

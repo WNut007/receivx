@@ -7,16 +7,19 @@
    multiple DOs when its receipts span multiple vendors, source sub-
    inventories, destination locations, or invoices.
 
-   The page mirrors the FastReport PDF layout in DeliveryOrderService:
-   header strip with warehouse logo + DELIVERY NOTE + DN# (right),
-   address strip, 5-row info grid (P/O · PRS · order-type · drop-id ·
-   date  ||  vendor-id · vendor · from · to · invoice), 3 Code128
-   barcodes, items table, total qty, STORING NOTE strip, two empty
-   signature boxes for manual signing.
+   The page mirrors the FastReport PDF layout authored by
+   DeliveryOrderTemplateBuilder (Path B Stages 3–6): header strip with
+   warehouse logo + DELIVERY NOTE + DN# (right), address strip, 5-row
+   info grid (P/O · PRS · order-type · drop-id · date  ||  vendor-id ·
+   vendor · from · to · invoice), 4 Code128 barcodes (PO · PRS · DN ·
+   INVOICE), items table, TOTAL QTY + barcode, STORING NOTE strip, two
+   empty signature boxes for manual signing.
 
-   Barcodes in the browser use jsbarcode (loaded by reports.css's host
-   page); the <svg data-barcode-text="..."> hooks are rendered then
-   filled by the page-level script.
+   Browser barcodes are text placeholders (.dsv-barcode-placeholder) —
+   value-only, no scannable bars. The PDF carries the real Code128 bars
+   via FastReport BarcodeObject. If JsBarcode (or similar) gets wired in
+   later, swap the placeholder divs for <svg> hooks and load the lib
+   from Views/Reports/Index.cshtml.
 
    All colors via CSS variables so theme switches reflow without re-render.
 *@
@@ -30,7 +33,6 @@
     var dnPlusInv = string.IsNullOrWhiteSpace(order.InvoiceNo)
         ? order.DeliveryNoteNo
         : $"{order.DeliveryNoteNo}+{order.InvoiceNo}";
-    var orderIdx = Model.Orders.IndexOf(order) + 1;
     var sig = (Model.Pull.SignatureSvg ?? "").Trim();
     var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
     var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
@@ -56,7 +58,6 @@
             <div class="dsv-dn">
                 <div class="dsv-dn-label">Delivery Note No.</div>
                 <div class="dsv-dn-value">@order.DeliveryNoteNo</div>
-                <div class="dsv-dn-sub">DO @orderIdx of @Model.Orders.Count</div>
             </div>
         </header>
 
@@ -91,32 +92,28 @@
             </dl>
         </section>
 
-        @* Browser preview shows the values destined for the PDF's three
-           Code128 barcodes (P/O NO, PRS NO, Delivery Note). Rendering the
-           actual barcode SVGs in HTML is out of scope; the PDF carries the
-           real bars. *@
+        @* Browser preview shows the values destined for the PDF's four
+           Code128 barcodes (P/O NO, PRS NO, DELIVERY NOTE, INVOICE). The
+           actual barcode bars live in the PDF; HTML carries values only.
+           Section is always emitted with a fixed 4-column grid so the
+           header layout doesn't reflow when one of the values is null. *@
         <section class="dsv-barcodes">
-            @if (!string.IsNullOrWhiteSpace(order.HeaderPoNumber))
-            {
-                <div class="dsv-barcode">
-                    <div class="dsv-barcode-caption">P/O NO</div>
-                    <div class="dsv-barcode-placeholder mono">@order.HeaderPoNumber</div>
-                </div>
-            }
-            @if (!string.IsNullOrWhiteSpace(Model.Pull.PullNumber))
-            {
-                <div class="dsv-barcode">
-                    <div class="dsv-barcode-caption">PRS NO</div>
-                    <div class="dsv-barcode-placeholder mono">@Model.Pull.PullNumber</div>
-                </div>
-            }
-            @if (!string.IsNullOrWhiteSpace(order.DeliveryNoteNo))
-            {
-                <div class="dsv-barcode">
-                    <div class="dsv-barcode-caption">DELIVERY NOTE</div>
-                    <div class="dsv-barcode-placeholder mono">@order.DeliveryNoteNo</div>
-                </div>
-            }
+            <div class="dsv-barcode">
+                <div class="dsv-barcode-caption">P/O NO</div>
+                <div class="dsv-barcode-placeholder mono">@Dash(order.HeaderPoNumber)</div>
+            </div>
+            <div class="dsv-barcode">
+                <div class="dsv-barcode-caption">PRS NO</div>
+                <div class="dsv-barcode-placeholder mono">@Dash(Model.Pull.PullNumber)</div>
+            </div>
+            <div class="dsv-barcode">
+                <div class="dsv-barcode-caption">DELIVERY NOTE</div>
+                <div class="dsv-barcode-placeholder mono">@Dash(order.DeliveryNoteNo)</div>
+            </div>
+            <div class="dsv-barcode">
+                <div class="dsv-barcode-caption">INVOICE</div>
+                <div class="dsv-barcode-placeholder mono">@Dash(order.InvoiceNo)</div>
+            </div>
         </section>
 
         <section class="dsv-lines">
@@ -153,6 +150,13 @@
                     </tr>
                 </tfoot>
             </table>
+            @* Stage 5 parity — TOTAL QTY barcode placeholder beneath the
+               table mirrors the .frx OrderFooter BcTotal at (124, 11, 56, 10).
+               Text-only for now; PDF carries the Code128 bars. *@
+            <div class="dsv-total-barcode">
+                <div class="dsv-barcode-caption">TOTAL QTY</div>
+                <div class="dsv-barcode-placeholder mono">@order.TotalQty.ToString("N0")</div>
+            </div>
         </section>
 
         <footer class="dsv-footer">
