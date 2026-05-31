@@ -183,6 +183,55 @@ foreach ($val in 'SUBINV-AAA','SUBINV-BBB','LOC-ALPHA','LOC-BETA') {
 }
 OK "Both vendor names in VENDOR dd cells; SUBINV-AAA/BBB + LOC-ALPHA/BETA all present"
 
+# ----------------------------------------------------------------------------
+# 5. Path B Stage 8 regression guard — master-detail relation must reach the
+#    .frx Dictionary as a <Relation> element. FastReport's
+#    RegisterData(DataSet) silently drops System.Data.DataRelations on Save;
+#    the template builder has to construct a native FastReport.Data.Relation
+#    and Add it to report.Dictionary.Relations directly. Without that, the
+#    detail band's Relation="OrdersLines" attribute is a dangling string
+#    reference on Load → Prepare iterates EVERY Lines row per master row →
+#    each DO page shows every other DO's lines (cross-product).
+#
+#    This assertion is the gap-closer for the Stage 8 miss: the original
+#    multi-DO smoke verified the HTML preview path only, which doesn't go
+#    through FastReport at all. The PDF cross-product bug was invisible to
+#    the smoke battery until it hit production data.
+# ----------------------------------------------------------------------------
+Step ".frx Dictionary carries the OrdersLines <Relation> element"
+$frxPath = Join-Path $repoRoot "src\ReceivingOps.Web\Reports\delivery-order.frx"
+if (-not (Test-Path $frxPath)) {
+    Fail ".frx not auto-generated at $frxPath after PDF export — EnsureFrxExists never ran"
+}
+$frx = Get-Content -Raw $frxPath
+if ($frx -notmatch '<Relation\s+Name="OrdersLines"') {
+    Fail @"
+Cross-product regression: .frx Dictionary missing <Relation Name="OrdersLines" ...>.
+Detail band's Relation attribute will be a dangling reference at Load time;
+every DO page will repeat every other DO's lines.
+"@
+}
+OK ".frx Dictionary has OrdersLines master-detail relation"
+
+# ----------------------------------------------------------------------------
+# 6. PDF export for the multi-DO pull — basic %PDF + size health.
+#    The PDF size delta from the cross-product bug is too small relative to
+#    PDFSimpleExport's JPEG-per-page baseline (~600KB) for a tight ceiling
+#    to be reliable. The structural .frx check above is the primary catch;
+#    this step proves the multi-DO PDF path reaches the export pipeline at
+#    all (the Path B pipeline can crash at Prepare on template-compile bugs
+#    like the [TotalRows#] regression Stage 7 surfaced).
+# ----------------------------------------------------------------------------
+Step "GET /api/reports/do/{id}/export.pdf → 200 + %PDF + size floor"
+$pdf = Invoke-WebRequest -Uri "$base/api/reports/do/$($pull.id)/export.pdf" -Method GET -WebSession $admin -UseBasicParsing
+if ($pdf.StatusCode -ne 200) { Fail "Multi-DO PDF returned $($pdf.StatusCode)" }
+$head4 = [System.Text.Encoding]::ASCII.GetString($pdf.Content[0..3])
+if ($head4 -ne '%PDF') { Fail "Multi-DO PDF magic bytes wrong: '$head4'" }
+if ($pdf.RawContentLength -lt 100000) {
+    Fail "Multi-DO PDF $($pdf.RawContentLength) bytes < 100KB — PageFooterBand or core band content missing"
+}
+OK "Multi-DO PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic"
+
 Cleanup
 Write-Host ""
 Write-Host "ALL PASS — Phase 14: one pull spawned 2 DOs split by (Vendor × FromSubInv × ToLoc)." -ForegroundColor Green

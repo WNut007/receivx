@@ -72,6 +72,34 @@ public static class DeliveryOrderTemplateBuilder
         ordersDs.Enabled = true;
         linesDs.Enabled  = true;
 
+        // FastReport's RegisterData(DataSet) populates table data sources but
+        // does NOT carry System.Data.DataRelations into
+        // report.Dictionary.Relations in a form that survives Save. The
+        // overload RegisterData(DataRelation, name) silently fails to
+        // serialize because the System.Data.DataRelation's parent/child
+        // names ("Orders" / "Lines") don't match the dictionary's prefixed
+        // table names ("DoReport.Orders" / "DoReport.Lines").
+        //
+        // Without a real <Relation> in the .frx Dictionary, the detail
+        // band's Relation="OrdersLines" attribute is a dangling string
+        // reference: on Load it resolves to null, and Prepare iterates
+        // EVERY Lines row per master row — a cross-product where each
+        // DO page shows every other DO's lines.
+        //
+        // Construct the FastReport.Data.Relation directly with the dict's
+        // actual DataSourceBase objects so Add() produces a serializable
+        // entry. The Relation now appears as <Relation> in the .frx and
+        // resolves correctly on Load + Prepare.
+        var ordersLinesRel = new FastReport.Data.Relation
+        {
+            Name = DoReportDataSetBuilder.OrdersLinesRelationName,
+            ParentDataSource = ordersDs,
+            ChildDataSource  = linesDs,
+            ParentColumns    = new[] { nameof(DoOrder.DeliveryNoteNo) },
+            ChildColumns     = new[] { nameof(DoOrder.DeliveryNoteNo) },
+        };
+        report.Dictionary.Relations.Add(ordersLinesRel);
+
         var page = new ReportPage
         {
             Name = "DeliveryOrderPage",
