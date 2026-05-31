@@ -315,12 +315,13 @@ if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }
 # likely cause is the PageFooterBand failing to emit — exactly the
 # silent-regression scenario the v3.3 → v3.4 retry was hardening against.
 #
-# Path B Stage 4 INTERIM: floor lowered 100KB → 20KB while warehouse logo
-# + signature PictureObjects are deferred to Stage 6. Stage 6 restores
-# the 100KB floor when picture binding lands; until then a 1-page text-
-# and-lines-only DO lands in the 30–50KB range.
-if ($pdf.RawContentLength -lt 20000) {
-    Fail "PDF $($pdf.RawContentLength) bytes < 20KB — PageFooterBand or core band content probably not emitted"
+# Path B Stage 8 RESTORE: floor returned to 100KB after empirical
+# verification at Stage 7 (PDF lands ~617KB with Stage 6 PictureObject
+# bindings active — well above the 100KB threshold). The Stage 4–7
+# interim 20KB was a defensive lowering while Stage 6 picture binding
+# was in flight; that work is done and the original assertion is back.
+if ($pdf.RawContentLength -lt 100000) {
+    Fail "PDF $($pdf.RawContentLength) bytes < 100KB — PageFooterBand or signature image probably not embedded"
 }
 OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic + size floor"
 
