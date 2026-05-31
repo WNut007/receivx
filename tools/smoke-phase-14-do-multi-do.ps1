@@ -14,14 +14,16 @@
 #      ToLocation) triples on the two POL rows so the receipts split.
 #   3. Receive once per item, close the pull.
 #
-# Assertions:
+# Assertions (Path B Stage 7 — DSV class shape):
 #   1. /api/reports/do/{id}/preview returns 200.
-#   2. The preview contains exactly TWO <article class="do-document">
-#      blocks — one per grouping triple.
-#   3. Each DO's do-number (Phase 14: now the vendor name, not PoNumber)
-#      matches one of the two seeded vendors.
-#   4. The two DOs show distinct "From sub-inventory" + "To location"
-#      values matching the seeded stamps.
+#   2. The preview contains exactly TWO <article class="dsv-do"> blocks —
+#      one per grouping triple.
+#   3. Each DO's info grid carries one of the two seeded vendor names as
+#      a <dd> following the <dt>VENDOR</dt> label. (Pre-Stage-7 the
+#      vendor lived in a top-level .do-number element; the DSV layout
+#      moved it to the structured info grid.)
+#   4. The two DOs show distinct From sub-inventory + To location values
+#      matching the seeded stamps.
 #
 # Self-cleaning. Test data prefix PH14MULTI-* (collision-free).
 
@@ -138,41 +140,48 @@ Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/close" -Method POST -Body $c
 OK "Pull closed with 2 receipts spanning 2 vendor/location triples"
 
 # ----------------------------------------------------------------------------
-# 3. DO preview should return TWO articles
+# 3. DO preview should return TWO articles (Stage 7 DSV class: .dsv-do)
 # ----------------------------------------------------------------------------
-Step "GET /api/reports/do/{id}/preview → expect 2 .do-document blocks"
+Step "GET /api/reports/do/{id}/preview → expect 2 .dsv-do blocks"
 $prev = Invoke-WebRequest -Uri "$base/api/reports/do/$($pull.id)/preview" -Method GET -WebSession $admin -UseBasicParsing
 if ($prev.StatusCode -ne 200) { Fail "Preview returned $($prev.StatusCode)" }
 
-$articleCount = ([regex]::Matches($prev.Content, '<article class="do-document"')).Count
+$articleCount = ([regex]::Matches($prev.Content, '<article class="dsv-do"')).Count
 if ($articleCount -ne 2) {
-    Fail "Expected 2 .do-document blocks (one per Vendor × SubInv × ToLoc triple), got $articleCount"
+    Fail "Expected 2 .dsv-do blocks (one per Vendor x SubInv x ToLoc triple), got $articleCount"
 }
 OK "Preview rendered 2 separate DOs"
 
 # ----------------------------------------------------------------------------
-# 4. Each DO's do-number must be a vendor name + From/To values present
+# 4. Each DO's info grid carries a vendor name + From/To sentinels present
+#    DSV info grid pattern: <dt>VENDOR</dt><dd>Vendor Name</dd>. The closing
+#    </dt> is the boundary so VENDOR doesn't bleed into VENDOR ID / INVOICE.
 # ----------------------------------------------------------------------------
-Step "Each DO header carries one vendor + matching From/To"
-$doNumbers = @([regex]::Matches($prev.Content, '<div class="do-number">([^<]*)</div>') | ForEach-Object { $_.Groups[1].Value.Trim() })
-if ($doNumbers.Count -ne 2) { Fail "Expected 2 do-number values, got $($doNumbers.Count)" }
+Step "Each DO info grid carries one vendor + matching From/To"
+$vendorNames = @(
+    [regex]::Matches($prev.Content, '<dt>VENDOR</dt>\s*<dd[^>]*>([^<]*)</dd>') |
+        ForEach-Object { $_.Groups[1].Value.Trim() }
+)
+if ($vendorNames.Count -ne 2) {
+    Fail "Expected 2 VENDOR dd values in info grid, got $($vendorNames.Count) — multi-DO split missing"
+}
 
 # Order may be vendor-code-alphabetical; both names must be present regardless.
 $expectedNames = @('Multi Vendor Alpha', 'Multi Vendor Beta')
 foreach ($want in $expectedNames) {
-    if ($doNumbers -notcontains $want) {
-        Fail "Expected vendor name '$want' to appear as a do-number, got: $($doNumbers -join ' | ')"
+    if ($vendorNames -notcontains $want) {
+        Fail "Expected vendor name '$want' as a VENDOR dd, got: $($vendorNames -join ' | ')"
     }
 }
 
 # From + To sentinel values from the seed should both be present somewhere
-# in the preview (one in each DO).
+# in the preview (one in each DO's info grid FROM / TO row).
 foreach ($val in 'SUBINV-AAA','SUBINV-BBB','LOC-ALPHA','LOC-BETA') {
     if ($prev.Content -notmatch [regex]::Escape($val)) {
         Fail "Expected stamped value '$val' missing from preview — DO grouping triple not surfacing"
     }
 }
-OK "Both vendor names appear as do-numbers; SUBINV-AAA/BBB + LOC-ALPHA/BETA all present"
+OK "Both vendor names in VENDOR dd cells; SUBINV-AAA/BBB + LOC-ALPHA/BETA all present"
 
 Cleanup
 Write-Host ""
