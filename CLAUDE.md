@@ -4,8 +4,33 @@ Multi-warehouse receiving system. ASP.NET Core 8 MVC + Dapper + SQL Server.
 **Currently on v3** of the spec (PO-driven receiving with FIFO allocation
 + Phase 10 ERP integration + Phase 11 admin config editor + Phase 12
 PO Excel importer).
-**Status:** v3.4.1 shipped on `main` (2026-05-30, tag `v3.4.1`, pushed
-to origin). v3.4.1 closes the Receipt seed gap that v3.4 left behind:
+**Status:** v3.5 shipped on `main` (2026-06-01, tag `v3.5`). v3.5
+ships **Path B + DSV Delivery Note redesign** — the DO PDF export
+cuts over from per-page programmatic FastReport construction to a
+single designer-driven `Reports/delivery-order.frx` loaded at runtime
+and editable in FastReport Designer Community 2023.2.15. HTML
+preview (`_DoPreview.cshtml`) tracks the DSV layout pixel-for-pixel
+from the same `DoReportData` so screen + paper never drift. `db/039`
+adds nullable `Warehouses.LogoDataUrl` for per-warehouse logos at
+the top-left of every printed DO. Two Stage 8 defects fixed after
+the round-trip surfaced them: (1) FastReport's `RegisterData(DataSet)`
+doesn't auto-propagate `System.Data.DataRelation`, so the detail
+band's `Relation="OrdersLines"` was a dangling string reference and
+the detail iterated every Lines row per master — a cross-product
+where each DO page showed every other DO's lines; fix: construct
+native `FastReport.Data.Relation` with the dictionary's actual
+`DataSourceBase` objects + `Add` directly to
+`report.Dictionary.Relations`. (2) VendorName ≥30 chars wrapped
+the info grid's right-value cell (53mm) and triggered a CanGrow
+cascade that bled a 1px overflow line into detail row 1 (read as
+a strikethrough); fix: widened RV to 65mm by shrinking RL to 20mm.
+Designer 2023.2.15 ↔ runtime 2026.2.1 round-trip verified end-to-end
+on the canonical .frx (CreatorVersion + Modified ≠ Created
+timestamps). 9 stages on the `dsv-redesign` branch, 12 commits
+since v3.4.1.
+
+**Previous ship:** v3.4.1 (2026-05-30, tag `v3.4.1`, pushed to
+origin) closed the Receipt seed gap that v3.4 left behind:
 `db/038` resolves PurchaseOrderLineId via the same FIFO logic db/012
 used during the v1→v2 cutover and INSERTs the 18 historical PL-2847
 receipts (incl. 2 reversal pairs) with explicit
@@ -1381,6 +1406,145 @@ every encrypted secret in DB is unrecoverable. Back up alongside the DB.
 - Audit retention policy (design decision needed)
 - Phase 11.2 "re-import from config files" admin button (alternative to manual `DELETE FROM dbo.AppSettings` + restart)
 - Phase 12.x extensions (deferred): admin warehouse picker on `/Imports` (uploader currently uses session WH for all roles), recent-runs panel listing the operator's prior `PoImportLog` rows, per-row preview pane in the modal (currently only totals + first 50 errors). None blocking; all easy adds when first needed.
+
+# Session handoff — 2026-06-01 (v3.5)
+
+Tag **v3.5** on `main`. Ships **Path B + DSV Delivery Note redesign**.
+9 stages on `dsv-redesign`, 12 commits since v3.4.1, ff-merged into main.
+
+## v3.5 — Done
+
+### Path B (Stages 1–7) — pipeline cutover
+
+- **Stage 1** — `Reports/` folder + bootstrap scaffold + csproj
+  `CopyToOutputDirectory` for `*.frx`. `IWebHostEnvironment` DI added
+  to `DeliveryOrderService`.
+- **Stage 2** — `DoReportDataSetBuilder` static class produces
+  `Orders` (master, PK=DeliveryNoteNo) + `Lines` (detail) +
+  `OrdersLines` `System.Data.DataRelation`. Pull-level fields
+  denormalized onto every Orders row to avoid a third Pull table.
+- **Stage 3** — `DeliveryOrderTemplateBuilder` programmatic Report
+  build: single A4 page, master DataBand `StartNewPage=true`, nested
+  detail via `master.Bands.Add(detail)`, per-master DataFooter for
+  TOTAL QTY, PageFooter for STORING NOTE + sigs + page#.
+- **Stage 4** — `EnsureFrxExists` atomic temp-write + `File.Move`;
+  `DeliveryOrderService.Build` cutover: Load .frx → RegisterData
+  (populated DataSet) → Prepare → return. Old per-page `AddOrderPage`
+  + 11 helper methods deleted (~500 LOC). `Reports/delivery-order.frx`
+  gitignored as a runtime cache through Stages 4–7.
+- **Stage 5** — 4-up barcode strip in master (added INVOICE) + TOTAL
+  QTY barcode in OrderFooter. OrderFooter height 12 → 22mm.
+- **Stage 6** — Warehouse logo + signature PictureObject DataColumn
+  binding. New `byte[]` columns on Orders: `WarehouseLogoBytes` +
+  `SignatureBytes`. `DecodeAndFlattenImage` flattens PNG/JPEG onto
+  a white 24bpp canvas so PDFSimpleExport's JPEG rasterization
+  doesn't collapse alpha to black.
+- **Stage 7** — `_DoPreview.cshtml` DSV alignment (4th INVOICE
+  placeholder, TOTAL QTY placeholder, `.dsv-barcodes` 4-col grid).
+  Stage-3 runtime bug fixed: `[TotalRows#]` referenced a non-existent
+  FastReport system var; compile crashed every PDF export. Uncaught
+  Stages 4–6 because those only ran `dotnet build`, not runtime.
+  Dropped DnSubIdx; the Delivery Note No above identifies which DO.
+
+### Stage 8 — defect fixes + Designer round-trip
+
+- **Cross-product fix** (eac16df). FastReport's `RegisterData(DataSet)`
+  doesn't auto-propagate `System.Data.DataRelation` into
+  `report.Dictionary.Relations`. The .frx Dictionary had 0
+  `<Relation>` elements; detail band's `Relation="OrdersLines"` was
+  a dangling string reference; detail iterated EVERY Lines row per
+  master row → cross-product (each DO page showed every other DO's
+  lines). Fix: construct native `FastReport.Data.Relation` with the
+  dictionary's actual `DataSourceBase` objects + `Add` directly to
+  `report.Dictionary.Relations`. Serializes as a real `<Relation>`
+  element in the .frx; survives Save/Load; honored at Prepare.
+- **Strikethrough fix** (38d85df). VendorName ≥30 chars wrapped the
+  info grid's right-value cell (was 53mm) and triggered a CanGrow
+  cascade in the master band that bled a 1px overflow line into
+  detail row 1 across all 7 columns. Fix: widened RV to 65mm by
+  shrinking RL from 32mm → 20mm. Item-table columns also
+  redistributed (PART 28→25, DESC 60→55, PALLET 24→25, KANBAN
+  18→20, ASN 18→25, ROUND 14→13, QTY 18→17) to cap ERP-field
+  wraps at ≤2 lines.
+- **Designer round-trip** verified end-to-end on the canonical .frx:
+  FastReport Designer Community 2023.2.15 opens, edits, re-saves the
+  file written by runtime 2026.2.1. `CreatorVersion` flips to
+  `2023.2.15.0`; `Modified` differs from `Created`. Runtime then
+  Loads the Designer-saved file and the PDF export works end-to-end
+  with no regression.
+- **Canonical .frx commit** (bbe7bb7). Drops `Reports/delivery-order.frx`
+  from `.gitignore`; the source-controlled Designer-edited file is
+  now authoritative. The template builder remains as a bootstrap
+  path for fresh environments where the .frx is absent. Runtime
+  changes go through Designer now, not by deleting the cache and
+  regenerating from code.
+
+### Smokes new in v3.5
+
+- `smoke-do-report` — rewritten for DSV class shape. Drops the
+  `ORD-DOR-001` per-line OrderId assertion (DSV layout doesn't
+  surface OrderId on the printed paper). PDF size floor 100KB
+  restored after empirical verification at ~617KB with Stage 6
+  picture bindings active.
+- `smoke-phase-14-do-multi-do` — DSV class shape; new §5 `.frx
+  <Relation>` structural assertion (gap-closer for the cross-product
+  bug that 1-DO fixtures + HTML-only checks missed); new §6 multi-DO
+  PDF size/magic check. Vendor names lengthened to ~33 chars + ERP
+  fields stamped at ERP-typical lengths.
+- `tools/dsv-parity-capture.ps1` — seeds a closed PL-DOR-* fixture +
+  saves HTML preview + PDF export to `tools/parity-out/` for visual
+  side-by-side review. Not in battery (one-shot diagnostic helper).
+
+### Migrations new in v3.5
+
+- `db/039_warehouses_logo.sql` — nullable `LogoDataUrl NVARCHAR(MAX)`
+  on `dbo.Warehouses`. Idempotent.
+
+### Smoke status at v3.5 ship
+
+| Smoke | Result |
+|-------|--------|
+| smoke-do-report                  | PASS (10/10, PDF 617KB) |
+| smoke-phase-14-do-multi-do       | PASS (6/6, PDF 1.24MB) |
+
+19 remaining failures in the full sweep all pre-existing — 5 docs
+Gmail/Hangfire flakes, 1 v3.4.1 stage-b seed gap, 13 v3.4.x untested
+seed-gap from `db/035`'s wipe. **Zero new Path-B regressions.**
+
+## v3.5 follow-up backlog (defer)
+
+- **Seed gap closure (v3.4 backlog continues)** — restoring the ~13
+  untested smokes from `db/035`'s wipe. Unchanged since v3.4.1.
+- **`smoke-stage-b`** still fails on PL-2844 `SUMMARY` mockup item
+  (no PO backing). v3.4.2 candidate, unchanged since v3.4.1.
+- **Per-row barcodes** (Part/Pallet/Qty) — deferred Stage 5
+  reservation. Designer can add interactively in 2023.2.15 now that
+  the .frx is the authoritative source.
+- **Designer template variants** — once operators get comfortable in
+  Designer, additional `.frx` files (e.g., narrow-paper Vacancy form,
+  multi-pull batch DO) can be added under `Reports/` and switched in
+  at the controller via a `?template=` query or per-warehouse
+  setting. Bootstrap path stays in code for the canonical one.
+
+## Commits in v3.5 (since v3.4.1)
+
+```
+docs ship   — CHANGELOG entry + CLAUDE.md footer
+chore       — commit canonical delivery-order.frx (Stage 8 close)
+fix         — widen narrow columns (strikethrough artifact)
+fix         — register master-detail relation (cross-product)
+test        — restore PDF floor 100KB + battery sweep
+test        — update multi-DO smoke for DSV class shape
+feat        — Stage 7 HTML preview DSV alignment + Stage-3 bug fix
+feat        — Stage 6 warehouse logo + signature PictureObject
+feat        — Stage 5 INVOICE + TOTAL QTY barcodes
+feat        — Stage 4 .frx-driven export cutover
+feat        — Stage 3 programmatic .frx template builder
+feat        — Stage 2 master-detail DataSet builder
+feat        — Stage 1 Reports/ folder + bootstrap scaffold
+feat        — DSV Delivery Note redesign baseline + warehouse logo (pre-Stage-1)
+docs        — Path B + DSV handoff
+```
 
 ## Known flakes (pre-existing; pass standalone)
 
