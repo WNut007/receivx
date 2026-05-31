@@ -8,13 +8,13 @@ public class WarehouseRepository : IWarehouseRepository
 {
     private const string SelectAll = @"
         SELECT Id, Code, Name, City, Country, Address, Capacity, Timezone,
-               ManagerId, Phone, IsActive, CreatedAt, UpdatedAt
+               ManagerId, Phone, IsActive, CreatedAt, UpdatedAt, LogoDataUrl
         FROM   dbo.Warehouses ";
 
     private const string ListSelect = @"
         SELECT w.Id, w.Code, w.Name, w.City, w.Country, w.Address, w.Capacity,
                w.Timezone, w.ManagerId, mu.Name AS ManagerName,
-               w.Phone, w.IsActive, w.CreatedAt,
+               w.Phone, w.IsActive, w.CreatedAt, w.LogoDataUrl,
                (SELECT COUNT(*) FROM dbo.UserWarehouseAssignments a WHERE a.WarehouseId = w.Id) AS UserCount
         FROM   dbo.Warehouses w
         LEFT JOIN dbo.Users mu ON mu.Id = w.ManagerId ";
@@ -93,9 +93,9 @@ public class WarehouseRepository : IWarehouseRepository
     public async Task<Guid> CreateAsync(WarehouseCreateRequest req, CancellationToken ct = default)
     {
         const string sql = @"
-            INSERT INTO dbo.Warehouses (Id, Code, Name, City, Country, Address, Capacity, Timezone, ManagerId, Phone, IsActive, CreatedAt)
+            INSERT INTO dbo.Warehouses (Id, Code, Name, City, Country, Address, Capacity, Timezone, ManagerId, Phone, IsActive, CreatedAt, LogoDataUrl)
             OUTPUT INSERTED.Id
-            VALUES (NEWID(), @Code, @Name, @City, @Country, @Address, @Capacity, @Timezone, @ManagerId, @Phone, @IsActive, SYSUTCDATETIME());";
+            VALUES (NEWID(), @Code, @Name, @City, @Country, @Address, @Capacity, @Timezone, @ManagerId, @Phone, @IsActive, SYSUTCDATETIME(), @LogoDataUrl);";
 
         using var conn = _factory.Create();
         return await conn.QuerySingleAsync<Guid>(new CommandDefinition(sql, new
@@ -109,7 +109,8 @@ public class WarehouseRepository : IWarehouseRepository
             req.Timezone,
             req.ManagerId,
             req.Phone,
-            req.IsActive
+            req.IsActive,
+            req.LogoDataUrl
         }, cancellationToken: ct));
     }
 
@@ -117,16 +118,17 @@ public class WarehouseRepository : IWarehouseRepository
     {
         const string sql = @"
             UPDATE dbo.Warehouses
-               SET Name      = @Name,
-                   City      = @City,
-                   Country   = @Country,
-                   Address   = @Address,
-                   Capacity  = @Capacity,
-                   Timezone  = @Timezone,
-                   ManagerId = @ManagerId,
-                   Phone     = @Phone,
-                   IsActive  = @IsActive,
-                   UpdatedAt = SYSUTCDATETIME()
+               SET Name        = @Name,
+                   City        = @City,
+                   Country     = @Country,
+                   Address     = @Address,
+                   Capacity    = @Capacity,
+                   Timezone    = @Timezone,
+                   ManagerId   = @ManagerId,
+                   Phone       = @Phone,
+                   IsActive    = @IsActive,
+                   LogoDataUrl = @LogoDataUrl,
+                   UpdatedAt   = SYSUTCDATETIME()
              WHERE Id = @Id;";
 
         using var conn = _factory.Create();
@@ -141,7 +143,8 @@ public class WarehouseRepository : IWarehouseRepository
             req.Timezone,
             req.ManagerId,
             req.Phone,
-            req.IsActive
+            req.IsActive,
+            req.LogoDataUrl
         }, cancellationToken: ct));
     }
 

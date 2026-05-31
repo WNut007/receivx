@@ -2,6 +2,7 @@ using System.Data;
 using System.Drawing;
 using System.IO;
 using FastReport;
+using FastReport.Barcode;
 using FastReport.Utils;
 using Microsoft.Extensions.Options;
 using ReceivingOps.Web.Data.Repositories;
@@ -31,13 +32,16 @@ namespace ReceivingOps.Web.Services;
 public class DeliveryOrderService : IDeliveryOrderService
 {
     private readonly IPullRepository _pulls;
+    private readonly IWarehouseRepository _warehouses;
     private readonly CompanyInfo _company;
 
     public DeliveryOrderService(
         IPullRepository pulls,
+        IWarehouseRepository warehouses,
         IOptions<CompanyInfo> company)
     {
         _pulls = pulls;
+        _warehouses = warehouses;
         _company = company.Value;
     }
 
@@ -60,12 +64,12 @@ public class DeliveryOrderService : IDeliveryOrderService
                 "This pull has no delivered receipts. A Delivery Order requires at least one " +
                 "non-cancelled receipt to render.");
 
-        // Phase 14: DO grouping key = (VendorCode × SubInventory × ToLocation).
+        // DO grouping key = (VendorCode × SubInventory × ToLocation × InvoiceNo).
         // The SQL projects each row with its own PoNumber so each DoLine
         // carries a PoLineRef back to its source purchase order. Null parts
         // of the grouping key collapse to empty string for the GroupBy
         // (LINQ's GroupBy treats null and "" as distinct otherwise; here we
-        // want all null-vendor lines to share one DO, not split per-row).
+        // want all all-null-key lines to share one DO, not split per-row).
         var orders = rows
             .GroupBy(r => new
             {
@@ -73,59 +77,106 @@ public class DeliveryOrderService : IDeliveryOrderService
                 VendorName   = r.VendorName   ?? "",
                 SubInventory = r.SubInventory ?? "",
                 ToLocation   = r.ToLocation   ?? "",
+                InvoiceNo    = r.InvoiceNo    ?? "",
             })
             .Select(g =>
             {
                 var lines = g.Select(r => new DoLine
                 {
-                    ItemCode     = r.ItemCode,
-                    Description  = r.Description,
-                    PoLineNumber = r.PoLineNumber,
-                    PoLineRef    = $"{r.PoNumber}·L{r.PoLineNumber}",
-                    TotalQty     = r.TotalQty,
-                    PalletId     = r.PalletId,
-                    OrderId      = r.OrderId,
-                    InvoiceNo    = r.InvoiceNo,
-                    KanbanNo     = r.KanbanNo,
-                    SubInventory = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
-                    ToLocation   = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
-                    AsnNo        = r.AsnNo,
-                    OrderRound   = r.OrderRound,
+                    ItemCode       = r.ItemCode,
+                    Description    = r.Description,
+                    PoLineNumber   = r.PoLineNumber,
+                    PoLineRef      = $"{r.PoNumber}·L{r.PoLineNumber}",
+                    TotalQty       = r.TotalQty,
+                    LastReceivedAt = r.LastReceivedAt,
+                    PalletId       = r.PalletId,
+                    OrderId        = r.OrderId,
+                    InvoiceNo      = g.Key.InvoiceNo.Length    == 0 ? null : g.Key.InvoiceNo,
+                    KanbanNo       = r.KanbanNo,
+                    SubInventory   = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
+                    ToLocation     = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
+                    AsnNo          = r.AsnNo,
+                    OrderRound     = r.OrderRound,
                 }).ToList();
+                // Dominant PO# for the DSV header — ordinal-min so it's
+                // stable when multiple POs feed a single DO (rare but
+                // possible under mixed-vendor/invoice arrangements).
+                var headerPo = g.Select(r => r.PoNumber)
+                                .Where(s => !string.IsNullOrEmpty(s))
+                                .OrderBy(s => s, StringComparer.Ordinal)
+                                .FirstOrDefault();
                 return new DoOrder
                 {
-                    VendorCode   = g.Key.VendorCode.Length   == 0 ? null : g.Key.VendorCode,
-                    VendorName   = g.Key.VendorName.Length   == 0 ? null : g.Key.VendorName,
-                    SubInventory = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
-                    ToLocation   = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
-                    Lines        = lines,
-                    TotalQty     = lines.Sum(l => l.TotalQty),
+                    VendorCode     = g.Key.VendorCode.Length   == 0 ? null : g.Key.VendorCode,
+                    VendorName     = g.Key.VendorName.Length   == 0 ? null : g.Key.VendorName,
+                    SubInventory   = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
+                    ToLocation     = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
+                    InvoiceNo      = g.Key.InvoiceNo.Length    == 0 ? null : g.Key.InvoiceNo,
+                    HeaderPoNumber = headerPo,
+                    LastReceivedAt = lines.Max(l => l.LastReceivedAt),
+                    Lines          = lines,
+                    TotalQty       = lines.Sum(l => l.TotalQty),
                 };
             })
             .OrderBy(o => o.VendorCode ?? "")
                 .ThenBy(o => o.SubInventory ?? "")
                 .ThenBy(o => o.ToLocation ?? "")
+                .ThenBy(o => o.InvoiceNo ?? "")
             .ToList();
+
+        // Delivery Note No — deterministic per-DO id: first 8 hex chars
+        // of Pull.Id + DO letter by index. Stable across re-renders, no
+        // schema change. Q5a says display as "{DN}+{InvoiceNo}".
+        var pullHex = pull.Id.ToString("N").Substring(0, 8).ToUpperInvariant();
+        for (int i = 0; i < orders.Count; i++)
+        {
+            // Letter rolls A..Z, then AA, AB, … for >26 DOs (defensive — DSV
+            // delivery notes in practice never spawn this many).
+            orders[i].DeliveryNoteNo = pullHex + IndexToLetters(i);
+        }
+
+        // Per-warehouse logo + address for the DSV header — null when unset.
+        // Warehouse row is small + cached by SQL plan; one round trip per
+        // render is acceptable (DO render is operator-initiated, not hot).
+        var wh = await _warehouses.GetByIdAsync(pull.WarehouseId, ct);
 
         return new DoReportData
         {
             Pull = new DoPullHeader
             {
-                Id              = pull.Id,
-                PullNumber      = pull.PullNumber,
-                PullDate        = pull.PullDate,
-                ReferenceNumber = pull.ReferenceNumber,
-                WarehouseCode   = pull.WarehouseCode,
-                WarehouseName   = pull.WarehouseName,
-                ClosedAt        = pull.ClosedAt,
-                ClosedByName    = pull.ClosedByName,
-                ClosedByRole    = pull.ClosedByRole,
-                SignatureSvg    = pull.SignatureSvg,
-                TotalQty        = orders.Sum(o => o.TotalQty),
+                Id                   = pull.Id,
+                PullNumber           = pull.PullNumber,
+                PullDate             = pull.PullDate,
+                ReferenceNumber      = pull.ReferenceNumber,
+                WarehouseCode        = pull.WarehouseCode,
+                WarehouseName        = pull.WarehouseName,
+                WarehouseAddress     = wh?.Address,
+                WarehouseLogoDataUrl = wh?.LogoDataUrl,
+                ClosedAt             = pull.ClosedAt,
+                ClosedByName         = pull.ClosedByName,
+                ClosedByRole         = pull.ClosedByRole,
+                SignatureSvg         = pull.SignatureSvg,
+                TotalQty             = orders.Sum(o => o.TotalQty),
             },
             Orders  = orders,
             Company = _company,
         };
+    }
+
+    /// <summary>
+    /// 0 → "A", 1 → "B", … 25 → "Z", 26 → "AA", 27 → "AB", ….
+    /// Used only as a per-DO suffix on the Delivery Note No.
+    /// </summary>
+    private static string IndexToLetters(int idx)
+    {
+        if (idx < 0) throw new ArgumentOutOfRangeException(nameof(idx));
+        var s = "";
+        do
+        {
+            s = (char)('A' + (idx % 26)) + s;
+            idx = idx / 26 - 1;
+        } while (idx >= 0);
+        return s;
     }
 
     public async Task<Report> BuildAsync(Guid pullId, CancellationToken ct = default)
@@ -135,23 +186,27 @@ public class DeliveryOrderService : IDeliveryOrderService
     }
 
     // ------------------------------------------------------------------
-    // Report builder — one A4 portrait page per DoOrder. A pull that
-    // touched two POs ships a 2-page PDF; one DO per page so each is
-    // self-contained for mail/email/print.
+    // DSV-style Delivery Note layout — one A4 portrait page per DoOrder.
+    // Replaces the legacy v3.x DO layout (kept on `main` at tag v3.4.1).
     //
-    // Layout per page:
-    //   Title band: company header + DO# + pull context
-    //                + vendor + warehouse + reference
-    //                + table header (Item · Description · PO·Line · Qty —
-    //                  no hour column, lines are pre-aggregated)
-    //   Data band:  one row per DoLine
-    //   Summary:    per-DO total (right under the last line)
-    //   Page foot:  RECEIVED BY + AUTHORIZED BY blocks + PNG signature,
-    //               anchored to the bottom of every printed page so
-    //               multi-page DOs carry an auth marker on each detachable
-    //               sheet. Engine emits this via ShowPageFooter() in
-    //               ReportEngine.Pages; PDFSimpleExport renders whatever
-    //               the engine emits.
+    // Layout per page (top-down, all mm, page is 180 wide × 267 tall usable):
+    //
+    //   Title band ~102mm:
+    //     0..14   warehouse logo (left)  | DELIVERY NOTE title (center) | DN# (right)
+    //     17..28  warehouse code/name + addr (left)  |  Delivery To (right)
+    //     32..62  5-row info grid: L=[P/O · PRS · ORDER TYPE · DROP ID · DATE]
+    //                              R=[VENDOR ID · VENDOR · FROM · TO · INVOICE]
+    //     65..92  3 × Code128 barcodes (PO / PRS / DN)
+    //     95..101 column header row (PART NUM · DESC · PALLET · KANBAN · ASN · ROUND · QTY)
+    //
+    //   Data band: 8mm per line — 7 columns matching the header
+    //
+    //   Summary band: TOTAL QTY (right-aligned)
+    //
+    //   Page footer ~60mm:
+    //     STORING NOTE strip (Date Received, Delivery Note No + Inv)
+    //     Two empty signature boxes (Delivered By / Approved for Delivery By)
+    //     "Page X of Y" bottom-right via FastReport system vars
     // ------------------------------------------------------------------
     private Report Build(DoReportData data)
     {
@@ -169,117 +224,144 @@ public class DeliveryOrderService : IDeliveryOrderService
         var page = new ReportPage
         {
             Name = $"DOPage{idx}",
-            PaperWidth  = 210,   // A4 portrait, millimeters
+            PaperWidth  = 210,
             PaperHeight = 297,
             LeftMargin = 15, RightMargin = 15, TopMargin = 15, BottomMargin = 15,
         };
         report.Pages.Add(page);
 
-        // ----- Title band -----
-        // Phase 14 adds a FROM/TO row between Vendor/Warehouse and Reference,
-        // pushing the table header down ~12mm — band height grew accordingly.
         var titleBand = new ReportTitleBand
         {
             Name = $"Title{idx}",
-            Height = Units.Millimeters * 82f,
+            Height = Units.Millimeters * 102f,
         };
         page.ReportTitle = titleBand;
 
-        // Heading: company name (left) + DELIVERY ORDER (right).
-        // Phase 14: no PoNumber on the header — the DO is identified by its
-        // (Vendor × FromSub × ToLoc) triple, displayed in the metadata rows
-        // below. The right-hand DoMeta block carries pull context only.
-        titleBand.Objects.Add(MakeText($"CompanyName{idx}", 0, 0, 110, 8,
-            data.Company.Name, fontSize: 14f, bold: true));
-        titleBand.Objects.Add(MakeText($"DoTitle{idx}", 110, 0, 70, 8,
-            "DELIVERY ORDER", fontSize: 16f, bold: true, align: HorzAlign.Right));
+        // ----- (1) Top strip: logo · DELIVERY NOTE title · DN# -----
+        var logoBytes = DecodeLogoBytes(data.Pull.WarehouseLogoDataUrl);
+        if (logoBytes is not null)
+        {
+            try { titleBand.Objects.Add(MakeLogoPicture($"WhLogo{idx}", 0, 0, 35, 14, logoBytes)); }
+            catch (ArgumentException) { }
+            catch (OutOfMemoryException) { }
+        }
+        titleBand.Objects.Add(MakeText($"DnTitle{idx}", 50, 2, 80, 9,
+            "DELIVERY NOTE", fontSize: 18f, bold: true, align: HorzAlign.Center));
+        titleBand.Objects.Add(MakeText($"DnNoLabel{idx}", 130, 1, 50, 4,
+            "Delivery Note No.", fontSize: 7f, align: HorzAlign.Right));
+        titleBand.Objects.Add(MakeText($"DnNoValue{idx}", 130, 5, 50, 6,
+            order.DeliveryNoteNo, fontSize: 12f, bold: true, align: HorzAlign.Right));
+        titleBand.Objects.Add(MakeText($"DnSubIdx{idx}", 130, 11, 50, 4,
+            $"DO {idx + 1} of {data.Orders.Count}", fontSize: 7f, align: HorzAlign.Right));
 
-        // Sub-row: company meta (left) + pull context (right)
-        titleBand.Objects.Add(MakeText($"CompanyMeta{idx}", 0, 9, 110, 14,
-            BuildCompanyMeta(), fontSize: 9f));
-        titleBand.Objects.Add(MakeText($"DoMeta{idx}", 110, 9, 70, 22,
-            $"Pull: {data.Pull.PullNumber}\n" +
-            $"Pull date: {data.Pull.PullDate:yyyy-MM-dd}\n" +
-            (data.Pull.ClosedAt.HasValue ? $"Closed: {data.Pull.ClosedAt.Value:yyyy-MM-dd HH:mm} UTC" : ""),
-            fontSize: 9f, align: HorzAlign.Right));
+        titleBand.Objects.Add(MakeHRule($"Rule1_{idx}", 0, 15, 180));
 
-        titleBand.Objects.Add(MakeHRule($"Rule1_{idx}", 0, 25, 180));
+        // ----- (2) Address strip: warehouse (left) + Delivery To (right) -----
+        var whCodeName = string.IsNullOrWhiteSpace(data.Pull.WarehouseName)
+            ? data.Pull.WarehouseCode
+            : $"{data.Pull.WarehouseCode} · {data.Pull.WarehouseName}";
+        titleBand.Objects.Add(MakeText($"WhBlock{idx}", 0, 17, 90, 12,
+            whCodeName + (string.IsNullOrWhiteSpace(data.Pull.WarehouseAddress)
+                ? ""
+                : "\n" + data.Pull.WarehouseAddress),
+            fontSize: 9f));
+        titleBand.Objects.Add(MakeText($"DeliverToLabel{idx}", 95, 17, 85, 4,
+            "DELIVERY TO", fontSize: 7f, bold: true));
+        titleBand.Objects.Add(MakeText($"DeliverToValue{idx}", 95, 21, 85, 8,
+            string.IsNullOrWhiteSpace(data.Pull.WarehouseAddress) ? whCodeName : data.Pull.WarehouseAddress,
+            fontSize: 9f));
 
-        // Vendor (left) + Warehouse (right)
-        titleBand.Objects.Add(MakeText($"VendorLabel{idx}", 0, 28, 85, 5, "VENDOR", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"VendorValue{idx}", 0, 33, 85, 10,
-            VendorDisplay(order), fontSize: 10f));
+        titleBand.Objects.Add(MakeHRule($"Rule2_{idx}", 0, 30, 180));
 
-        titleBand.Objects.Add(MakeText($"WhLabel{idx}", 95, 28, 85, 5, "WAREHOUSE", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"WhValue{idx}", 95, 33, 85, 10,
-            $"{data.Pull.WarehouseCode} · {data.Pull.WarehouseName}", fontSize: 10f));
+        // ----- (3) Info grid: 5 rows × 2 cols × 6mm; label left, value right within each col -----
+        var dateOfDelivery = data.Pull.ClosedAt.HasValue
+            ? data.Pull.ClosedAt.Value.ToString("dd MMM yyyy")
+            : "—";
+        var infoRows = new[]
+        {
+            ("P/O NO",            order.HeaderPoNumber ?? "—",
+             "VENDOR ID",         order.VendorCode ?? "—"),
+            ("PRS NO",            data.Pull.PullNumber,
+             "VENDOR",            VendorDisplay(order)),
+            ("ORDER TYPE",        "—",
+             "FROM",              order.SubInventory ?? "—"),
+            ("DROP ID",           "—",
+             "TO",                order.ToLocation ?? "—"),
+            ("DATE OF DELIVERY",  dateOfDelivery,
+             "VENDOR INVOICE",    order.InvoiceNo ?? "—"),
+        };
+        const float gridY0 = 32f;
+        const float rowH   = 6f;
+        for (int r = 0; r < infoRows.Length; r++)
+        {
+            var (lLabel, lValue, rLabel, rValue) = infoRows[r];
+            var y = gridY0 + r * rowH;
+            // Left column (90mm, label 32mm + value 58mm)
+            titleBand.Objects.Add(MakeText($"GridLL{idx}_{r}",  0, y, 32, 5, lLabel, fontSize: 8f, bold: true));
+            titleBand.Objects.Add(MakeText($"GridLV{idx}_{r}", 32, y, 58, 5, lValue, fontSize: 10f));
+            // Right column (90mm, label 32mm + value 58mm)
+            titleBand.Objects.Add(MakeText($"GridRL{idx}_{r}", 95, y, 32, 5, rLabel, fontSize: 8f, bold: true));
+            titleBand.Objects.Add(MakeText($"GridRV{idx}_{r}",127, y, 53, 5, rValue, fontSize: 10f));
+        }
 
-        // Phase 14: FROM SUBINVENTORY (left) + TO LOCATION (right) — the
-        // movement direction this DO documents. Sits below the Vendor /
-        // Warehouse band (which ends near y=43) with a small gap.
-        titleBand.Objects.Add(MakeText($"FromLabel{idx}", 0, 45, 85, 5, "FROM SUBINVENTORY", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"FromValue{idx}", 0, 50, 85, 6,
-            string.IsNullOrWhiteSpace(order.SubInventory) ? "—" : order.SubInventory,
-            fontSize: 10f));
+        titleBand.Objects.Add(MakeHRule($"Rule3_{idx}", 0, 63, 180));
 
-        titleBand.Objects.Add(MakeText($"ToLabel{idx}", 95, 45, 85, 5, "TO LOCATION", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"ToValue{idx}", 95, 50, 85, 6,
-            string.IsNullOrWhiteSpace(order.ToLocation) ? "—" : order.ToLocation,
-            fontSize: 10f));
+        // ----- (4) Barcodes: PO, PRS, DN — Code128. Caption (4mm) + bars (22mm). -----
+        if (!string.IsNullOrWhiteSpace(order.HeaderPoNumber))
+        {
+            titleBand.Objects.Add(MakeText($"BcPoCap{idx}", 0, 65, 55, 4, "P/O NO", fontSize: 7f, bold: true, align: HorzAlign.Center));
+            titleBand.Objects.Add(MakeBarcode($"BcPo{idx}", 0, 69, 55, 22, order.HeaderPoNumber!));
+        }
+        if (!string.IsNullOrWhiteSpace(data.Pull.PullNumber))
+        {
+            titleBand.Objects.Add(MakeText($"BcPrsCap{idx}", 62, 65, 55, 4, "PRS NO", fontSize: 7f, bold: true, align: HorzAlign.Center));
+            titleBand.Objects.Add(MakeBarcode($"BcPrs{idx}", 62, 69, 55, 22, data.Pull.PullNumber));
+        }
+        if (!string.IsNullOrWhiteSpace(order.DeliveryNoteNo))
+        {
+            titleBand.Objects.Add(MakeText($"BcDnCap{idx}", 124, 65, 55, 4, "DELIVERY NOTE", fontSize: 7f, bold: true, align: HorzAlign.Center));
+            titleBand.Objects.Add(MakeBarcode($"BcDn{idx}", 124, 69, 55, 22, order.DeliveryNoteNo));
+        }
 
-        // Reference (full width)
-        titleBand.Objects.Add(MakeText($"RefLabel{idx}", 0, 60, 180, 5, "REFERENCE", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"RefValue{idx}", 0, 65, 180, 6,
-            string.IsNullOrWhiteSpace(data.Pull.ReferenceNumber) ? "—" : data.Pull.ReferenceNumber,
-            fontSize: 11f, bold: true));
+        titleBand.Objects.Add(MakeHRule($"Rule4_{idx}", 0, 93, 180));
 
-        // Table header (no HOUR column — aggregated). Pushed down to clear
-        // the new FROM/TO row above.
-        titleBand.Objects.Add(MakeHRule($"Rule2_{idx}", 0, 74, 180));
-        titleBand.Objects.Add(MakeText($"HdrItem{idx}",  0,  75, 35, 6, "ITEM",        fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"HdrDesc{idx}", 35,  75, 85, 6, "DESCRIPTION", fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"HdrPo{idx}",  120,  75, 40, 6, "PO · LINE",   fontSize: 8f, bold: true));
-        titleBand.Objects.Add(MakeText($"HdrQty{idx}", 160,  75, 20, 6, "QTY",         fontSize: 8f, bold: true, align: HorzAlign.Right));
+        // ----- (5) Column header row -----
+        // Widths: PART 28 · DESC 60 · PALLET 24 · KANBAN 18 · ASN 18 · ROUND 14 · QTY 18 = 180
+        titleBand.Objects.Add(MakeText($"HdrPart{idx}",  0,  95, 28, 6, "PART NUMBER", fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrDesc{idx}", 28,  95, 60, 6, "DESCRIPTION", fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrPal{idx}",  88,  95, 24, 6, "PALLET",      fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrKan{idx}", 112,  95, 18, 6, "KANBAN",      fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrAsn{idx}", 130,  95, 18, 6, "ASN",         fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrRnd{idx}", 148,  95, 14, 6, "ROUND",       fontSize: 8f, bold: true));
+        titleBand.Objects.Add(MakeText($"HdrQty{idx}", 162,  95, 18, 6, "QTY",         fontSize: 8f, bold: true, align: HorzAlign.Right));
+        titleBand.Objects.Add(MakeHRule($"Rule5_{idx}", 0, 101, 180));
 
-        // ----- Data band: one row per aggregated line -----
-        // 12 mm height = primary cells row (5 mm) + ERP detail strip (~6 mm).
-        // The detail TextObject uses CanGrow so a row that wraps to a second
-        // text line still fits inside the allotted height.
+        // ----- Data band (8mm per row, 7 columns matching the header) -----
         var dataBand = new DataBand
         {
             Name = $"DeliveryRows{idx}",
-            Height = Units.Millimeters * 12f,
+            Height = Units.Millimeters * 8f,
         };
         page.AddChild(dataBand);
 
         var dsName = $"Lines{idx}";
         var table = new DataTable(dsName);
-        table.Columns.Add("ItemCode",    typeof(string));
-        table.Columns.Add("Description", typeof(string));
-        table.Columns.Add("PoLineRef",   typeof(string));
-        table.Columns.Add("TotalQty",    typeof(int));
+        table.Columns.Add("ItemCode",     typeof(string));
+        table.Columns.Add("Description",  typeof(string));
         table.Columns.Add("PalletId",     typeof(string));
-        table.Columns.Add("OrderId",      typeof(string));
-        table.Columns.Add("InvoiceNo",    typeof(string));
         table.Columns.Add("KanbanNo",     typeof(string));
-        table.Columns.Add("SubInventory", typeof(string));
-        table.Columns.Add("ToLocation",   typeof(string));
         table.Columns.Add("AsnNo",        typeof(string));
         table.Columns.Add("OrderRound",   typeof(string));
+        table.Columns.Add("TotalQty",     typeof(int));
         foreach (var line in order.Lines)
         {
-            // Persist "—" for nulls so empty PoLine fields are visually
-            // distinguishable from a rendering bug in the PDF.
             table.Rows.Add(
-                line.ItemCode, line.Description, line.PoLineRef, line.TotalQty,
-                line.PalletId     ?? "—",
-                line.OrderId      ?? "—",
-                line.InvoiceNo    ?? "—",
-                line.KanbanNo     ?? "—",
-                line.SubInventory ?? "—",
-                line.ToLocation   ?? "—",
-                line.AsnNo        ?? "—",
-                line.OrderRound   ?? "—");
+                line.ItemCode, line.Description,
+                line.PalletId   ?? "—",
+                line.KanbanNo   ?? "—",
+                line.AsnNo      ?? "—",
+                line.OrderRound ?? "—",
+                line.TotalQty);
         }
         report.RegisterData(table, dsName);
         var ds = report.GetDataSource(dsName)
@@ -287,84 +369,97 @@ public class DeliveryOrderService : IDeliveryOrderService
         ds.Enabled = true;
         dataBand.DataSource = ds;
 
-        dataBand.Objects.Add(MakeText($"ColItem{idx}",   0, 0, 35, 5, $"[{dsName}.ItemCode]",    fontSize: 9f));
-        dataBand.Objects.Add(MakeText($"ColDesc{idx}",  35, 0, 85, 5, $"[{dsName}.Description]", fontSize: 9f));
-        dataBand.Objects.Add(MakeText($"ColPo{idx}",   120, 0, 40, 5, $"[{dsName}.PoLineRef]",   fontSize: 9f));
-        dataBand.Objects.Add(MakeText($"ColQty{idx}",  160, 0, 20, 5, $"[{dsName}.TotalQty]",    fontSize: 9f, align: HorzAlign.Right));
+        dataBand.Objects.Add(MakeText($"ColPart{idx}",  0, 1, 28, 6, $"[{dsName}.ItemCode]",    fontSize: 9f));
+        dataBand.Objects.Add(MakeText($"ColDesc{idx}", 28, 1, 60, 6, $"[{dsName}.Description]", fontSize: 9f));
+        dataBand.Objects.Add(MakeText($"ColPal{idx}",  88, 1, 24, 6, $"[{dsName}.PalletId]",    fontSize: 8f));
+        dataBand.Objects.Add(MakeText($"ColKan{idx}", 112, 1, 18, 6, $"[{dsName}.KanbanNo]",    fontSize: 8f));
+        dataBand.Objects.Add(MakeText($"ColAsn{idx}", 130, 1, 18, 6, $"[{dsName}.AsnNo]",       fontSize: 8f));
+        dataBand.Objects.Add(MakeText($"ColRnd{idx}", 148, 1, 14, 6, $"[{dsName}.OrderRound]",  fontSize: 8f));
+        dataBand.Objects.Add(MakeText($"ColQty{idx}", 162, 1, 18, 6, $"[{dsName}.TotalQty]",    fontSize: 10f, bold: true, align: HorzAlign.Right));
 
-        // ERP detail strip — one text block below the primary cells.
-        // Verify-grade layout only; this is single-line at 7 pt and will
-        // wrap (CanGrow) if a value is long. Polish deferred.
-        var detailText =
-            $"Pallet [{dsName}.PalletId]   Order [{dsName}.OrderId]   " +
-            $"Invoice [{dsName}.InvoiceNo]   Kanban [{dsName}.KanbanNo]   " +
-            $"Sub-Inv [{dsName}.SubInventory]   To-Loc [{dsName}.ToLocation]   " +
-            $"ASN [{dsName}.AsnNo]   Round [{dsName}.OrderRound]";
-        dataBand.Objects.Add(MakeText($"ColDetail{idx}", 0, 6, 180, 5, detailText, fontSize: 7f));
-
-        // ----- Summary band: per-DO total only (10mm). Sits right under
-        // the last data row on the last page; auth block lives in the
-        // PageFooterBand below so multi-page DOs carry sig on every page.
+        // ----- Summary band: TOTAL QTY -----
         var summaryBand = new ReportSummaryBand
         {
             Name = $"Summary{idx}",
-            Height = Units.Millimeters * 10f,
+            Height = Units.Millimeters * 12f,
         };
         page.ReportSummary = summaryBand;
-
         summaryBand.Objects.Add(MakeHRule($"RuleTotal{idx}", 0, 1, 180));
-        summaryBand.Objects.Add(MakeText($"TotalLabel{idx}", 100, 3, 50, 6,
-            "TOTAL DELIVERED", fontSize: 9f, bold: true, align: HorzAlign.Right));
-        summaryBand.Objects.Add(MakeText($"TotalValue{idx}", 150, 3, 30, 6,
-            $"{order.TotalQty:N0} pcs", fontSize: 11f, bold: true, align: HorzAlign.Right));
+        summaryBand.Objects.Add(MakeText($"TotalLabel{idx}", 120, 3, 30, 6,
+            "TOTAL QTY", fontSize: 9f, bold: true, align: HorzAlign.Right));
+        summaryBand.Objects.Add(MakeText($"TotalValue{idx}", 152, 3, 28, 6,
+            $"{order.TotalQty:N0}", fontSize: 12f, bold: true, align: HorzAlign.Right));
 
-        // ----- Page footer: close-auth + PNG signature, anchored to bottom
-        // of every printed page (multi-page DOs carry the auth marker on
-        // each detachable sheet). Y origin is the top of the footer band.
+        // ----- Page footer: STORING NOTE strip + two signature boxes + page num -----
         var pageFooter = new PageFooterBand
         {
             Name = $"PageFooter{idx}",
-            Height = Units.Millimeters * 35f,
+            Height = Units.Millimeters * 60f,
         };
         page.PageFooter = pageFooter;
 
-        var closedFmt = data.Pull.ClosedAt.HasValue
-            ? $"Closed {data.Pull.ClosedAt.Value:yyyy-MM-dd HH:mm} UTC"
-            : "";
+        pageFooter.Objects.Add(MakeHRule($"FootRule0_{idx}", 0, 0, 180));
 
-        // PNG signature image sits ABOVE the AUTHORIZED BY divider rule;
-        // text-block flows below it. AddSignaturePicture preserved verbatim
-        // from v3.3 ship — call site only relocated.
+        // STORING NOTE
+        pageFooter.Objects.Add(MakeText($"StoreLabel{idx}", 0, 2, 180, 5,
+            "STORING NOTE", fontSize: 8f, bold: true));
+        var dateReceived = order.LastReceivedAt?.ToString("dd MMM yyyy HH:mm") ?? "—";
+        pageFooter.Objects.Add(MakeText($"StoreDateLabel{idx}", 0, 9, 30, 5,
+            "Date Received", fontSize: 8f, bold: true));
+        pageFooter.Objects.Add(MakeText($"StoreDateValue{idx}", 30, 9, 60, 5,
+            dateReceived, fontSize: 9f));
+        var dnPlusInv = string.IsNullOrWhiteSpace(order.InvoiceNo)
+            ? order.DeliveryNoteNo
+            : $"{order.DeliveryNoteNo}+{order.InvoiceNo}";
+        pageFooter.Objects.Add(MakeText($"StoreDnLabel{idx}", 95, 9, 40, 5,
+            "Delivery Note No + Inv", fontSize: 8f, bold: true));
+        pageFooter.Objects.Add(MakeText($"StoreDnValue{idx}", 135, 9, 45, 5,
+            dnPlusInv, fontSize: 9f));
+
+        pageFooter.Objects.Add(MakeHRule($"FootRule1_{idx}", 0, 18, 180));
+
+        // Two signature blocks: left = empty for manual delivery signing
+        // (Q7a), right = APPROVED FOR DELIVERY BY which carries the closer's
+        // electronic signature captured at pull-close time. The box outline
+        // frames the PNG; closer name + role + timestamp sit beneath it
+        // instead of the generic caption.
+        pageFooter.Objects.Add(MakeText($"SigDelLabel{idx}",   0, 20, 85, 5,
+            "DELIVERED BY", fontSize: 8f, bold: true));
+        pageFooter.Objects.Add(MakeText($"SigAppLabel{idx}",  95, 20, 85, 5,
+            "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
+        pageFooter.Objects.Add(MakeBox($"SigDelBox{idx}",  0, 26, 85, 22));
+        pageFooter.Objects.Add(MakeBox($"SigAppBox{idx}", 95, 26, 85, 22));
+
+        // PNG signature painted inside the APPROVED-BY box. Inline SVG and
+        // other dataURL flavors skip silently — the box still frames the
+        // closer-info caption beneath, so authorization is documented even
+        // when the visual mark can't be rasterized.
         var sigPng = DecodeSignaturePng(data.Pull.SignatureSvg);
         if (sigPng is not null)
         {
-            try { pageFooter.Objects.Add(MakeSignaturePicture($"AuthSig{idx}", 95, 0, 85, 8, sigPng)); }
-            catch (ArgumentException) { /* malformed PNG — fall back to text-only */ }
-            catch (OutOfMemoryException) { /* GDI+ throws this for invalid image streams */ }
+            try { pageFooter.Objects.Add(MakeSignaturePicture($"AuthSig{idx}", 97, 27, 81, 20, sigPng)); }
+            catch (ArgumentException) { /* malformed PNG — fall back to empty box */ }
+            catch (OutOfMemoryException) { /* GDI+ throws this for invalid streams */ }
         }
 
-        // Divider rules (top of text block on each side)
-        pageFooter.Objects.Add(MakeHRule($"RuleRcv{idx}",  0, 9,  85));
-        pageFooter.Objects.Add(MakeHRule($"RuleAuth{idx}", 95, 9, 85));
+        var closerCaption = string.IsNullOrWhiteSpace(data.Pull.ClosedByName)
+            ? "Name / Signature / Date"
+            : data.Pull.ClosedByName +
+              (string.IsNullOrWhiteSpace(data.Pull.ClosedByRole)
+                  ? ""
+                  : " · " + data.Pull.ClosedByRole.ToUpperInvariant()) +
+              (data.Pull.ClosedAt.HasValue
+                  ? " · " + data.Pull.ClosedAt.Value.ToString("dd MMM yyyy HH:mm") + " UTC"
+                  : "");
 
-        // LEFT: RECEIVED BY (physical signature happens on paper above the rule)
-        pageFooter.Objects.Add(MakeText($"RcvLabel{idx}",  0, 11, 85, 5,
-            "RECEIVED BY", fontSize: 8f, bold: true));
-        pageFooter.Objects.Add(MakeText($"RcvName{idx}",   0, 16, 85, 6,
-            data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        pageFooter.Objects.Add(MakeText($"RcvTime{idx}",   0, 22, 85, 5,
-            closedFmt, fontSize: 8f));
+        pageFooter.Objects.Add(MakeText($"SigDelCap{idx}",  0, 49, 85, 4,
+            "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
+        pageFooter.Objects.Add(MakeText($"SigAppCap{idx}", 95, 49, 85, 4,
+            closerCaption, fontSize: 7f, align: HorzAlign.Center));
 
-        // RIGHT: AUTHORIZED BY (closer of the pull — name + role + time)
-        pageFooter.Objects.Add(MakeText($"AuthLabel{idx}", 95, 11, 85, 5,
-            "AUTHORIZED BY", fontSize: 8f, bold: true));
-        pageFooter.Objects.Add(MakeText($"AuthName{idx}",  95, 16, 85, 6,
-            data.Pull.ClosedByName ?? "—", fontSize: 11f, bold: true));
-        pageFooter.Objects.Add(MakeText($"AuthRole{idx}",  95, 22, 85, 5,
-            string.IsNullOrEmpty(data.Pull.ClosedByRole) ? "" : data.Pull.ClosedByRole.ToUpperInvariant(),
-            fontSize: 8f));
-        pageFooter.Objects.Add(MakeText($"AuthTime{idx}",  95, 27, 85, 5,
-            closedFmt, fontSize: 8f));
+        // Page X of Y — FastReport system vars expand at render time
+        pageFooter.Objects.Add(MakeText($"PageNum{idx}", 130, 55, 50, 4,
+            "Page [Page#] of [TotalPages#]", fontSize: 7f, align: HorzAlign.Right));
     }
 
     /// <summary>Vendor display fallback chain: Name → Code → em-dash. Same as the HTML partial.</summary>
@@ -414,6 +509,53 @@ public class DeliveryOrderService : IDeliveryOrderService
     }
 
     /// <summary>
+    /// Empty rectangle for manual-signature collection (Q7a). Implemented
+    /// as a TextObject with all four borders so callers can stay in the
+    /// MakeText / MakeHRule mental model rather than reaching for ShapeObject.
+    /// </summary>
+    private static TextObject MakeBox(string name, float xMm, float yMm, float wMm, float hMm)
+    {
+        return new TextObject
+        {
+            Name = name,
+            Bounds = new RectangleF(
+                Units.Millimeters * xMm,
+                Units.Millimeters * yMm,
+                Units.Millimeters * wMm,
+                Units.Millimeters * hMm),
+            Text = "",
+            Border = { Lines = BorderLines.All, Width = 0.5f, Color = Color.Gray },
+        };
+    }
+
+    /// <summary>
+    /// Code128 BarcodeObject. SymbologyName drives the encoder lookup; Text
+    /// is the encoded value. ShowText draws the value beneath the bars.
+    /// Zoom 1.0 lets FastReport pick a default module width that fits the
+    /// bounding rect. The caller pairs this with a separate caption
+    /// TextObject (e.g. "P/O NO") above.
+    /// </summary>
+    private static BarcodeObject MakeBarcode(string name, float xMm, float yMm,
+                                             float wMm, float hMm, string value)
+    {
+        return new BarcodeObject
+        {
+            Name = name,
+            Bounds = new RectangleF(
+                Units.Millimeters * xMm,
+                Units.Millimeters * yMm,
+                Units.Millimeters * wMm,
+                Units.Millimeters * hMm),
+            SymbologyName = "Code128",
+            Text = value,
+            ShowText = true,
+            AutoSize = false,
+            Zoom = 1.0f,
+            HorzAlign = BarcodeObject.Alignment.Center,
+        };
+    }
+
+    /// <summary>
     /// Decodes a "data:image/png;base64,..." signature dataURL into raw PNG
     /// bytes. Returns null for null/empty input, inline SVG strings, other
     /// dataURL flavors, or malformed base64 — caller falls back to text-only.
@@ -437,9 +579,45 @@ public class DeliveryOrderService : IDeliveryOrderService
     /// </summary>
     private static PictureObject MakeSignaturePicture(string name, float xMm, float yMm,
                                                       float wMm, float hMm, byte[] pngBytes)
+        => BuildFlattenedPicture(name, xMm, yMm, wMm, hMm, pngBytes);
+
+    /// <summary>
+    /// PNG or JPEG data URL → raw bytes. SVG is skipped — System.Drawing
+    /// can't parse it; the HTML preview still renders SVG warehouse logos
+    /// fine, the PDF just falls back to a text-only header in that case.
+    /// </summary>
+    private static byte[]? DecodeLogoBytes(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        foreach (var prefix in new[] {
+            "data:image/png;base64,",
+            "data:image/jpeg;base64,",
+            "data:image/jpg;base64,",
+        })
+        {
+            if (raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                try { return Convert.FromBase64String(raw.Substring(prefix.Length)); }
+                catch (FormatException) { return null; }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Warehouse logo PictureObject — same flatten-onto-white trick as the
+    /// signature builder so transparent PNG pixels don't collapse to black
+    /// under PDFSimpleExport's JPEG page rasterization.
+    /// </summary>
+    private static PictureObject MakeLogoPicture(string name, float xMm, float yMm,
+                                                 float wMm, float hMm, byte[] imageBytes)
+        => BuildFlattenedPicture(name, xMm, yMm, wMm, hMm, imageBytes);
+
+    private static PictureObject BuildFlattenedPicture(string name, float xMm, float yMm,
+                                                       float wMm, float hMm, byte[] imageBytes)
     {
         Bitmap flat;
-        using (var ms = new MemoryStream(pngBytes))
+        using (var ms = new MemoryStream(imageBytes))
         using (var loaded = Image.FromStream(ms))
         {
             flat = new Bitmap(loaded.Width, loaded.Height,

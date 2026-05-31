@@ -1,161 +1,188 @@
 @model ReceivingOps.Web.Models.Dtos.DoReportData
 @*
-   Delivery Order HTML preview partial.
+   Delivery Order HTML preview — DSV-style Delivery Note layout.
 
-   Phase 14: one <article> per DoOrder, where a DoOrder is identified by
-   the triple (VendorCode × SubInventory × ToLocation). A pull may spawn
+   One <article> per DoOrder. DoOrder identity = the 4-tuple
+   (VendorCode × SubInventory × ToLocation × InvoiceNo). A pull may spawn
    multiple DOs when its receipts span multiple vendors, source sub-
-   inventories, or destination locations. Each line keeps its own
-   PoLineRef so the source purchase order is visible per row.
+   inventories, destination locations, or invoices.
 
-   Vendor fallback: VendorName, else VendorCode, else em-dash. Reference
-   number + From/To fall back the same way.
+   The page mirrors the FastReport PDF layout in DeliveryOrderService:
+   header strip with warehouse logo + DELIVERY NOTE + DN# (right),
+   address strip, 5-row info grid (P/O · PRS · order-type · drop-id ·
+   date  ||  vendor-id · vendor · from · to · invoice), 3 Code128
+   barcodes, items table, total qty, STORING NOTE strip, two empty
+   signature boxes for manual signing.
 
-   All colors via CSS variables so theme switches (light / midnight /
-   slate) reflow correctly without re-rendering.
+   Barcodes in the browser use jsbarcode (loaded by reports.css's host
+   page); the <svg data-barcode-text="..."> hooks are rendered then
+   filled by the page-level script.
+
+   All colors via CSS variables so theme switches reflow without re-render.
 *@
+@{
+    string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
+}
 @foreach (var order in Model.Orders)
 {
-    <article class="do-document">
-        <header class="do-header">
-            <div>
-                <div class="do-label">DELIVERY ORDER</div>
-                <div class="do-number">@(order.VendorName ?? order.VendorCode ?? "—")</div>
-                <div class="do-context">
-                    delivered against pull <b>@Model.Pull.PullNumber</b>
-                </div>
-            </div>
-            <div class="company-block">
-                <div class="company-name">@Model.Company.Name</div>
-                @if (!string.IsNullOrWhiteSpace(Model.Company.Address))
-                {
-                    <div class="company-address">@Model.Company.Address</div>
-                }
-                @if (!string.IsNullOrWhiteSpace(Model.Company.TaxId))
-                {
-                    <div class="company-tax">Tax ID: @Model.Company.TaxId</div>
-                }
+    var dateOfDelivery = Model.Pull.ClosedAt?.ToString("dd MMM yyyy") ?? "—";
+    var dateReceived   = order.LastReceivedAt?.ToString("dd MMM yyyy HH:mm") ?? "—";
+    var dnPlusInv = string.IsNullOrWhiteSpace(order.InvoiceNo)
+        ? order.DeliveryNoteNo
+        : $"{order.DeliveryNoteNo}+{order.InvoiceNo}";
+    var orderIdx = Model.Orders.IndexOf(order) + 1;
+    var sig = (Model.Pull.SignatureSvg ?? "").Trim();
+    var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
+    var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
+    var closedStr    = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
+    var roleStr      = string.IsNullOrWhiteSpace(Model.Pull.ClosedByRole)
+        ? ""
+        : " · " + Model.Pull.ClosedByRole!.ToUpperInvariant();
+    var approverCaption = string.IsNullOrWhiteSpace(Model.Pull.ClosedByName)
+        ? "Name / Signature / Date"
+        : $"{Model.Pull.ClosedByName}{roleStr} · {closedStr}";
+
+    <article class="dsv-do">
+        <header class="dsv-top">
+            @if (!string.IsNullOrWhiteSpace(Model.Pull.WarehouseLogoDataUrl))
+            {
+                <img class="dsv-logo" src="@Model.Pull.WarehouseLogoDataUrl" alt="@(Model.Pull.WarehouseCode) logo" />
+            }
+            else
+            {
+                <div class="dsv-logo dsv-logo-fallback">@Model.Pull.WarehouseCode</div>
+            }
+            <div class="dsv-title">DELIVERY NOTE</div>
+            <div class="dsv-dn">
+                <div class="dsv-dn-label">Delivery Note No.</div>
+                <div class="dsv-dn-value">@order.DeliveryNoteNo</div>
+                <div class="dsv-dn-sub">DO @orderIdx of @Model.Orders.Count</div>
             </div>
         </header>
 
-        <section class="do-metadata">
-            <dl>
-                <dt>Vendor</dt>
-                <dd>
-                    <div class="vendor-name">
-                        @(order.VendorName ?? order.VendorCode ?? "—")
-                    </div>
-                    @if (!string.IsNullOrWhiteSpace(order.VendorCode) && !string.IsNullOrWhiteSpace(order.VendorName))
-                    {
-                        <div class="vendor-code">@order.VendorCode</div>
-                    }
-                </dd>
-
-                <dt>From sub-inventory</dt>
-                <dd>@(string.IsNullOrWhiteSpace(order.SubInventory) ? "—" : order.SubInventory)</dd>
-
-                <dt>To location</dt>
-                <dd>@(string.IsNullOrWhiteSpace(order.ToLocation) ? "—" : order.ToLocation)</dd>
-
-                <dt>Reference</dt>
-                <dd>@(string.IsNullOrWhiteSpace(Model.Pull.ReferenceNumber) ? "—" : Model.Pull.ReferenceNumber)</dd>
-
-                <dt>Warehouse</dt>
-                <dd>@Model.Pull.WarehouseCode · @Model.Pull.WarehouseName</dd>
-
-                @if (Model.Pull.ClosedAt.HasValue)
+        <section class="dsv-address-strip">
+            <div class="dsv-warehouse">
+                <div class="dsv-wh-codename">@Model.Pull.WarehouseCode · @Model.Pull.WarehouseName</div>
+                @if (!string.IsNullOrWhiteSpace(Model.Pull.WarehouseAddress))
                 {
-                    <dt>Closed</dt>
-                    <dd>@Model.Pull.ClosedAt.Value.ToString("dd MMM yyyy · HH:mm") UTC</dd>
+                    <div class="dsv-wh-address">@Model.Pull.WarehouseAddress</div>
                 }
+            </div>
+            <div class="dsv-deliver-to">
+                <div class="dsv-block-label">DELIVERY TO</div>
+                <div class="dsv-block-value">@(string.IsNullOrWhiteSpace(Model.Pull.WarehouseAddress) ? Model.Pull.WarehouseName : Model.Pull.WarehouseAddress)</div>
+            </div>
+        </section>
+
+        <section class="dsv-info-grid">
+            <dl class="dsv-info-col">
+                <dt>P/O NO</dt>           <dd>@Dash(order.HeaderPoNumber)</dd>
+                <dt>PRS NO</dt>           <dd>@Model.Pull.PullNumber</dd>
+                <dt>ORDER TYPE</dt>       <dd>—</dd>
+                <dt>DROP ID</dt>          <dd>—</dd>
+                <dt>DATE OF DELIVERY</dt> <dd>@dateOfDelivery</dd>
+            </dl>
+            <dl class="dsv-info-col">
+                <dt>VENDOR ID</dt>      <dd>@Dash(order.VendorCode)</dd>
+                <dt>VENDOR</dt>         <dd>@Dash(order.VendorName ?? order.VendorCode)</dd>
+                <dt>FROM</dt>           <dd>@Dash(order.SubInventory)</dd>
+                <dt>TO</dt>             <dd>@Dash(order.ToLocation)</dd>
+                <dt>VENDOR INVOICE</dt> <dd>@Dash(order.InvoiceNo)</dd>
             </dl>
         </section>
 
-        <section class="do-lines">
+        @* Browser preview shows the values destined for the PDF's three
+           Code128 barcodes (P/O NO, PRS NO, Delivery Note). Rendering the
+           actual barcode SVGs in HTML is out of scope; the PDF carries the
+           real bars. *@
+        <section class="dsv-barcodes">
+            @if (!string.IsNullOrWhiteSpace(order.HeaderPoNumber))
+            {
+                <div class="dsv-barcode">
+                    <div class="dsv-barcode-caption">P/O NO</div>
+                    <div class="dsv-barcode-placeholder mono">@order.HeaderPoNumber</div>
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(Model.Pull.PullNumber))
+            {
+                <div class="dsv-barcode">
+                    <div class="dsv-barcode-caption">PRS NO</div>
+                    <div class="dsv-barcode-placeholder mono">@Model.Pull.PullNumber</div>
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(order.DeliveryNoteNo))
+            {
+                <div class="dsv-barcode">
+                    <div class="dsv-barcode-caption">DELIVERY NOTE</div>
+                    <div class="dsv-barcode-placeholder mono">@order.DeliveryNoteNo</div>
+                </div>
+            }
+        </section>
+
+        <section class="dsv-lines">
             <table>
                 <thead>
                     <tr>
-                        <th>Item</th>
-                        <th>Description</th>
-                        <th>PO · Line</th>
-                        <th class="num">Qty</th>
+                        <th class="col-part">PART NUMBER</th>
+                        <th class="col-desc">DESCRIPTION</th>
+                        <th class="col-pallet">PALLET</th>
+                        <th class="col-kanban">KANBAN</th>
+                        <th class="col-asn">ASN</th>
+                        <th class="col-round">ROUND</th>
+                        <th class="col-qty num">QTY</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var line in order.Lines)
                     {
-                        <tr class="do-line-primary">
+                        <tr>
                             <td class="mono">@line.ItemCode</td>
                             <td>@line.Description</td>
-                            <td class="mono">@line.PoLineRef</td>
-                            <td class="num">@line.TotalQty.ToString("N0")</td>
-                        </tr>
-                        <tr class="do-line-detail">
-                            <td colspan="4">
-                                <div class="do-detail-grid">
-                                    <span><label>Pallet</label> @(line.PalletId ?? "—")</span>
-                                    <span><label>Order ID</label> @(line.OrderId ?? "—")</span>
-                                    <span><label>Invoice</label> @(line.InvoiceNo ?? "—")</span>
-                                    <span><label>Kanban</label> @(line.KanbanNo ?? "—")</span>
-                                    <span><label>Sub-Inv</label> @(line.SubInventory ?? "—")</span>
-                                    <span><label>To-Loc</label> @(line.ToLocation ?? "—")</span>
-                                    <span><label>ASN</label> @(line.AsnNo ?? "—")</span>
-                                    <span><label>Round</label> @(line.OrderRound ?? "—")</span>
-                                </div>
-                            </td>
+                            <td class="mono">@Dash(line.PalletId)</td>
+                            <td class="mono">@Dash(line.KanbanNo)</td>
+                            <td class="mono">@Dash(line.AsnNo)</td>
+                            <td class="mono">@Dash(line.OrderRound)</td>
+                            <td class="num"><b>@line.TotalQty.ToString("N0")</b></td>
                         </tr>
                     }
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="3">Total delivered</td>
-                        <td class="num"><b>@order.TotalQty.ToString("N0") pcs</b></td>
+                        <td colspan="6" class="dsv-total-label">TOTAL QTY</td>
+                        <td class="num dsv-total-value">@order.TotalQty.ToString("N0")</td>
                     </tr>
                 </tfoot>
             </table>
         </section>
 
-        @{
-            var sig = (Model.Pull.SignatureSvg ?? "").Trim();
-            var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
-            var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
-            var closedStr    = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
-        }
-        <footer class="do-footer">
-            <div class="sig-block sig-block-text-only">
-                @* Invisible spacer matches the right block's signature-image
-                   height so both dividers land on the same Y. *@
-                <div class="signature-spacer"></div>
-                <div class="sig-divider"></div>
-                <div class="sig-label">RECEIVED BY</div>
-                <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
-                @if (Model.Pull.ClosedAt.HasValue)
-                {
-                    <div class="sig-date">@closedStr</div>
-                }
-            </div>
-            <div class="sig-block sig-block-with-image">
-                <div class="signature-image">
-                    @if (hasInlineSvg)
-                    {
-                        @Html.Raw(sig)
-                    }
-                    else if (hasDataUrl)
-                    {
-                        <img src="@sig" alt="Supervisor signature" />
-                    }
+        <footer class="dsv-footer">
+            <div class="dsv-storing-note">
+                <div class="dsv-storing-title">STORING NOTE</div>
+                <div class="dsv-storing-grid">
+                    <div><label>Date Received</label><span>@dateReceived</span></div>
+                    <div><label>Delivery Note No + Inv</label><span class="mono">@dnPlusInv</span></div>
                 </div>
-                <div class="sig-divider"></div>
-                <div class="sig-label">AUTHORIZED BY</div>
-                <div class="sig-name">@(Model.Pull.ClosedByName ?? "—")</div>
-                @if (!string.IsNullOrEmpty(Model.Pull.ClosedByRole))
-                {
-                    <div class="sig-role">@Model.Pull.ClosedByRole.ToUpperInvariant()</div>
-                }
-                @if (Model.Pull.ClosedAt.HasValue)
-                {
-                    <div class="sig-date">@closedStr</div>
-                }
+            </div>
+            <div class="dsv-sig-row">
+                <div class="dsv-sig-block">
+                    <div class="dsv-sig-label">DELIVERED BY</div>
+                    <div class="dsv-sig-box"></div>
+                    <div class="dsv-sig-caption">Name / Signature / Date</div>
+                </div>
+                <div class="dsv-sig-block">
+                    <div class="dsv-sig-label">APPROVED FOR DELIVERY BY</div>
+                    <div class="dsv-sig-box dsv-sig-box-filled">
+                        @if (hasInlineSvg)
+                        {
+                            @Html.Raw(sig)
+                        }
+                        else if (hasDataUrl)
+                        {
+                            <img src="@sig" alt="Authorizing signature" />
+                        }
+                    </div>
+                    <div class="dsv-sig-caption">@approverCaption</div>
+                </div>
             </div>
         </footer>
     </article>

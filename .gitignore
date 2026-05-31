@@ -40,6 +40,9 @@ secrets.json
 # up out-of-band alongside the DB.
 .dp-keys/
 src/ReceivingOps.Web/.dp-keys/
+# Phase-cutover key snapshots — same secrets as .dp-keys/, never commit.
+.dp-keys-backup*/
+src/ReceivingOps.Web/.dp-keys-backup*/
 
 # OS
 .DS_Store

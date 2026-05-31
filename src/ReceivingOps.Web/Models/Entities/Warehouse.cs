@@ -15,4 +15,10 @@ public class Warehouse
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+    /// <summary>
+    /// Per-warehouse logo as a data URL ("data:image/png;base64,...").
+    /// Rendered in the Delivery Order header; null = fall back to the
+    /// global CompanyInfo logo.
+    /// </summary>
+    public string? LogoDataUrl { get; set; }
 }

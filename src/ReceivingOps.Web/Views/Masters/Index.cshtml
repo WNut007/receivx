@@ -383,6 +383,22 @@
               </label>
             </div>
           </div>
+          <div class="form-field full" id="ff-w-logo">
+            <label for="w-logo-file">Logo (optional)</label>
+            <div class="warehouse-logo-row">
+              <div class="warehouse-logo-preview-wrap" id="w-logo-preview-wrap" hidden>
+                <img id="w-logo-preview" alt="Warehouse logo preview" />
+                <button type="button" class="btn btn-sm" id="btn-w-logo-clear" title="Remove logo">
+                  <i class="bi bi-x-lg"></i> Remove
+                </button>
+              </div>
+              <input type="file" class="form-control" id="w-logo-file"
+                     accept="image/png,image/jpeg,image/svg+xml" />
+            </div>
+            <input type="hidden" id="w-logo-data-url" />
+            <div class="form-help">PNG / JPG / SVG, up to ~200 KB. Shown on the Delivery Order header.</div>
+            <div class="form-error" id="err-w-logo"></div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">

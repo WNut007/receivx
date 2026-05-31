@@ -72,6 +72,7 @@ function normalizeWarehouse(w) {
     phone: w.phone || '',
     active: !!w.isActive,
     createdAt: w.createdAt,
+    logoDataUrl: w.logoDataUrl || null,
   };
 }
 function normalizeAudit(a) {
@@ -544,6 +545,11 @@ function openWarehouseModal(whId) {
   document.getElementById('w-phone').value = w ? w.phone : '';
   document.getElementById('w-active').checked = w ? w.active : true;
 
+  // Logo: hidden field carries the data URL into save; preview img + remove button reveal it.
+  setWarehouseLogo(w && w.logoDataUrl ? w.logoDataUrl : null);
+  document.getElementById('w-logo-file').value = '';
+  document.getElementById('err-w-logo').textContent = '';
+
   // Manager dropdown: only active users
   const mgrSel = document.getElementById('w-manager');
   mgrSel.innerHTML = `<option value="">— None —</option>` +
@@ -595,7 +601,8 @@ async function saveWarehouse() {
   const phone     = document.getElementById('w-phone').value.trim();
   const active    = document.getElementById('w-active').checked;
 
-  const payload = { name, city, country, address, capacity, timezone, managerId, phone, isActive: active };
+  const logoDataUrl = document.getElementById('w-logo-data-url').value || null;
+  const payload = { name, city, country, address, capacity, timezone, managerId, phone, isActive: active, logoDataUrl };
 
   try {
     if (editingId) {
@@ -620,6 +627,47 @@ async function saveWarehouse() {
   } catch (e) {
     showToast(e.message || 'Save failed', '', 'danger');
   }
+}
+
+// ~280 KB cap mirrors MaxLogoDataUrlLength in MastersService.ValidateLogo —
+// ~200 KB raw image plus base64 expansion + data-URL prefix.
+const MAX_LOGO_DATA_URL_LEN = 280_000;
+
+function setWarehouseLogo(dataUrl) {
+  document.getElementById('w-logo-data-url').value = dataUrl || '';
+  const preview = document.getElementById('w-logo-preview');
+  const wrap    = document.getElementById('w-logo-preview-wrap');
+  if (dataUrl) {
+    preview.src = dataUrl;
+    wrap.hidden = false;
+  } else {
+    preview.removeAttribute('src');
+    wrap.hidden = true;
+  }
+}
+
+function onWarehouseLogoFileChosen(ev) {
+  const errEl = document.getElementById('err-w-logo');
+  errEl.textContent = '';
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|svg\+xml)$/i.test(file.type)) {
+    errEl.textContent = 'Use a PNG, JPG, or SVG image.';
+    ev.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const url = String(reader.result || '');
+    if (url.length > MAX_LOGO_DATA_URL_LEN) {
+      errEl.textContent = 'Logo is too large (max ~200 KB encoded). Resize and try again.';
+      ev.target.value = '';
+      return;
+    }
+    setWarehouseLogo(url);
+  };
+  reader.onerror = () => { errEl.textContent = 'Could not read the file.'; };
+  reader.readAsDataURL(file);
 }
 
 function deleteWarehouse(id) {
@@ -784,6 +832,8 @@ document.getElementById('search-warehouses').addEventListener('input', renderWar
 document.getElementById('filter-warehouses-status').addEventListener('change', renderWarehouses);
 document.getElementById('btn-new-warehouse').addEventListener('click', () => openWarehouseModal(null));
 document.getElementById('btn-save-warehouse').addEventListener('click', saveWarehouse);
+document.getElementById('w-logo-file').addEventListener('change', onWarehouseLogoFileChosen);
+document.getElementById('btn-w-logo-clear').addEventListener('click', () => setWarehouseLogo(null));
 
 // Audit toolbar — server-side search on Enter / blur; instant local filter on input
 let _auditDebounce;

@@ -17,6 +17,11 @@ public class WarehouseListRow
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public int UserCount { get; set; }
+    /// <summary>
+    /// Data URL ("data:image/png;base64,...") for the per-warehouse logo
+    /// rendered on the Delivery Order header. Null when no logo is set.
+    /// </summary>
+    public string? LogoDataUrl { get; set; }
 }
 
 public class WarehouseCreateRequest
@@ -31,6 +36,7 @@ public class WarehouseCreateRequest
     public Guid? ManagerId { get; set; }
     public string? Phone { get; set; }
     public bool IsActive { get; set; } = true;
+    public string? LogoDataUrl { get; set; }
 }
 
 public class WarehouseUpdateRequest
@@ -44,4 +50,5 @@ public class WarehouseUpdateRequest
     public Guid? ManagerId { get; set; }
     public string? Phone { get; set; }
     public bool IsActive { get; set; } = true;
+    public string? LogoDataUrl { get; set; }
 }

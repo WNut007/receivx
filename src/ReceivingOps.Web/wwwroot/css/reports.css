@@ -309,6 +309,13 @@
   .company-name { font-weight: 600; color: var(--text); font-size: 13px; margin-bottom: 2px; }
   .company-address { color: var(--text-dim); white-space: pre-line; }
   .company-tax { color: var(--text-muted); font-family: 'Roboto Mono', monospace; font-size: 10px; }
+  .company-block .warehouse-logo {
+    max-height: 48px;
+    max-width: 160px;
+    object-fit: contain;
+    display: inline-block;
+    margin-bottom: 6px;
+  }
 
   .do-metadata { margin-bottom: 18px; }
   .do-metadata dl {
@@ -468,4 +475,252 @@
     }
     .do-document:last-child { page-break-after: auto; }
     .do-footer { margin-top: auto; }
+  }
+
+  /* ============================================================
+     DSV-style Delivery Note (Phase: post-v3.4.1 dsv-redesign).
+     Mirrors DeliveryOrderService PDF layout. Class names are
+     dsv-* prefixed so the legacy .do-* surface above can stay
+     intact for other reports that might reuse it.
+     ============================================================ */
+
+  .dsv-do {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .dsv-do:last-child { margin-bottom: 0; }
+
+  /* Top strip: logo · DELIVERY NOTE · DN# */
+  .dsv-top {
+    display: grid;
+    grid-template-columns: 160px 1fr 180px;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dsv-logo {
+    max-height: 48px;
+    max-width: 140px;
+    object-fit: contain;
+    display: block;
+  }
+  .dsv-logo-fallback {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 14px; font-weight: 700;
+    color: var(--text-dim);
+    border: 1px dashed var(--border);
+    padding: 8px 12px;
+    text-align: center;
+    border-radius: 4px;
+  }
+  .dsv-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: center;
+  }
+  .dsv-dn { text-align: right; }
+  .dsv-dn-label {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .dsv-dn-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 16px; font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .dsv-dn-sub {
+    font-size: 9px;
+    color: var(--text-muted);
+  }
+
+  /* Address strip */
+  .dsv-address-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    padding: 10px 0 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dsv-wh-codename {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .dsv-wh-address { color: var(--text-dim); }
+  .dsv-block-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+  }
+  .dsv-block-value { color: var(--text); }
+
+  /* Info grid: 2 columns of label/value pairs */
+  .dsv-info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .dsv-info-col {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    row-gap: 4px; column-gap: 8px;
+    margin: 0;
+  }
+  .dsv-info-col dt {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    align-self: center;
+  }
+  .dsv-info-col dd {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  /* Barcodes row */
+  .dsv-barcodes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .dsv-barcode { text-align: center; }
+  .dsv-barcode-caption {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .dsv-barcode-placeholder {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 14px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+
+  /* Items table */
+  .dsv-lines { padding: 12px 0; }
+  .dsv-lines table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .dsv-lines th {
+    text-align: left;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 6px 6px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .dsv-lines th.num { text-align: right; }
+  .dsv-lines td {
+    padding: 6px 6px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .dsv-lines td.num { text-align: right; }
+  .dsv-lines .mono { font-family: 'Roboto Mono', monospace; }
+  .dsv-lines tfoot td {
+    border-top: 2px solid var(--text);
+    border-bottom: 0;
+    padding-top: 8px;
+    font-weight: 700;
+  }
+  .dsv-total-label { text-align: right; letter-spacing: 0.08em; }
+  .dsv-total-value { font-size: 14px; }
+
+  /* STORING NOTE + signature footer */
+  .dsv-footer {
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .dsv-storing-note { margin-bottom: 14px; }
+  .dsv-storing-title {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .dsv-storing-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .dsv-storing-grid label {
+    display: block;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+  }
+  .dsv-storing-grid span { font-size: 12px; }
+
+  .dsv-sig-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    padding-top: 4px;
+  }
+  .dsv-sig-block { display: flex; flex-direction: column; }
+  .dsv-sig-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .dsv-sig-box {
+    height: 72px;
+    border: 1px solid var(--text-dim);
+    border-radius: 4px;
+    background: var(--surface-2);
+  }
+  .dsv-sig-box-filled {
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+  }
+  .dsv-sig-box-filled svg,
+  .dsv-sig-box-filled img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .dsv-sig-caption {
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-align: center;
   }

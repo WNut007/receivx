@@ -250,6 +250,7 @@ public class MastersService : IMastersService
     public async Task<Guid> CreateWarehouseAsync(WarehouseCreateRequest req, CancellationToken ct = default)
     {
         ValidateWarehouse(req.Code, req.Name, req.Capacity, req.Timezone);
+        ValidateLogo(req.LogoDataUrl);
 
         using var conn = _factory.Create();
         conn.Open();
@@ -263,9 +264,9 @@ public class MastersService : IMastersService
                 throw new BusinessException($"Warehouse code '{req.Code}' is already taken");
 
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
-                INSERT INTO dbo.Warehouses (Id, Code, Name, City, Country, Address, Capacity, Timezone, ManagerId, Phone, IsActive, CreatedAt)
+                INSERT INTO dbo.Warehouses (Id, Code, Name, City, Country, Address, Capacity, Timezone, ManagerId, Phone, IsActive, CreatedAt, LogoDataUrl)
                 OUTPUT INSERTED.Id
-                VALUES (NEWID(), @Code, @Name, @City, @Country, @Address, @Capacity, @Timezone, @ManagerId, @Phone, @IsActive, SYSUTCDATETIME());",
+                VALUES (NEWID(), @Code, @Name, @City, @Country, @Address, @Capacity, @Timezone, @ManagerId, @Phone, @IsActive, SYSUTCDATETIME(), @LogoDataUrl);",
                 new
                 {
                     req.Code,
@@ -277,7 +278,8 @@ public class MastersService : IMastersService
                     req.Timezone,
                     req.ManagerId,
                     req.Phone,
-                    req.IsActive
+                    req.IsActive,
+                    req.LogoDataUrl
                 }, transaction: tx, cancellationToken: ct));
 
             await _audit.WriteAsync(conn, tx, "create", "Warehouse", newId.ToString(),
@@ -303,6 +305,7 @@ public class MastersService : IMastersService
         // Code is immutable on update (matches the mockup UI which displays Code as read-only post-create).
         if (string.IsNullOrWhiteSpace(req.Name) || req.Name.Length > 120)
             throw new BusinessException("Warehouse name is required (≤ 120 chars)");
+        ValidateLogo(req.LogoDataUrl);
 
         using var conn = _factory.Create();
         conn.Open();
@@ -316,16 +319,17 @@ public class MastersService : IMastersService
 
             var affected = await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.Warehouses
-                   SET Name      = @Name,
-                       City      = @City,
-                       Country   = @Country,
-                       Address   = @Address,
-                       Capacity  = @Capacity,
-                       Timezone  = @Timezone,
-                       ManagerId = @ManagerId,
-                       Phone     = @Phone,
-                       IsActive  = @IsActive,
-                       UpdatedAt = SYSUTCDATETIME()
+                   SET Name        = @Name,
+                       City        = @City,
+                       Country     = @Country,
+                       Address     = @Address,
+                       Capacity    = @Capacity,
+                       Timezone    = @Timezone,
+                       ManagerId   = @ManagerId,
+                       Phone       = @Phone,
+                       IsActive    = @IsActive,
+                       LogoDataUrl = @LogoDataUrl,
+                       UpdatedAt   = SYSUTCDATETIME()
                  WHERE Id = @Id;",
                 new
                 {
@@ -338,7 +342,8 @@ public class MastersService : IMastersService
                     req.Timezone,
                     req.ManagerId,
                     req.Phone,
-                    req.IsActive
+                    req.IsActive,
+                    req.LogoDataUrl
                 }, transaction: tx, cancellationToken: ct));
 
             if (affected == 0)
@@ -445,6 +450,25 @@ public class MastersService : IMastersService
             throw new BusinessException("Capacity cannot be negative");
         if (string.IsNullOrWhiteSpace(timezone) || timezone.Length > 64)
             throw new BusinessException("Timezone is required");
+    }
+
+    // ~280 KB is a comfortable upper bound for a base64-encoded ~200 KB
+    // image plus the data:image/...;base64, prefix. Anything larger almost
+    // certainly means an unoptimized source bitmap rather than a real logo,
+    // and bloats every read of the row.
+    private const int MaxLogoDataUrlLength = 280_000;
+
+    private static void ValidateLogo(string? logoDataUrl)
+    {
+        if (string.IsNullOrEmpty(logoDataUrl)) return;
+        if (logoDataUrl.Length > MaxLogoDataUrlLength)
+            throw new BusinessException(
+                $"Logo is too large (max ~200 KB encoded). Resize the image and try again.");
+        if (!logoDataUrl.StartsWith("data:image/png;base64,",  StringComparison.OrdinalIgnoreCase) &&
+            !logoDataUrl.StartsWith("data:image/jpeg;base64,", StringComparison.OrdinalIgnoreCase) &&
+            !logoDataUrl.StartsWith("data:image/jpg;base64,",  StringComparison.OrdinalIgnoreCase) &&
+            !logoDataUrl.StartsWith("data:image/svg+xml;base64,", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessException("Logo must be a PNG, JPG, or SVG data URL.");
     }
 
     private Guid CurrentUserId()

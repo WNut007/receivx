@@ -702,11 +702,33 @@
     color: var(--text-dim);
   }
 
+  .warehouse-logo-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .warehouse-logo-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+  }
+  .warehouse-logo-preview-wrap img {
+    max-height: 48px;
+    max-width: 120px;
+    object-fit: contain;
+    display: block;
+  }
+
   @media (max-width: 720px) {
     .stats-strip { grid-template-columns: repeat(2, 1fr); }
     .form-grid { grid-template-columns: 1fr; }
     .search-input input { width: 100%; }
     .audit-row { grid-template-columns: 1fr auto; gap: 8px; }
     .audit-row .audit-time, .audit-row .audit-actor { grid-column: 1 / -1; }
+    .warehouse-logo-row { flex-direction: column; }
   }
 
