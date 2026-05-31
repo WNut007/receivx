@@ -111,9 +111,14 @@ public static class DeliveryOrderTemplateBuilder
             Height = Units.Millimeters * 102f,
         };
 
-        // ----- (1) Top strip: [logo area] · DELIVERY NOTE title · DN# -----
-        // Logo PictureObject deferred to Stage 6 — 0..35mm × 14mm left of
-        // the title is left empty so Stage 6 can drop a PictureObject in.
+        // ----- (1) Top strip: warehouse logo · DELIVERY NOTE title · DN# -----
+        // Stage 6: PictureObject bound to Orders.WarehouseLogoBytes (PNG
+        // pre-flattened onto a white 24bpp canvas server-side — see
+        // DoReportDataSetBuilder.DecodeAndFlattenImage). Zoom SizeMode keeps
+        // logos with mixed aspect ratios inside the 35×14mm slot without
+        // distortion; null logos collapse to a blank space.
+        master.Objects.Add(MakeDataPicture("WhLogo", 0, 0, 35, 14,
+            DoReportDataSetBuilder.OrdersTableName + ".WarehouseLogoBytes"));
         master.Objects.Add(MakeText("DnTitle", 50, 2, 80, 9,
             "DELIVERY NOTE", fontSize: 18f, bold: true, align: HorzAlign.Center));
         master.Objects.Add(MakeText("DnNoLabel", 130, 1, 50, 4,
@@ -291,14 +296,20 @@ public static class DeliveryOrderTemplateBuilder
         footer.Objects.Add(MakeHRule("FootRule1", 0, 18, 180));
 
         // Two signature boxes — left is manual fill on paper, right is
-        // APPROVED FOR DELIVERY BY and will receive the PNG signature
-        // PictureObject in Stage 6. Caption beneath is text-only here.
+        // APPROVED FOR DELIVERY BY with the closer's PNG signature mark
+        // bound via Orders.SignatureBytes (Stage 6). The signature picture
+        // is inset 2mm from the SigAppBox border so the gray frame stays
+        // visible around the mark. Inline-SVG and other non-decodable
+        // values fall through to DBNull and the picture renders blank,
+        // leaving the box framed for manual signing.
         footer.Objects.Add(MakeText("SigDelLabel",  0, 20, 85, 5,
             "DELIVERED BY", fontSize: 8f, bold: true));
         footer.Objects.Add(MakeText("SigAppLabel", 95, 20, 85, 5,
             "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
         footer.Objects.Add(MakeBox("SigDelBox",  0, 26, 85, 22));
         footer.Objects.Add(MakeBox("SigAppBox", 95, 26, 85, 22));
+        footer.Objects.Add(MakeDataPicture("AuthSig", 97, 27, 81, 20,
+            DoReportDataSetBuilder.OrdersTableName + ".SignatureBytes"));
         footer.Objects.Add(MakeText("SigDelCap",  0, 49, 85, 4,
             "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
         footer.Objects.Add(MakeText("SigAppCap", 95, 49, 85, 4,
@@ -386,6 +397,34 @@ public static class DeliveryOrderTemplateBuilder
             AutoSize = false,
             Zoom = 1.0f,
             HorzAlign = BarcodeObject.Alignment.Center,
+        };
+    }
+
+    /// <summary>
+    /// Stage 6 — PictureObject bound to a DataSet column carrying raw image
+    /// bytes (see DoReportDataSetBuilder.DecodeAndFlattenImage). DataColumn
+    /// reference form is "Table.Column"; FastReport pulls bytes at render
+    /// time per current data band row.
+    ///
+    /// SizeMode=Zoom scales the image to fit the bounds while preserving
+    /// aspect ratio. PictureBoxSizeMode lives under System.Windows.Forms
+    /// in FastReport.OpenSource via FastReport.Compat — qualifying the
+    /// enum reference dodges a missing-namespace error if a future SDK
+    /// change shuffles the shim.
+    /// </summary>
+    private static PictureObject MakeDataPicture(string name, float xMm, float yMm,
+                                                 float wMm, float hMm, string dataColumn)
+    {
+        return new PictureObject
+        {
+            Name = name,
+            Bounds = new RectangleF(
+                Units.Millimeters * xMm,
+                Units.Millimeters * yMm,
+                Units.Millimeters * wMm,
+                Units.Millimeters * hMm),
+            SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom,
+            DataColumn = dataColumn,
         };
     }
 }

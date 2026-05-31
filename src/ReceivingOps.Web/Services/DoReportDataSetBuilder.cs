@@ -1,4 +1,7 @@
 using System.Data;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Services;
@@ -98,6 +101,14 @@ public static class DoReportDataSetBuilder
         t.Columns.Add("ClosedByRole",         typeof(string));
         t.Columns.Add("SignatureSvg",         typeof(string));
 
+        // Stage 6 — pre-decoded image bytes for PictureObject.DataColumn
+        // binding. The string data-URL columns (WarehouseLogoDataUrl,
+        // SignatureSvg) stay alongside so the HTML preview path can keep
+        // rendering data URLs directly; the byte[] columns serve the PDF
+        // pipeline which can't decode the URL form natively.
+        t.Columns.Add("WarehouseLogoBytes",   typeof(byte[]));
+        t.Columns.Add("SignatureBytes",       typeof(byte[]));
+
         foreach (DataColumn c in t.Columns)
             c.AllowDBNull = true;
 
@@ -166,6 +177,8 @@ public static class DoReportDataSetBuilder
         row["ClosedByName"]         = NullIfEmpty(pull.ClosedByName);
         row["ClosedByRole"]         = NullIfEmpty(pull.ClosedByRole);
         row["SignatureSvg"]         = NullIfEmpty(pull.SignatureSvg);
+        row["WarehouseLogoBytes"]   = (object?)DecodeAndFlattenImage(pull.WarehouseLogoDataUrl) ?? DBNull.Value;
+        row["SignatureBytes"]       = (object?)DecodeAndFlattenImage(pull.SignatureSvg)         ?? DBNull.Value;
 
         orders.Rows.Add(row);
     }
@@ -197,4 +210,62 @@ public static class DoReportDataSetBuilder
 
     private static object NullableDate(DateTime? d) =>
         d.HasValue ? d.Value : DBNull.Value;
+
+    /// <summary>
+    /// Decodes a "data:image/png;base64,..." or "data:image/jpeg;base64,..."
+    /// URL into raw image bytes, then flattens onto a 24bpp white canvas
+    /// and re-encodes as PNG. Two reasons:
+    /// (1) PDFSimpleExport rasterizes each page as a JPEG, which has no
+    ///     alpha channel — transparent PNG pixels collapse to BLACK in the
+    ///     export pipeline. Server-side flatten onto white avoids that.
+    /// (2) Storing the canvas bytes in the DataSet lets PictureObject.
+    ///     DataColumn pull image bytes directly at render time, no per-
+    ///     request decode in the template builder.
+    /// Returns null for null/empty input, inline SVG (System.Drawing can't
+    /// parse SVG), other URL flavors, or any decode/GDI+ failure — the
+    /// caller writes DBNull and the bound PictureObject silently renders
+    /// nothing.
+    /// </summary>
+    private static byte[]? DecodeAndFlattenImage(string? dataUrl)
+    {
+        if (string.IsNullOrWhiteSpace(dataUrl)) return null;
+
+        string[] prefixes =
+        {
+            "data:image/png;base64,",
+            "data:image/jpeg;base64,",
+            "data:image/jpg;base64,",
+        };
+        string? base64 = null;
+        foreach (var prefix in prefixes)
+        {
+            if (dataUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                base64 = dataUrl.Substring(prefix.Length);
+                break;
+            }
+        }
+        if (base64 is null) return null;
+
+        byte[] raw;
+        try { raw = Convert.FromBase64String(base64); }
+        catch (FormatException) { return null; }
+
+        try
+        {
+            using var ms = new MemoryStream(raw);
+            using var loaded = Image.FromStream(ms);
+            using var flat = new Bitmap(loaded.Width, loaded.Height, PixelFormat.Format24bppRgb);
+            using (var g = Graphics.FromImage(flat))
+            {
+                g.Clear(Color.White);
+                g.DrawImage(loaded, 0, 0, loaded.Width, loaded.Height);
+            }
+            using var outMs = new MemoryStream();
+            flat.Save(outMs, ImageFormat.Png);
+            return outMs.ToArray();
+        }
+        catch (ArgumentException) { return null; }
+        catch (OutOfMemoryException) { return null; }
+    }
 }
