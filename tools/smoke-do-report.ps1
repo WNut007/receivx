@@ -278,11 +278,16 @@ if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }
 # Size floor: PDFSimpleExport rasterizes each page to a JPEG, so even a
 # sparse DO clears ~50KB. With the PageFooterBand carrying a PNG signature
 # image (PictureObject flattened onto a white 24bpp canvas before embed),
-# the size lands well over 100KB. If this drops below 100KB the most
+# the size lands well over 100KB. If this drops below the floor, the most
 # likely cause is the PageFooterBand failing to emit — exactly the
 # silent-regression scenario the v3.3 → v3.4 retry was hardening against.
-if ($pdf.RawContentLength -lt 100000) {
-    Fail "PDF $($pdf.RawContentLength) bytes < 100KB — PageFooterBand or signature image probably not embedded"
+#
+# Path B Stage 4 INTERIM: floor lowered 100KB → 20KB while warehouse logo
+# + signature PictureObjects are deferred to Stage 6. Stage 6 restores
+# the 100KB floor when picture binding lands; until then a 1-page text-
+# and-lines-only DO lands in the 30–50KB range.
+if ($pdf.RawContentLength -lt 20000) {
+    Fail "PDF $($pdf.RawContentLength) bytes < 20KB — PageFooterBand or core band content probably not emitted"
 }
 OK "PDF streams ($($pdf.RawContentLength) bytes) attachment with %PDF magic + size floor"
 
