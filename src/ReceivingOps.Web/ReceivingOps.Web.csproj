@@ -26,4 +26,13 @@
     <PackageReference Include="NPOI" Version="2.7.2" />
   </ItemGroup>
 
+  <!-- Path B — designer-driven FastReport templates. Reports/*.frx are
+       authored under source control and shipped to bin output so the
+       runtime can Report.Load() them from ContentRootPath. PreserveNewest
+       avoids stomping a designer-edited .frx if a dev re-saves the file
+       in the output directory by mistake. -->
+  <ItemGroup>
+    <None Include="Reports\**\*.frx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

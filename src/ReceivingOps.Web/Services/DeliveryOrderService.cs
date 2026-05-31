@@ -34,16 +34,36 @@ public class DeliveryOrderService : IDeliveryOrderService
     private readonly IPullRepository _pulls;
     private readonly IWarehouseRepository _warehouses;
     private readonly CompanyInfo _company;
+    private readonly IWebHostEnvironment _env;
 
     public DeliveryOrderService(
         IPullRepository pulls,
         IWarehouseRepository warehouses,
-        IOptions<CompanyInfo> company)
+        IOptions<CompanyInfo> company,
+        IWebHostEnvironment env)
     {
         _pulls = pulls;
         _warehouses = warehouses;
         _company = company.Value;
+        _env = env;
     }
+
+    // ------------------------------------------------------------------
+    // Path B scaffold (Stage 1) — designer-driven .frx workflow.
+    //
+    // Path resolves against ContentRootPath so it works in both dev
+    // (project dir) and published output (publish dir — Reports/ ships
+    // alongside the binary via the csproj CopyToOutputDirectory rule).
+    //
+    // Stage 3 auto-generates the .frx on first miss; Stage 4 wires
+    // Report.Load() into the build pipeline. The programmatic Build()
+    // path below stays authoritative until the Stage 4 cutover so the
+    // existing PDF export keeps working during the refactor.
+    // ------------------------------------------------------------------
+    private string GetFrxPath() =>
+        Path.Combine(_env.ContentRootPath, "Reports", "delivery-order.frx");
+
+    private bool FrxExists() => File.Exists(GetFrxPath());
 
     // v2.x Phase 7.4 — single source of truth for both the HTML preview
     // partial AND the FastReport PDF builder. Eligibility checks happen
