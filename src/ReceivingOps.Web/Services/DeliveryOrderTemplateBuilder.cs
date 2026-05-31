@@ -169,20 +169,26 @@ public static class DeliveryOrderTemplateBuilder
 
         master.Objects.Add(MakeHRule("Rule3", 0, 63, 180));
 
-        // ----- (4) Code128 barcodes: PO · PRS · DN -----
+        // ----- (4) Code128 barcodes: PO · PRS · DN · INVOICE (Stage 5) -----
+        // 4 strips, each 42mm wide + 3 × 4mm gaps = 180mm. Code128 with 6–10
+        // char identifiers (typical for these fields) scans at this width.
         // BarcodeObject.Text holds an expression; FastReport resolves it
         // against the current row at render time before encoding the bars.
-        master.Objects.Add(MakeText("BcPoCap", 0, 65, 55, 4,
+        master.Objects.Add(MakeText("BcPoCap",   0, 65, 42, 4,
             "P/O NO", fontSize: 7f, bold: true, align: HorzAlign.Center));
-        master.Objects.Add(MakeBarcode("BcPo", 0, 69, 55, 22, "[Orders.HeaderPoNumber]"));
+        master.Objects.Add(MakeBarcode("BcPo",   0, 69, 42, 22, "[Orders.HeaderPoNumber]"));
 
-        master.Objects.Add(MakeText("BcPrsCap", 62, 65, 55, 4,
+        master.Objects.Add(MakeText("BcPrsCap", 46, 65, 42, 4,
             "PRS NO", fontSize: 7f, bold: true, align: HorzAlign.Center));
-        master.Objects.Add(MakeBarcode("BcPrs", 62, 69, 55, 22, "[Orders.PullNumber]"));
+        master.Objects.Add(MakeBarcode("BcPrs", 46, 69, 42, 22, "[Orders.PullNumber]"));
 
-        master.Objects.Add(MakeText("BcDnCap", 124, 65, 55, 4,
+        master.Objects.Add(MakeText("BcDnCap",  92, 65, 42, 4,
             "DELIVERY NOTE", fontSize: 7f, bold: true, align: HorzAlign.Center));
-        master.Objects.Add(MakeBarcode("BcDn", 124, 69, 55, 22, "[Orders.DeliveryNoteNo]"));
+        master.Objects.Add(MakeBarcode("BcDn",  92, 69, 42, 22, "[Orders.DeliveryNoteNo]"));
+
+        master.Objects.Add(MakeText("BcInvCap",138, 65, 42, 4,
+            "INVOICE", fontSize: 7f, bold: true, align: HorzAlign.Center));
+        master.Objects.Add(MakeBarcode("BcInv",138, 69, 42, 22, "[Orders.InvoiceNo]"));
 
         master.Objects.Add(MakeHRule("Rule4", 0, 93, 180));
 
@@ -232,16 +238,25 @@ public static class DeliveryOrderTemplateBuilder
     // ------------------------------------------------------------------
     private static DataFooterBand BuildOrderFooter()
     {
+        // Height bumped 12 → 22mm in Stage 5 to host the TOTAL QTY Code128
+        // beneath the numeric value. Trade-off: shaves ~1 line off the
+        // single-page detail capacity (13 → 12 rows) before the band overflows
+        // to a continuation page. Multi-page DOs already paginate the detail
+        // band, so the regression is bounded.
         var footer = new DataFooterBand
         {
             Name = OrderFooterName,
-            Height = Units.Millimeters * 12f,
+            Height = Units.Millimeters * 22f,
         };
         footer.Objects.Add(MakeHRule("RuleTotal", 0, 1, 180));
         footer.Objects.Add(MakeText("TotalLabel", 120, 3, 30, 6,
             "TOTAL QTY", fontSize: 9f, bold: true, align: HorzAlign.Right));
         footer.Objects.Add(MakeText("TotalValue", 152, 3, 28, 6,
             "[Orders.TotalQty]", fontSize: 12f, bold: true, align: HorzAlign.Right));
+        // Stage 5: Code128 of the integer total, right-aligned under the
+        // numeric value. 56mm × 10mm gives enough module width for the
+        // ~1–4 digit totals that real DOs carry.
+        footer.Objects.Add(MakeBarcode("BcTotal", 124, 11, 56, 10, "[Orders.TotalQty]"));
         return footer;
     }
 
