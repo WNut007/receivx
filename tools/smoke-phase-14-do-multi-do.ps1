@@ -88,12 +88,23 @@ VALUES ('$poA', '$poAnum', '$WH_01', '2026-01-01', NULL, 'open', N'Phase 14 mult
 INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, ExpectedDate, Status, Notes, CreatedAt)
 VALUES ('$poB', '$poBnum', '$WH_01', '2026-01-02', NULL, 'open', N'Phase 14 multi-DO smoke vendor B', SYSUTCDATETIME());
 
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation)
-VALUES ('$lineA', '$poA', 1, 'PH14MULTI-ITEM-A', N'Multi-DO smoke item A', 100, 0, 'V-MULTI-A', N'Multi Vendor Alpha', 'SUBINV-AAA', 'LOC-ALPHA');
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation)
-VALUES ('$lineB', '$poB', 1, 'PH14MULTI-ITEM-B', N'Multi-DO smoke item B', 100, 0, 'V-MULTI-B', N'Multi Vendor Beta',  'SUBINV-BBB', 'LOC-BETA');
+-- Stage 8 wide-content coverage: vendor names + ERP fields are stamped at
+-- ERP-typical lengths (~30 chars / ~14 chars) instead of the original
+-- ~18 chars. Older Stage 8 fixtures only triggered ≤2-line wrap, which
+-- is why the master-band CanGrow strikethrough trigger (VendorName ≥30
+-- chars wrapping in the info grid's right-value cell) slipped past the
+-- battery. These widths still wrap on detail cells but stay ≤2 lines,
+-- so the regression case is exercised end-to-end.
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo)
+VALUES ('$lineA', '$poA', 1, 'PH14MULTI-ITEM-A', N'Multi-DO smoke item A', 100, 0,
+        'V-MULTI-A', N'Multi Vendor Alpha (BRANCH OFFICE)', 'SUBINV-AAA', 'LOC-ALPHA',
+        'PALLET-MULTI-A-001', '0000099001', 'ASN-MULTI-A-001', '07:00', 'INV-MULTI-A');
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo)
+VALUES ('$lineB', '$poB', 1, 'PH14MULTI-ITEM-B', N'Multi-DO smoke item B', 100, 0,
+        'V-MULTI-B', N'Multi Vendor Beta Industries Ltd.', 'SUBINV-BBB', 'LOC-BETA',
+        'PALLET-MULTI-B-001', '0000099002', 'ASN-MULTI-B-001', '07:00', 'INV-MULTI-B');
 "@ | Out-Null
-OK "Two POs seeded with distinct (Vendor × SubInv × ToLoc) triples"
+OK "Two POs seeded with distinct (Vendor × SubInv × ToLoc) triples + wide ERP stamps"
 
 # ----------------------------------------------------------------------------
 # 2. Create the pull + 2 items + receive against each + close
@@ -167,7 +178,9 @@ if ($vendorNames.Count -ne 2) {
 }
 
 # Order may be vendor-code-alphabetical; both names must be present regardless.
-$expectedNames = @('Multi Vendor Alpha', 'Multi Vendor Beta')
+# Stage 8 — names lengthened to ~33 chars to exercise the master info grid's
+# right-value cell (which used to wrap and trigger the strikethrough bug).
+$expectedNames = @('Multi Vendor Alpha (BRANCH OFFICE)', 'Multi Vendor Beta Industries Ltd.')
 foreach ($want in $expectedNames) {
     if ($vendorNames -notcontains $want) {
         Fail "Expected vendor name '$want' as a VENDOR dd, got: $($vendorNames -join ' | ')"

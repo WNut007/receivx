@@ -197,10 +197,18 @@ public static class DeliveryOrderTemplateBuilder
         {
             var row = infoRows[r];
             var y = gridY0 + r * rowH;
+            // Stage 8 — widened right-column VALUE cell (RV) 53 → 65mm by
+            // shrinking right-column LABEL cell (RL) 32 → 20mm. The longer
+            // VendorName values (e.g. "NHK SPRING (THAILAND) CO., LTD.",
+            // 30 chars ~60mm at 10pt) used to wrap at the 53mm boundary,
+            // triggering a CanGrow cascade in the master band that bled a
+            // 1px overflow line into the detail band's first row text —
+            // visible as a strikethrough across all 7 columns. 65mm fits
+            // ~32 chars at 10pt, which covers typical long vendor names.
             master.Objects.Add(MakeText($"GridLL{r}",  0, y, 32, 5, row.LL, fontSize: 8f, bold: true));
             master.Objects.Add(MakeText($"GridLV{r}", 32, y, 58, 5, row.LV, fontSize: 10f));
-            master.Objects.Add(MakeText($"GridRL{r}", 95, y, 32, 5, row.RL, fontSize: 8f, bold: true));
-            master.Objects.Add(MakeText($"GridRV{r}",127, y, 53, 5, row.RV, fontSize: 10f));
+            master.Objects.Add(MakeText($"GridRL{r}", 95, y, 20, 5, row.RL, fontSize: 8f, bold: true));
+            master.Objects.Add(MakeText($"GridRV{r}",115, y, 65, 5, row.RV, fontSize: 10f));
         }
 
         master.Objects.Add(MakeHRule("Rule3", 0, 63, 180));
@@ -229,14 +237,22 @@ public static class DeliveryOrderTemplateBuilder
         master.Objects.Add(MakeHRule("Rule4", 0, 93, 180));
 
         // ----- (5) Column header row -----
-        // Widths: PART 28 · DESC 60 · PALLET 24 · KANBAN 18 · ASN 18 · ROUND 14 · QTY 18 = 180
-        master.Objects.Add(MakeText("HdrPart",  0,  95, 28, 6, "PART NUMBER", fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrDesc", 28,  95, 60, 6, "DESCRIPTION", fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrPal",  88,  95, 24, 6, "PALLET",      fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrKan", 112,  95, 18, 6, "KANBAN",      fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrAsn", 130,  95, 18, 6, "ASN",         fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrRnd", 148,  95, 14, 6, "ROUND",       fontSize: 8f, bold: true));
-        master.Objects.Add(MakeText("HdrQty", 162,  95, 18, 6, "QTY",         fontSize: 8f, bold: true, align: HorzAlign.Right));
+        // Widths: PART 25 · DESC 55 · PALLET 25 · KANBAN 20 · ASN 25 · ROUND 13 · QTY 17 = 180
+        //
+        // Stage 8 — widened the ERP cluster (PALLET/KANBAN/ASN) by 10mm
+        // total, redistributed from PART (-3) + DESC (-5) + ROUND (-1) +
+        // QTY (-1). The original 18mm ASN column was too narrow for
+        // ERP-typical values like "ASN-0000079740" (14 chars, ~22mm at
+        // 8pt Arial digits) — they wrapped to 3 lines. ROUND stays at
+        // 13mm so the bold "ROUND" caption doesn't truncate; QTY at 17mm
+        // still fits 4-5 digit totals comfortably.
+        master.Objects.Add(MakeText("HdrPart",   0, 95, 25, 6, "PART NUMBER", fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrDesc",  25, 95, 55, 6, "DESCRIPTION", fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrPal",   80, 95, 25, 6, "PALLET",      fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrKan", 105, 95, 20, 6, "KANBAN",       fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrAsn", 125, 95, 25, 6, "ASN",          fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrRnd", 150, 95, 13, 6, "ROUND",        fontSize: 8f, bold: true));
+        master.Objects.Add(MakeText("HdrQty", 163, 95, 17, 6, "QTY",          fontSize: 8f, bold: true, align: HorzAlign.Right));
         master.Objects.Add(MakeHRule("Rule5", 0, 101, 180));
 
         return master;
@@ -256,13 +272,14 @@ public static class DeliveryOrderTemplateBuilder
             Height = Units.Millimeters * 8f,
         };
 
-        detail.Objects.Add(MakeText("ColPart",  0, 1, 28, 6, "[Lines.ItemCode]",    fontSize: 9f));
-        detail.Objects.Add(MakeText("ColDesc", 28, 1, 60, 6, "[Lines.Description]", fontSize: 9f));
-        detail.Objects.Add(MakeText("ColPal",  88, 1, 24, 6, "[Lines.PalletId]",    fontSize: 8f));
-        detail.Objects.Add(MakeText("ColKan", 112, 1, 18, 6, "[Lines.KanbanNo]",    fontSize: 8f));
-        detail.Objects.Add(MakeText("ColAsn", 130, 1, 18, 6, "[Lines.AsnNo]",       fontSize: 8f));
-        detail.Objects.Add(MakeText("ColRnd", 148, 1, 14, 6, "[Lines.OrderRound]",  fontSize: 8f));
-        detail.Objects.Add(MakeText("ColQty", 162, 1, 18, 6, "[Lines.TotalQty]",    fontSize: 10f, bold: true, align: HorzAlign.Right));
+        // Widths mirror BuildMasterBand column header — see widening rationale there.
+        detail.Objects.Add(MakeText("ColPart",   0, 1, 25, 6, "[Lines.ItemCode]",    fontSize: 9f));
+        detail.Objects.Add(MakeText("ColDesc",  25, 1, 55, 6, "[Lines.Description]", fontSize: 9f));
+        detail.Objects.Add(MakeText("ColPal",   80, 1, 25, 6, "[Lines.PalletId]",    fontSize: 8f));
+        detail.Objects.Add(MakeText("ColKan", 105, 1, 20, 6, "[Lines.KanbanNo]",     fontSize: 8f));
+        detail.Objects.Add(MakeText("ColAsn", 125, 1, 25, 6, "[Lines.AsnNo]",        fontSize: 8f));
+        detail.Objects.Add(MakeText("ColRnd", 150, 1, 13, 6, "[Lines.OrderRound]",   fontSize: 8f));
+        detail.Objects.Add(MakeText("ColQty", 163, 1, 17, 6, "[Lines.TotalQty]",     fontSize: 10f, bold: true, align: HorzAlign.Right));
 
         return detail;
     }
