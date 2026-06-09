@@ -368,6 +368,7 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                    SET VendorCode               = @VendorCode,
                        VendorName               = @VendorName,
                        OrderId                  = @OrderId,
+                       SourcePoNo               = @SourcePoNo,
                        AsnNo                    = @AsnNo,
                        KanbanNo                 = @KanbanNo,
                        VendorItem               = @VendorItem,
@@ -392,7 +393,7 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
                 {
                     Id = lineId,
                     req.VendorCode, req.VendorName,
-                    req.OrderId, req.AsnNo, req.KanbanNo, req.VendorItem,
+                    req.OrderId, req.SourcePoNo, req.AsnNo, req.KanbanNo, req.VendorItem,
                     req.Location, req.SubInventory, req.ToLocation, req.Building, req.ProductionLine,
                     req.PalletId, req.VmiPalletId, req.BatchNo,
                     req.InvoiceNo, req.PCCNo, req.ManufacturingControlNo, req.OrderRound,
@@ -432,6 +433,7 @@ public class PurchaseOrderAdminService : IPurchaseOrderAdminService
         if (req.VendorName is not null && req.VendorName.Length > 160)
             throw new BusinessException("VendorName is too long (≤ 160 chars)");
         CheckShort(nameof(req.OrderId),                  req.OrderId);
+        CheckShort(nameof(req.SourcePoNo),               req.SourcePoNo);
         CheckShort(nameof(req.AsnNo),                    req.AsnNo);
         CheckShort(nameof(req.KanbanNo),                 req.KanbanNo);
         CheckShort(nameof(req.VendorItem),               req.VendorItem);

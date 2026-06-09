@@ -296,14 +296,16 @@ SELECT
     SUM(CASE WHEN po.PoNumber = 'P127TEST-002'
               AND pol.VendorCode = 'VEND-B'
               AND pol.VendorName = 'Vendor Beta'                 THEN 1 ELSE 0 END) AS VendBOnPo2,
-    SUM(CASE WHEN pol.VendorCode IS NOT NULL                     THEN 1 ELSE 0 END) AS AnyVendorSet
+    SUM(CASE WHEN pol.VendorCode IS NOT NULL                     THEN 1 ELSE 0 END) AS AnyVendorSet,
+    SUM(CASE WHEN pol.SourcePoNo LIKE 'TH5805-%'                 THEN 1 ELSE 0 END) AS SourcePoSet,
+    SUM(CASE WHEN pol.SourcePoNo = po.PoNumber                   THEN 1 ELSE 0 END) AS SourcePoEqualsPrs
 FROM dbo.PurchaseOrderLines pol
 JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber LIKE 'P127TEST-%';
 "@) -join '' -replace '\s',''
 
 $lp = ($lineCheck -split '\|')
-if ($lp.Count -lt 13) { Fail "Could not parse line check output: '$lineCheck'" }
+if ($lp.Count -lt 15) { Fail "Could not parse line check output: '$lineCheck'" }
 if ([int]$lp[0] -ne 4) { Fail "PurchaseOrderLines total=$($lp[0]), expected 4" }
 if ([int]$lp[1] -ne 4) { Fail "ReceivedQty not 0 on $(4 - [int]$lp[1]) of 4 lines" }
 if ([int]$lp[2] -ne 1) { Fail "TST-WIDGET-001/qty=12 not found exactly once (got $($lp[2]))" }
@@ -318,7 +320,10 @@ if ([int]$lp[9] -ne 4) { Fail "DeliveryDate NULL or outside 2024..2030 on $(4 - 
 if ([int]$lp[10] -ne 2) { Fail "P127TEST-001 lines without VEND-A/Vendor Alpha — got $($lp[10])/2 (regression: vendor not landing on POL from STORER columns)" }
 if ([int]$lp[11] -ne 2) { Fail "P127TEST-002 lines without VEND-B/Vendor Beta — got $($lp[11])/2 (regression: PoImportJob used firstRow.VendorCode for whole PO?)" }
 if ([int]$lp[12] -ne 4) { Fail "Vendor NULL on $(4 - [int]$lp[12]) of 4 POL rows — db/036 column or PoImportJob INSERT regression" }
-OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId round-trip · LineNumber {1,2} · DeliveryDate parsed · Phase 14 vendor at POL (VEND-A x2 + VEND-B x2)"
+# db/040 SourcePoNo (import "PO" column) assertions
+if ([int]$lp[13] -ne 4) { Fail "SourcePoNo NULL/mismatched on $(4 - [int]$lp[13]) of 4 lines — db/040 column not populated from the 'PO' column" }
+if ([int]$lp[14] -ne 0) { Fail "SourcePoNo equals PoNumber on $($lp[14]) line(s) — parser confused the 'PO' column with PULL SHEET ID / PRS NO (C1=A regression)" }
+OK "4 lines · ReceivedQty=0 · 4 SKU+qty pairs match · OrderId+PalletId+SourcePoNo round-trip · LineNumber {1,2} · DeliveryDate parsed · Phase 14 vendor at POL (VEND-A x2 + VEND-B x2)"
 
 # ----------------------------------------------------------------------------
 # 11b. A1 (db/033) — PullExternalRef surfaces via /api/pos/{id} +

@@ -184,8 +184,8 @@ public class PosExportJob
             "LineNumber",
             // Line basic (5)
             "ItemCode", "Description", "OrderedQty", "ReceivedQty", "RemainingQty",
-            // ERP — Tracking IDs (10)
-            "InvoiceNo", "KanbanNo", "AsnNo", "PCCNo", "BatchNo",
+            // ERP — Tracking IDs (12; +OrderId db/031, +SourcePoNo db/040)
+            "InvoiceNo", "KanbanNo", "AsnNo", "OrderId", "SourcePoNo", "PCCNo", "BatchNo",
             "ManufacturingControlNo", "ManufacturingReferenceNo",
             "CustomerReferenceNo", "ExportDeclarationNo", "VendorItem",
             // ERP — Location (6)
@@ -225,6 +225,8 @@ public class PosExportJob
             ws.Cell(x, c++).Value = row.InvoiceNo ?? "";
             ws.Cell(x, c++).Value = row.KanbanNo ?? "";
             ws.Cell(x, c++).Value = row.AsnNo ?? "";
+            ws.Cell(x, c++).Value = row.OrderId ?? "";
+            ws.Cell(x, c++).Value = row.SourcePoNo ?? "";
             ws.Cell(x, c++).Value = row.PCCNo ?? "";
             ws.Cell(x, c++).Value = row.BatchNo ?? "";
             ws.Cell(x, c++).Value = row.ManufacturingControlNo ?? "";

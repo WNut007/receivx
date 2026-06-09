@@ -266,7 +266,7 @@ public class PoImportJob
             {
                 lineNumber++;
 
-                // Phase 14: 26 parser fields (vendor moved here from PO header)
+                // 27 parser fields (Phase 14 vendor + db/040 SourcePoNo)
                 // + 4 server-set fields (Id, PoId, LineNumber, ReceivedQty=0).
                 // Description NOT NULL — coalesce parser null.
                 await conn.ExecuteAsync(new CommandDefinition(@"
@@ -274,7 +274,7 @@ public class PoImportJob
                         Id, PurchaseOrderId, LineNumber,
                         ItemCode, Description, OrderedQty, ReceivedQty,
                         VendorCode, VendorName,
-                        OrderId, AsnNo, InvoiceNo, KanbanNo, PCCNo, BatchNo,
+                        OrderId, SourcePoNo, AsnNo, InvoiceNo, KanbanNo, PCCNo, BatchNo,
                         ManufacturingControlNo, ManufacturingReferenceNo,
                         CustomerReferenceNo, ExportDeclarationNo, VendorItem,
                         PalletId, VmiPalletId, Location, Building, SubInventory, ToLocation,
@@ -283,7 +283,7 @@ public class PoImportJob
                         NEWID(), @PoId, @LineNumber,
                         @ItemCode, @Description, @OrderedQty, 0,
                         @VendorCode, @VendorName,
-                        @OrderId, @AsnNo, @InvoiceNo, @KanbanNo, @PCCNo, @BatchNo,
+                        @OrderId, @SourcePoNo, @AsnNo, @InvoiceNo, @KanbanNo, @PCCNo, @BatchNo,
                         @ManufacturingControlNo, @ManufacturingReferenceNo,
                         @CustomerReferenceNo, @ExportDeclarationNo, @VendorItem,
                         @PalletId, @VmiPalletId, @Location, @Building, @SubInventory, @ToLocation,
@@ -297,7 +297,7 @@ public class PoImportJob
                         Description = row.Description ?? "",
                         row.OrderedQty,
                         row.VendorCode, row.VendorName,
-                        row.OrderId, row.AsnNo, row.InvoiceNo, row.KanbanNo,
+                        row.OrderId, row.SourcePoNo, row.AsnNo, row.InvoiceNo, row.KanbanNo,
                         row.PCCNo, row.BatchNo,
                         row.ManufacturingControlNo, row.ManufacturingReferenceNo,
                         row.CustomerReferenceNo, row.ExportDeclarationNo, row.VendorItem,
