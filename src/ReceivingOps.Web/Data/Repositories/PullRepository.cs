@@ -317,10 +317,10 @@ public class PullRepository : IPullRepository
                     pol.LineNumber  AS PoLineNumber,
                     pol.ItemCode,
                     pol.Description,
+                    pol.OrderId,
                     SUM(r.QtyReceived) AS TotalQty,
                     MAX(r.ReceivedAt)     AS LastReceivedAt,
                     MAX(pol.PalletId)     AS PalletId,
-                    MAX(pol.OrderId)      AS OrderId,
                     MAX(pol.KanbanNo)     AS KanbanNo,
                     MAX(pol.AsnNo)        AS AsnNo,
                     MAX(pol.OrderRound)   AS OrderRound,
@@ -333,6 +333,7 @@ public class PullRepository : IPullRepository
               AND   r.ReversedById IS NULL
             GROUP BY pol.VendorCode, pol.VendorName,
                      pol.SubInventory, pol.ToLocation, pol.InvoiceNo,
+                     pol.OrderId,
                      po.Id, po.PoNumber,
                      pol.LineNumber, pol.ItemCode, pol.Description
             HAVING  SUM(r.QtyReceived) > 0

@@ -1,5 +1,6 @@
 using System.IO;
 using FastReport;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ReceivingOps.Web.Data.Repositories;
 using ReceivingOps.Web.Models;
@@ -44,17 +45,20 @@ public class DeliveryOrderService : IDeliveryOrderService
     private readonly IWarehouseRepository _warehouses;
     private readonly CompanyInfo _company;
     private readonly IWebHostEnvironment _env;
+    private readonly ILogger<DeliveryOrderService> _log;
 
     public DeliveryOrderService(
         IPullRepository pulls,
         IWarehouseRepository warehouses,
         IOptions<CompanyInfo> company,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ILogger<DeliveryOrderService> log)
     {
         _pulls = pulls;
         _warehouses = warehouses;
         _company = company.Value;
         _env = env;
+        _log = log;
     }
 
     private string GetFrxPath() =>
@@ -78,20 +82,19 @@ public class DeliveryOrderService : IDeliveryOrderService
                 "This pull has no delivered receipts. A Delivery Order requires at least one " +
                 "non-cancelled receipt to render.");
 
-        // DO grouping key = (VendorCode × SubInventory × ToLocation × InvoiceNo).
-        // VendorName tags along under (VendorCode, VendorName) so the display
-        // name surfaces without a second lookup but isn't part of the key.
-        // Null parts of the key collapse to "" so all all-null-key lines
-        // share one DO instead of LINQ's default split-per-row-on-null.
+        // DO identity = OrderId. OrderId is unique per PO line, so each DO is
+        // exactly one received line and DeliveryNoteNo = OrderId (DSV's
+        // delivery-note-per-OrderId semantics). The former 4-tuple
+        // (Vendor × SubInventory × ToLocation × InvoiceNo) is now per-DO
+        // display only — with one line per DO each carries a single value.
+        //
+        // NULL OrderId (a few ERP lines lack it) can't serve as a key / DataSet
+        // PK / relation value, so synthesize a deterministic, unique fallback
+        // per line and warn so procurement can chase the missing OrderId.
+        var pullHex = pull.Id.ToString("N").Substring(0, 8).ToUpperInvariant();
+
         var orders = rows
-            .GroupBy(r => new
-            {
-                VendorCode   = r.VendorCode   ?? "",
-                VendorName   = r.VendorName   ?? "",
-                SubInventory = r.SubInventory ?? "",
-                ToLocation   = r.ToLocation   ?? "",
-                InvoiceNo    = r.InvoiceNo    ?? "",
-            })
+            .GroupBy(r => r.OrderId ?? $"{pullHex}-{r.PoNumber}L{r.PoLineNumber}")
             .Select(g =>
             {
                 var lines = g.Select(r => new DoLine
@@ -104,45 +107,45 @@ public class DeliveryOrderService : IDeliveryOrderService
                     LastReceivedAt = r.LastReceivedAt,
                     PalletId       = r.PalletId,
                     OrderId        = r.OrderId,
-                    InvoiceNo      = g.Key.InvoiceNo.Length    == 0 ? null : g.Key.InvoiceNo,
+                    InvoiceNo      = string.IsNullOrEmpty(r.InvoiceNo)    ? null : r.InvoiceNo,
                     KanbanNo       = r.KanbanNo,
-                    SubInventory   = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
-                    ToLocation     = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
+                    SubInventory   = string.IsNullOrEmpty(r.SubInventory) ? null : r.SubInventory,
+                    ToLocation     = string.IsNullOrEmpty(r.ToLocation)   ? null : r.ToLocation,
                     AsnNo          = r.AsnNo,
                     OrderRound     = r.OrderRound,
                     SourcePoNo     = r.SourcePoNo,
                 }).ToList();
-                // Dominant PO# for the DSV header — ordinal-min so it's
-                // stable when multiple POs feed a single DO.
+                // Per-DO display attributes come from the line(s) in the group —
+                // one line per DO, so first == only. Ordinal-min PO# kept as the
+                // header PO for parity with the old multi-line behaviour.
+                var first = g.First();
                 var headerPo = g.Select(r => r.PoNumber)
                                 .Where(s => !string.IsNullOrEmpty(s))
                                 .OrderBy(s => s, StringComparer.Ordinal)
                                 .FirstOrDefault();
                 return new DoOrder
                 {
-                    VendorCode     = g.Key.VendorCode.Length   == 0 ? null : g.Key.VendorCode,
-                    VendorName     = g.Key.VendorName.Length   == 0 ? null : g.Key.VendorName,
-                    SubInventory   = g.Key.SubInventory.Length == 0 ? null : g.Key.SubInventory,
-                    ToLocation     = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
-                    InvoiceNo      = g.Key.InvoiceNo.Length    == 0 ? null : g.Key.InvoiceNo,
+                    VendorCode     = string.IsNullOrEmpty(first.VendorCode)   ? null : first.VendorCode,
+                    VendorName     = string.IsNullOrEmpty(first.VendorName)   ? null : first.VendorName,
+                    SubInventory   = string.IsNullOrEmpty(first.SubInventory) ? null : first.SubInventory,
+                    ToLocation     = string.IsNullOrEmpty(first.ToLocation)   ? null : first.ToLocation,
+                    InvoiceNo      = string.IsNullOrEmpty(first.InvoiceNo)    ? null : first.InvoiceNo,
                     HeaderPoNumber = headerPo,
+                    DeliveryNoteNo = g.Key,                  // = OrderId (or synthesized fallback)
                     LastReceivedAt = lines.Max(l => l.LastReceivedAt),
                     Lines          = lines,
                     TotalQty       = lines.Sum(l => l.TotalQty),
                 };
             })
-            .OrderBy(o => o.VendorCode ?? "")
-                .ThenBy(o => o.SubInventory ?? "")
-                .ThenBy(o => o.ToLocation ?? "")
-                .ThenBy(o => o.InvoiceNo ?? "")
+            .OrderBy(o => o.DeliveryNoteNo, StringComparer.Ordinal)
             .ToList();
 
-        // Delivery Note No — deterministic per-DO id: first 8 hex chars of
-        // Pull.Id + DO letter by index. Stable across re-renders, no schema
-        // change. Q5a says display as "{DN}+{InvoiceNo}".
-        var pullHex = pull.Id.ToString("N").Substring(0, 8).ToUpperInvariant();
-        for (int i = 0; i < orders.Count; i++)
-            orders[i].DeliveryNoteNo = pullHex + IndexToLetters(i);
+        // Surface NULL-OrderId fallbacks without blocking the report.
+        foreach (var o in orders.Where(o => o.Lines.Any(l => l.OrderId is null)))
+            _log.LogWarning(
+                "DO report (pull {PullNumber}): line {PoLineRef} has NULL OrderId — " +
+                "synthesized DeliveryNoteNo {DeliveryNoteNo}",
+                pull.PullNumber, o.Lines[0].PoLineRef, o.DeliveryNoteNo);
 
         // Per-warehouse logo + address for the DSV header — null when unset.
         var wh = await _warehouses.GetByIdAsync(pull.WarehouseId, ct);
@@ -168,19 +171,6 @@ public class DeliveryOrderService : IDeliveryOrderService
             Orders  = orders,
             Company = _company,
         };
-    }
-
-    /// <summary>0 → "A", 25 → "Z", 26 → "AA", … per-DO suffix on Delivery Note No.</summary>
-    private static string IndexToLetters(int idx)
-    {
-        if (idx < 0) throw new ArgumentOutOfRangeException(nameof(idx));
-        var s = "";
-        do
-        {
-            s = (char)('A' + (idx % 26)) + s;
-            idx = idx / 26 - 1;
-        } while (idx >= 0);
-        return s;
     }
 
     public async Task<Report> BuildAsync(Guid pullId, CancellationToken ct = default)
