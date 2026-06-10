@@ -323,7 +323,8 @@ public class PullRepository : IPullRepository
                     MAX(pol.OrderId)      AS OrderId,
                     MAX(pol.KanbanNo)     AS KanbanNo,
                     MAX(pol.AsnNo)        AS AsnNo,
-                    MAX(pol.OrderRound)   AS OrderRound
+                    MAX(pol.OrderRound)   AS OrderRound,
+                    MAX(pol.SourcePoNo)   AS SourcePoNo
             FROM    dbo.Receipts r
             INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
             INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId

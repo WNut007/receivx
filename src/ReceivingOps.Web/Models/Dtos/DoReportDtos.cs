@@ -124,6 +124,14 @@ public class DoLine
     public string? ToLocation { get; set; }
     public string? AsnNo { get; set; }
     public string? OrderRound { get; set; }
+    /// <summary>
+    /// Upstream purchase-order number from the import source "PO" column
+    /// (e.g. "TH5805-P230603"), distinct from the internal PoNumber which
+    /// is the PRS_ID. Surfaced on the DO so the printed note carries the
+    /// real vendor PO. Per-line because the source PO can vary per line
+    /// under one PRS_ID. Nullable for non-imported / pre-db/040 POs.
+    /// </summary>
+    public string? SourcePoNo { get; set; }
 }
 
 /// <summary>
@@ -165,4 +173,6 @@ public class DoReportRow
     public string? KanbanNo { get; set; }
     public string? AsnNo { get; set; }
     public string? OrderRound { get; set; }
+    /// <summary>Upstream "PO" column from the import source (see DoLine.SourcePoNo).</summary>
+    public string? SourcePoNo { get; set; }
 }

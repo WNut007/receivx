@@ -144,6 +144,7 @@ public static class DoReportDataSetBuilder
         t.Columns.Add("ToLocation",     typeof(string));
         t.Columns.Add("AsnNo",          typeof(string));
         t.Columns.Add("OrderRound",     typeof(string));
+        t.Columns.Add("SourcePoNo",     typeof(string));
 
         foreach (DataColumn c in t.Columns)
             c.AllowDBNull = true;
@@ -202,6 +203,7 @@ public static class DoReportDataSetBuilder
         row["ToLocation"]     = NullIfEmpty(l.ToLocation);
         row["AsnNo"]          = NullIfEmpty(l.AsnNo);
         row["OrderRound"]     = NullIfEmpty(l.OrderRound);
+        row["SourcePoNo"]     = NullIfEmpty(l.SourcePoNo);
         lines.Rows.Add(row);
     }
 

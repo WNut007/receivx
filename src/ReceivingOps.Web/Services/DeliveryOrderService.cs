@@ -110,6 +110,7 @@ public class DeliveryOrderService : IDeliveryOrderService
                     ToLocation     = g.Key.ToLocation.Length   == 0 ? null : g.Key.ToLocation,
                     AsnNo          = r.AsnNo,
                     OrderRound     = r.OrderRound,
+                    SourcePoNo     = r.SourcePoNo,
                 }).ToList();
                 // Dominant PO# for the DSV header — ordinal-min so it's
                 // stable when multiple POs feed a single DO.
