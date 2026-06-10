@@ -10,8 +10,8 @@
 #   2. ErpSyncOptions exposes the nested Sources.Bpi sub-config
 #   3. ErpSyncJob fans out across IEnumerable<IErpSource> (no
 #      _factory.Create() — the 10.1 stub is long gone)
-#   4. ItemCode synthesis rule applied: when TRIAL_ID is present, the
-#      transform emits "SKU-TRIAL_ID"; bare SKU otherwise (Q1 decision)
+#   4. ItemCode = bare SKU (matches the bare-SKU PO import for the §7.15
+#      FIFO link); TRIAL_ID is captured in TrialId, never concatenated
 #   5. WINDOWS_TIME NULL → HourOfDay=7 default (the user-confirmed rule;
 #      100% of BPI_PRS rows are NULL in current data)
 #   6. ERP DB connectivity — TCP probe + a 1-row sanity SELECT against
@@ -85,15 +85,21 @@ if ($jobBody -notmatch 's\.Enabled') {
 OK "Job iterates enabled IErpSource instances + calls ReadAndTransformAsync"
 
 # ----------------------------------------------------------------------------
-# 4. ItemCode synthesis rule (Q1) — now in BpiPrsSource
+# 4. ItemCode = bare SKU — must match the bare-SKU PO import for the
+#    §7.15 FIFO link. TRIAL_ID is lot/trial metadata (PullItemDraft.TrialId),
+#    NOT part of item identity. Earlier builds synthesized "SKU-TRIAL_ID"
+#    which broke the receive link; guard against regressing to it.
 # ----------------------------------------------------------------------------
-Step "ItemCode synthesis: SKU-TRIAL_ID when TRIAL_ID present"
-AssertFile (Join-Path $webRoot 'Services\ErpSync\BpiPrsSource.cs') 'SynthesizeItemCode'
+Step "ItemCode = bare SKU (no TRIAL_ID concat)"
+AssertFile (Join-Path $webRoot 'Services\ErpSync\BpiPrsSource.cs') 'NormalizeItemCode'
 $svc = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\BpiPrsSource.cs')
-if ($svc -notmatch 't\.Length == 0 \? s :') {
-    Fail "Synthesize fallback branch (TRIAL_ID empty -> bare SKU) not found"
+if ($svc -match 'SynthesizeItemCode' -or $svc -match '\$"\{s\}-\{t\}"') {
+    Fail "Regression: SKU-TRIAL_ID synthesis still present (ItemCode must be bare SKU)"
 }
-OK "Synthesize branching present"
+if ($svc -notmatch 'GroupBy\(r => NormalizeItemCode\(r\.SKU!\)\)') {
+    Fail "Item grouping is not keyed on bare-SKU NormalizeItemCode"
+}
+OK "ItemCode keyed on bare SKU; TRIAL_ID not concatenated"
 
 # ----------------------------------------------------------------------------
 # 5. WINDOWS_TIME NULL → HourOfDay=7 default

@@ -15,8 +15,6 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// </summary>
 public class BpiPrsSource : IErpSource
 {
-    private const int ItemCodeMaxLength = 64;  // matches Receivx PullItems.ItemCode
-
     private readonly IErpDbConnectionFactory _factory;
     private readonly ErpSyncOptions _opts;
     private readonly ILogger<BpiPrsSource> _log;
@@ -105,13 +103,18 @@ public class BpiPrsSource : IErpSource
                 PullDate = pullDate,
             };
 
-            // Group by SYNTHESIZED ItemCode (Q1 decision: SKU-TRIAL_ID when
-            // TRIAL_ID present, else bare SKU). Two BPI_PRS rows with
-            // identical SKU but different TRIAL_ID become two distinct
-            // items on the Receivx side.
+            // Group by BARE SKU — the item identity that matches the PO
+            // import side (PurchaseOrderLines.ItemCode is the bare SKU from
+            // the "SKU" column). Multiple BPI_PRS rows sharing a SKU but
+            // differing only in TRIAL_ID collapse into ONE Receivx item;
+            // their qty sums across windows below. TRIAL_ID is lot/trial
+            // metadata, captured separately in PullItemDraft.TrialId — it is
+            // NOT part of item identity. (Previously this synthesized
+            // "SKU-TRIAL_ID", which broke the §7.15 FIFO match against the
+            // bare-SKU PO lines and left receives blocked.)
             foreach (var itemGroup in pullGroup
                 .Where(r => !string.IsNullOrWhiteSpace(r.SKU))
-                .GroupBy(r => SynthesizeItemCode(r.SKU!, r.TRIAL_ID)))
+                .GroupBy(r => NormalizeItemCode(r.SKU!)))
             {
                 if (string.IsNullOrWhiteSpace(itemGroup.Key))
                 {
@@ -137,10 +140,9 @@ public class BpiPrsSource : IErpSource
                     Phase = NullIfBlank(sample.PHASE),
                 };
 
-                // One window per BPI_PRS row. After the ItemCode synthesis
-                // each group should typically contain 1 row, but if the
-                // ERP emits multiples for the same SKU+TRIAL_ID + window
-                // we sum qty into a single window.
+                // One window per hour-of-day. Rows that collapsed into this
+                // SKU (different TRIAL_IDs, or the same SKU emitted multiple
+                // times for one hour) sum their qty into the matching window.
                 foreach (var row in itemGroup)
                 {
                     var qty = row.QTY ?? 0;
@@ -180,20 +182,12 @@ public class BpiPrsSource : IErpSource
     // helpers (internal for smoke / unit-test reach)
     // ------------------------------------------------------------------
 
-    internal static string SynthesizeItemCode(string sku, string? trialId)
-    {
-        var s = sku.Trim();
-        var t = (trialId ?? string.Empty).Trim();
-        var combined = t.Length == 0 ? s : $"{s}-{t}";
-
-        // Receivx's PullItems.ItemCode caps at 64. Truncate hard if the
-        // synthesized code would overflow — rare given typical SKU(<=15)
-        // + TRIAL_ID(<=14) data, but defensible.
-        if (combined.Length > ItemCodeMaxLength)
-            combined = combined[..ItemCodeMaxLength];
-
-        return combined;
-    }
+    // ItemCode = bare SKU, trimmed only. Trial/lot identity lives in
+    // PullItemDraft.TrialId, never in the ItemCode — the PO lines this
+    // must FIFO-match against carry the bare SKU. No length cap: the PO
+    // import (PoImportReader) doesn't cap either, and capping only one
+    // side would re-break the match for any SKU > 64 chars.
+    internal static string NormalizeItemCode(string sku) => sku.Trim();
 
     /// <summary>
     /// Parse BPI_PRS.WINDOWS_TIME into an hour-of-day byte. Returns null
