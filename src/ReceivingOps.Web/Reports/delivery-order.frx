@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Report ScriptLanguage="CSharp" ReportInfo.Created="06/01/2026 02:43:02" ReportInfo.Modified="06/10/2026 10:20:56" ReportInfo.CreatorVersion="2023.2.15.0">
+<Report ScriptLanguage="CSharp" ReportInfo.Created="06/01/2026 02:43:02" ReportInfo.Modified="06/10/2026 15:40:20" ReportInfo.CreatorVersion="2023.2.15.0">
   <Dictionary>
     <TableDataSource Name="Orders" ReferenceName="DoReport.Orders" DataType="System.Int32" Enabled="true">
       <Column Name="DeliveryNoteNo" DataType="System.String"/>
@@ -74,11 +74,11 @@
       <LineObject Name="Line1" Left="7.56" Top="264.6" Width="661.5"/>
       <TextObject Name="WhBlock" Top="79.38" Width="340.2" Height="45.36" CanGrow="true" Text="[Orders.WarehouseCode] · [Orders.WarehouseName]&#10;[Orders.WarehouseAddress]" Font="Arial, 9pt"/>
       <TextObject Name="Text14" Left="3.78" Top="124.74" Width="139.86" Height="18.9" CanGrow="true" Text="FROM SUB INVENTORY:" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="Text15" Left="143.64" Top="124.74" Width="177.66" Height="18.9" Text="[Orders.ToLocation]" Font="Arial, 8pt"/>
+      <TextObject Name="Text15" Left="132.3" Top="196.56" Width="177.66" Height="18.9" Text="[Orders.ToLocation]" Font="Arial, 8pt"/>
       <TextObject Name="Text16" Left="3.78" Top="147.42" Width="139.86" Height="18.9" CanGrow="true" Text="TO SUB INVENTORY:" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="Text18" Left="143.64" Top="147.42" Width="177.66" Height="18.9" Text="[Orders.SubInventory]" Font="Arial, 8pt"/>
+      <TextObject Name="Text18" Left="143.64" Top="124.74" Width="177.66" Height="18.9" Text="[Orders.SubInventory]" Font="Arial, 8pt"/>
       <TextObject Name="Text21" Left="3.78" Top="170.1" Width="139.86" Height="18.9" CanGrow="true" Text="KANBAN NO :" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="ColKan" Left="143.64" Top="169.54" Width="177.66" Height="22.68" CanGrow="true" Text="[Lines.KanbanNo]" Font="Arial, 8pt"/>
+      <TextObject Name="ColKan" Left="143.64" Top="146.86" Width="177.66" Height="22.68" CanGrow="true" Text="[Lines.KanbanNo]" Font="Arial, 8pt"/>
       <TextObject Name="Text24" Left="593.46" Top="226.8" Width="79.38" Height="18.9" CanGrow="true" Text="QTY" HorzAlign="Center" Font="Arial, 8pt, style=Bold"/>
       <DataBand Name="DetailLines" Top="266.78" Width="680.4" Height="84.6" DataSource="Lines" Relation="OrdersLines">
         <BarcodeObject Name="Barcode1" Left="7.56" Top="26.46" Width="263.75" Height="30.24" Text="[Lines.ItemCode]" ShowText="false" AllowExpressions="true" Barcode="Code128" Barcode.AutoEncode="true"/>
