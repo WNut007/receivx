@@ -95,6 +95,24 @@ public class DoOrder
     public List<DoLine> Lines { get; set; } = new();
     /// <summary>Sum of TotalQty across lines for this DO.</summary>
     public int TotalQty { get; set; }
+
+    // ---- DSV Delivery Order header fields (2nd report) -------------------
+    // Populated only on the DeliveryOrder grouping (by SubInventory ×
+    // ToLocation). On the DeliveryNote grouping these stay null/empty.
+
+    /// <summary>
+    /// DSV header "Production Line". Collapse-if-constant across the group's
+    /// lines, else null. ProductionLine is numeric + unreliable in current
+    /// data (frequently mirrors qty), so this is usually null in practice.
+    /// </summary>
+    public string? ProductionLine { get; set; }
+    /// <summary>
+    /// DSV header "Round" — the union of every line's pipe-delimited hours,
+    /// de-duplicated, sorted, formatted "[07:00],[08:00],…".
+    /// </summary>
+    public string? RoundDisplay { get; set; }
+    /// <summary>DSV header "Order Time" — earliest line DeliveryDate in the group.</summary>
+    public DateTime? DeliveryDate { get; set; }
 }
 
 /// <summary>One row on a Delivery Order — aggregated by (ItemCode × PoLineNumber).</summary>
@@ -132,6 +150,23 @@ public class DoLine
     /// under one PRS_ID. Nullable for non-imported / pre-db/040 POs.
     /// </summary>
     public string? SourcePoNo { get; set; }
+
+    // ---- DSV Delivery Order per-line fields (2nd report) ----------------
+    // On the DeliveryOrder grouping, vendor is a per-line column (the
+    // opposite of the DeliveryNote, where it's a per-DO attribute).
+    /// <summary>Per-line vendor code (DSV "Vendor" column uses VendorName).</summary>
+    public string? VendorCode { get; set; }
+    /// <summary>Per-line vendor name — the DSV "Vendor" column value.</summary>
+    public string? VendorName { get; set; }
+    /// <summary>Planned delivery date — middle segment of the Locator composite.</summary>
+    public DateTime? DeliveryDate { get; set; }
+    /// <summary>
+    /// DSV "Locator" composite — "SubInventory.DeliveryDate(dd-MMM-yyyy).OrderId".
+    /// Precomputed in the service so preview HTML + PDF render identically.
+    /// </summary>
+    public string? Locator { get; set; }
+    /// <summary>DSV "DN/INV Number" — "OrderId +InvoiceNo" (either part may be blank).</summary>
+    public string? DnInv { get; set; }
 }
 
 /// <summary>
@@ -175,4 +210,11 @@ public class DoReportRow
     public string? OrderRound { get; set; }
     /// <summary>Upstream "PO" column from the import source (see DoLine.SourcePoNo).</summary>
     public string? SourcePoNo { get; set; }
+
+    // DSV Delivery Order fields (2nd report). DeliveryDate drives the DSV
+    // header "Order Time" + the middle segment of the per-line Locator;
+    // ProductionLine is the DSV header line (collapse-if-constant in the
+    // service — it's numeric + unreliable in current data, often blank).
+    public DateTime? DeliveryDate { get; set; }
+    public string? ProductionLine { get; set; }
 }

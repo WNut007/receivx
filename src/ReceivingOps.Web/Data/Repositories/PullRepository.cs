@@ -318,13 +318,15 @@ public class PullRepository : IPullRepository
                     pol.ItemCode,
                     pol.Description,
                     pol.OrderId,
+                    pol.DeliveryDate,
                     SUM(r.QtyReceived) AS TotalQty,
                     MAX(r.ReceivedAt)     AS LastReceivedAt,
                     MAX(pol.PalletId)     AS PalletId,
                     MAX(pol.KanbanNo)     AS KanbanNo,
                     MAX(pol.AsnNo)        AS AsnNo,
                     MAX(pol.OrderRound)   AS OrderRound,
-                    MAX(pol.SourcePoNo)   AS SourcePoNo
+                    MAX(pol.SourcePoNo)   AS SourcePoNo,
+                    MAX(pol.ProductionLine) AS ProductionLine
             FROM    dbo.Receipts r
             INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
             INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId
@@ -333,7 +335,7 @@ public class PullRepository : IPullRepository
               AND   r.ReversedById IS NULL
             GROUP BY pol.VendorCode, pol.VendorName,
                      pol.SubInventory, pol.ToLocation, pol.InvoiceNo,
-                     pol.OrderId,
+                     pol.OrderId, pol.DeliveryDate,
                      po.Id, po.PoNumber,
                      pol.LineNumber, pol.ItemCode, pol.Description
             HAVING  SUM(r.QtyReceived) > 0

@@ -66,7 +66,8 @@ public class DeliveryOrderService : IDeliveryOrderService
 
     private bool FrxExists() => File.Exists(GetFrxPath());
 
-    public async Task<DoReportData> GetReportDataAsync(Guid pullId, CancellationToken ct = default)
+    public async Task<DoReportData> GetReportDataAsync(
+        Guid pullId, ReportType reportType = ReportType.DeliveryNote, CancellationToken ct = default)
     {
         var pull = await _pulls.GetByIdAsync(pullId, ct)
             ?? throw new NotFoundException("Pull not found");
@@ -82,70 +83,9 @@ public class DeliveryOrderService : IDeliveryOrderService
                 "This pull has no delivered receipts. A Delivery Order requires at least one " +
                 "non-cancelled receipt to render.");
 
-        // DO identity = OrderId. OrderId is unique per PO line, so each DO is
-        // exactly one received line and DeliveryNoteNo = OrderId (DSV's
-        // delivery-note-per-OrderId semantics). The former 4-tuple
-        // (Vendor × SubInventory × ToLocation × InvoiceNo) is now per-DO
-        // display only — with one line per DO each carries a single value.
-        //
-        // NULL OrderId (a few ERP lines lack it) can't serve as a key / DataSet
-        // PK / relation value, so synthesize a deterministic, unique fallback
-        // per line and warn so procurement can chase the missing OrderId.
-        var pullHex = pull.Id.ToString("N").Substring(0, 8).ToUpperInvariant();
-
-        var orders = rows
-            .GroupBy(r => r.OrderId ?? $"{pullHex}-{r.PoNumber}L{r.PoLineNumber}")
-            .Select(g =>
-            {
-                var lines = g.Select(r => new DoLine
-                {
-                    ItemCode       = r.ItemCode,
-                    Description    = r.Description,
-                    PoLineNumber   = r.PoLineNumber,
-                    PoLineRef      = $"{r.PoNumber}·L{r.PoLineNumber}",
-                    TotalQty       = r.TotalQty,
-                    LastReceivedAt = r.LastReceivedAt,
-                    PalletId       = r.PalletId,
-                    OrderId        = r.OrderId,
-                    InvoiceNo      = string.IsNullOrEmpty(r.InvoiceNo)    ? null : r.InvoiceNo,
-                    KanbanNo       = r.KanbanNo,
-                    SubInventory   = string.IsNullOrEmpty(r.SubInventory) ? null : r.SubInventory,
-                    ToLocation     = string.IsNullOrEmpty(r.ToLocation)   ? null : r.ToLocation,
-                    AsnNo          = r.AsnNo,
-                    OrderRound     = r.OrderRound,
-                    SourcePoNo     = r.SourcePoNo,
-                }).ToList();
-                // Per-DO display attributes come from the line(s) in the group —
-                // one line per DO, so first == only. Ordinal-min PO# kept as the
-                // header PO for parity with the old multi-line behaviour.
-                var first = g.First();
-                var headerPo = g.Select(r => r.PoNumber)
-                                .Where(s => !string.IsNullOrEmpty(s))
-                                .OrderBy(s => s, StringComparer.Ordinal)
-                                .FirstOrDefault();
-                return new DoOrder
-                {
-                    VendorCode     = string.IsNullOrEmpty(first.VendorCode)   ? null : first.VendorCode,
-                    VendorName     = string.IsNullOrEmpty(first.VendorName)   ? null : first.VendorName,
-                    SubInventory   = string.IsNullOrEmpty(first.SubInventory) ? null : first.SubInventory,
-                    ToLocation     = string.IsNullOrEmpty(first.ToLocation)   ? null : first.ToLocation,
-                    InvoiceNo      = string.IsNullOrEmpty(first.InvoiceNo)    ? null : first.InvoiceNo,
-                    HeaderPoNumber = headerPo,
-                    DeliveryNoteNo = g.Key,                  // = OrderId (or synthesized fallback)
-                    LastReceivedAt = lines.Max(l => l.LastReceivedAt),
-                    Lines          = lines,
-                    TotalQty       = lines.Sum(l => l.TotalQty),
-                };
-            })
-            .OrderBy(o => o.DeliveryNoteNo, StringComparer.Ordinal)
-            .ToList();
-
-        // Surface NULL-OrderId fallbacks without blocking the report.
-        foreach (var o in orders.Where(o => o.Lines.Any(l => l.OrderId is null)))
-            _log.LogWarning(
-                "DO report (pull {PullNumber}): line {PoLineRef} has NULL OrderId — " +
-                "synthesized DeliveryNoteNo {DeliveryNoteNo}",
-                pull.PullNumber, o.Lines[0].PoLineRef, o.DeliveryNoteNo);
+        var orders = reportType == ReportType.DeliveryOrder
+            ? BuildDeliveryOrderOrders(rows, pull)
+            : BuildDeliveryNoteOrders(rows, pull);
 
         // Per-warehouse logo + address for the DSV header — null when unset.
         var wh = await _warehouses.GetByIdAsync(pull.WarehouseId, ct);
@@ -173,9 +113,158 @@ public class DeliveryOrderService : IDeliveryOrderService
         };
     }
 
-    public async Task<Report> BuildAsync(Guid pullId, CancellationToken ct = default)
+    // ------------------------------------------------------------------
+    // Grouping builders — one per ReportType. Both consume the same flat
+    // DoReportRow set; they differ only in how rows fold into DoOrders.
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// DeliveryNote (v3.5 default) — one DO per OrderId. Vendor / sub / to-loc
+    /// / invoice are per-DO attributes (one line per DO). NULL OrderId can't
+    /// be a DataSet PK, so synthesize a deterministic fallback + warn.
+    /// </summary>
+    private List<DoOrder> BuildDeliveryNoteOrders(IReadOnlyList<DoReportRow> rows, PullDetail pull)
     {
-        var data = await GetReportDataAsync(pullId, ct);
+        var pullHex = pull.Id.ToString("N").Substring(0, 8).ToUpperInvariant();
+
+        var orders = rows
+            .GroupBy(r => r.OrderId ?? $"{pullHex}-{r.PoNumber}L{r.PoLineNumber}")
+            .Select(g =>
+            {
+                var lines = g.Select(r => new DoLine
+                {
+                    ItemCode       = r.ItemCode,
+                    Description    = r.Description,
+                    PoLineNumber   = r.PoLineNumber,
+                    PoLineRef      = $"{r.PoNumber}·L{r.PoLineNumber}",
+                    TotalQty       = r.TotalQty,
+                    LastReceivedAt = r.LastReceivedAt,
+                    PalletId       = r.PalletId,
+                    OrderId        = r.OrderId,
+                    InvoiceNo      = string.IsNullOrEmpty(r.InvoiceNo)    ? null : r.InvoiceNo,
+                    KanbanNo       = r.KanbanNo,
+                    SubInventory   = string.IsNullOrEmpty(r.SubInventory) ? null : r.SubInventory,
+                    ToLocation     = string.IsNullOrEmpty(r.ToLocation)   ? null : r.ToLocation,
+                    AsnNo          = r.AsnNo,
+                    OrderRound     = r.OrderRound,
+                    SourcePoNo     = r.SourcePoNo,
+                }).ToList();
+                var first = g.First();
+                var headerPo = g.Select(r => r.PoNumber)
+                                .Where(s => !string.IsNullOrEmpty(s))
+                                .OrderBy(s => s, StringComparer.Ordinal)
+                                .FirstOrDefault();
+                return new DoOrder
+                {
+                    VendorCode     = string.IsNullOrEmpty(first.VendorCode)   ? null : first.VendorCode,
+                    VendorName     = string.IsNullOrEmpty(first.VendorName)   ? null : first.VendorName,
+                    SubInventory   = string.IsNullOrEmpty(first.SubInventory) ? null : first.SubInventory,
+                    ToLocation     = string.IsNullOrEmpty(first.ToLocation)   ? null : first.ToLocation,
+                    InvoiceNo      = string.IsNullOrEmpty(first.InvoiceNo)    ? null : first.InvoiceNo,
+                    HeaderPoNumber = headerPo,
+                    DeliveryNoteNo = g.Key,                  // = OrderId (or synthesized fallback)
+                    LastReceivedAt = lines.Max(l => l.LastReceivedAt),
+                    Lines          = lines,
+                    TotalQty       = lines.Sum(l => l.TotalQty),
+                };
+            })
+            .OrderBy(o => o.DeliveryNoteNo, StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var o in orders.Where(o => o.Lines.Any(l => l.OrderId is null)))
+            _log.LogWarning(
+                "DO report (pull {PullNumber}): line {PoLineRef} has NULL OrderId — " +
+                "synthesized DeliveryNoteNo {DeliveryNoteNo}",
+                pull.PullNumber, o.Lines[0].PoLineRef, o.DeliveryNoteNo);
+
+        return orders;
+    }
+
+    /// <summary>
+    /// DSV DeliveryOrder — one DO per (SubInventory × ToLocation) movement.
+    /// Vendor + Locator + DN/INV are per-line columns; the header carries
+    /// the Pull's number as the DO#, the group's Order Time (earliest
+    /// DeliveryDate), the unioned Round, and a collapse-if-constant
+    /// Production Line. Lines stay at PO-line grain — the same Part Number
+    /// can repeat with its own Locator/DN (a physical-line list, not an
+    /// item rollup).
+    /// </summary>
+    private List<DoOrder> BuildDeliveryOrderOrders(IReadOnlyList<DoReportRow> rows, PullDetail pull)
+    {
+        return rows
+            .GroupBy(r => new
+            {
+                Sub = r.SubInventory ?? "",
+                To  = r.ToLocation ?? "",
+            })
+            .Select(g =>
+            {
+                var lines = g
+                    .OrderBy(r => r.VendorName, StringComparer.Ordinal)
+                    .ThenBy(r => r.ItemCode, StringComparer.Ordinal)
+                    .ThenBy(r => r.OrderId, StringComparer.Ordinal)
+                    .Select(r => new DoLine
+                    {
+                        ItemCode       = r.ItemCode,
+                        Description    = r.Description,
+                        PoLineNumber   = r.PoLineNumber,
+                        PoLineRef      = $"{r.PoNumber}·L{r.PoLineNumber}",
+                        TotalQty       = r.TotalQty,
+                        LastReceivedAt = r.LastReceivedAt,
+                        PalletId       = r.PalletId,
+                        OrderId        = r.OrderId,
+                        InvoiceNo      = string.IsNullOrEmpty(r.InvoiceNo)    ? null : r.InvoiceNo,
+                        KanbanNo       = r.KanbanNo,
+                        SubInventory   = string.IsNullOrEmpty(r.SubInventory) ? null : r.SubInventory,
+                        ToLocation     = string.IsNullOrEmpty(r.ToLocation)   ? null : r.ToLocation,
+                        AsnNo          = r.AsnNo,
+                        OrderRound     = r.OrderRound,
+                        SourcePoNo     = r.SourcePoNo,
+                        VendorCode     = string.IsNullOrEmpty(r.VendorCode) ? null : r.VendorCode,
+                        VendorName     = string.IsNullOrEmpty(r.VendorName) ? null : r.VendorName,
+                        DeliveryDate   = r.DeliveryDate,
+                        Locator        = DsvFormat.Locator(r.SubInventory, r.DeliveryDate, r.OrderId),
+                        DnInv          = DsvFormat.DnInv(r.OrderId, r.InvoiceNo),
+                    }).ToList();
+
+                var sub = string.IsNullOrEmpty(g.Key.Sub) ? null : g.Key.Sub;
+                var to  = string.IsNullOrEmpty(g.Key.To)  ? null : g.Key.To;
+                return new DoOrder
+                {
+                    SubInventory   = sub,
+                    ToLocation     = to,
+                    // DSV header DO# = PullNumber (no upstream DO#). The group
+                    // key still needs to be unique per DataSet row, so the
+                    // internal DeliveryNoteNo carries the sub/to suffix.
+                    DeliveryNoteNo = $"{pull.PullNumber}~{g.Key.Sub}~{g.Key.To}",
+                    ProductionLine = DsvFormat.CollapseConstant(g.Select(r => r.ProductionLine)),
+                    RoundDisplay   = DsvFormat.RoundUnion(g.Select(r => r.OrderRound)),
+                    DeliveryDate   = g.Where(r => r.DeliveryDate.HasValue)
+                                      .Select(r => r.DeliveryDate!.Value)
+                                      .OrderBy(d => d)
+                                      .Cast<DateTime?>()
+                                      .FirstOrDefault(),
+                    LastReceivedAt = lines.Max(l => l.LastReceivedAt),
+                    Lines          = lines,
+                    TotalQty       = lines.Sum(l => l.TotalQty),
+                };
+            })
+            .OrderBy(o => o.SubInventory, StringComparer.Ordinal)
+            .ThenBy(o => o.ToLocation, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public async Task<Report> BuildAsync(
+        Guid pullId, ReportType reportType = ReportType.DeliveryNote, CancellationToken ct = default)
+    {
+        // PDF for the DSV Delivery Order ships with the PDF stage — the
+        // on-screen preview + Print are the supported paths until then.
+        if (reportType == ReportType.DeliveryOrder)
+            throw new BusinessException(
+                "PDF export for the DSV Delivery Order is not available yet. " +
+                "Use the on-screen preview or Print for now.");
+
+        var data = await GetReportDataAsync(pullId, reportType, ct);
         return Build(data);
     }
 

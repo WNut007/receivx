@@ -29,15 +29,19 @@ public class ReportsApiController : Controller
     // scope check happens before BuildData so a forbidden caller doesn't
     // even see the existence-or-not signal in the response timing.
     [HttpGet("do/{id:guid}/preview")]
-    public async Task<IActionResult> Preview(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Preview(Guid id, [FromQuery] string? type, CancellationToken ct)
     {
         try
         {
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
-            var data = await _doService.GetReportDataAsync(id, ct);
+            var reportType = ParseReportType(type);
+            var data = await _doService.GetReportDataAsync(id, reportType, ct);
             // Full path — the api controller's view discovery would look under
             // Views/ReportsApi/ otherwise (controller name → folder mapping).
-            return PartialView("~/Views/Reports/_DoPreview.cshtml", data);
+            var partial = reportType == ReportType.DeliveryOrder
+                ? "~/Views/Reports/_DsvOrderPreview.cshtml"
+                : "~/Views/Reports/_DoPreview.cshtml";
+            return PartialView(partial, data);
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(new { error = ex.Message }); }
@@ -49,12 +53,12 @@ public class ReportsApiController : Controller
     // the pull number so the operator's downloads folder shows
     // PL-XXXX-DO.pdf rather than a bare GUID.
     [HttpGet("do/{id:guid}/export.pdf")]
-    public async Task<IActionResult> ExportPdf(Guid id, CancellationToken ct)
+    public async Task<IActionResult> ExportPdf(Guid id, [FromQuery] string? type, CancellationToken ct)
     {
         try
         {
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
-            using var report = await _doService.BuildAsync(id, ct);
+            using var report = await _doService.BuildAsync(id, ParseReportType(type), ct);
             using var ms = new MemoryStream();
             using var pdf = new PDFSimpleExport();
             report.Export(pdf, ms);
@@ -78,4 +82,10 @@ public class ReportsApiController : Controller
     }
 
     private static Guid? ParseGuid(string? s) => Guid.TryParse(s, out var g) ? g : null;
+
+    /// <summary>Maps the ?type= query (order|order-dsv → DeliveryOrder; anything else → DeliveryNote).</summary>
+    private static ReportType ParseReportType(string? type) =>
+        string.Equals(type, "order", StringComparison.OrdinalIgnoreCase)
+            ? ReportType.DeliveryOrder
+            : ReportType.DeliveryNote;
 }
