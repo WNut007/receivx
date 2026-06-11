@@ -86,12 +86,9 @@
             const doCount = bodyEl.querySelectorAll('article').length;
             titleEl.textContent =
                 `${selectedPullNumber} · ${doCount} ${docNoun()}${doCount === 1 ? '' : 's'}`;
-            // PDF export is Note-only until the DSV Delivery Order .frx lands;
-            // Print works for both (it renders the HTML preview).
-            btnPdf.disabled = reportType === 'order';
-            btnPdf.title = reportType === 'order'
-                ? 'PDF export for the DSV Delivery Order is coming soon — use Print for now'
-                : '';
+            // PDF export works for both report types (each loads its own .frx).
+            btnPdf.disabled = false;
+            btnPdf.title = '';
             btnPrint.disabled = false;
         } catch (err) {
             bodyEl.innerHTML =

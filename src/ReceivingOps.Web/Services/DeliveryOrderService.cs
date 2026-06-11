@@ -61,10 +61,11 @@ public class DeliveryOrderService : IDeliveryOrderService
         _log = log;
     }
 
-    private string GetFrxPath() =>
-        Path.Combine(_env.ContentRootPath, "Reports", "delivery-order.frx");
-
-    private bool FrxExists() => File.Exists(GetFrxPath());
+    private string GetFrxPath(ReportType reportType) =>
+        Path.Combine(_env.ContentRootPath, "Reports",
+            reportType == ReportType.DeliveryOrder
+                ? "delivery-order-dsv.frx"
+                : "delivery-order.frx");
 
     public async Task<DoReportData> GetReportDataAsync(
         Guid pullId, ReportType reportType = ReportType.DeliveryNote, CancellationToken ct = default)
@@ -257,23 +258,16 @@ public class DeliveryOrderService : IDeliveryOrderService
     public async Task<Report> BuildAsync(
         Guid pullId, ReportType reportType = ReportType.DeliveryNote, CancellationToken ct = default)
     {
-        // PDF for the DSV Delivery Order ships with the PDF stage — the
-        // on-screen preview + Print are the supported paths until then.
-        if (reportType == ReportType.DeliveryOrder)
-            throw new BusinessException(
-                "PDF export for the DSV Delivery Order is not available yet. " +
-                "Use the on-screen preview or Print for now.");
-
         var data = await GetReportDataAsync(pullId, reportType, ct);
-        return Build(data);
+        return Build(data, reportType);
     }
 
-    private Report Build(DoReportData data)
+    private Report Build(DoReportData data, ReportType reportType)
     {
-        EnsureFrxExists();
+        EnsureFrxExists(reportType);
 
         var report = new Report();
-        report.Load(GetFrxPath());
+        report.Load(GetFrxPath(reportType));
 
         // Replace the schema-only DataSet that lives in the .frx dictionary
         // with the populated one. RegisterData(name) matches by data-source
@@ -300,16 +294,18 @@ public class DeliveryOrderService : IDeliveryOrderService
     /// requests safely: the loser of the race silently discards their temp
     /// copy and reads the winner's file.
     /// </summary>
-    private void EnsureFrxExists()
+    private void EnsureFrxExists(ReportType reportType)
     {
-        var finalPath = GetFrxPath();
+        var finalPath = GetFrxPath(reportType);
         if (File.Exists(finalPath)) return;
 
         var dir = Path.GetDirectoryName(finalPath)!;
         Directory.CreateDirectory(dir);
 
         var tempPath = finalPath + ".tmp." + Guid.NewGuid().ToString("N");
-        using (var template = DeliveryOrderTemplateBuilder.BuildTemplate())
+        using (var template = reportType == ReportType.DeliveryOrder
+            ? DsvDeliveryOrderTemplateBuilder.BuildTemplate()
+            : DeliveryOrderTemplateBuilder.BuildTemplate())
         {
             template.Save(tempPath);
         }
