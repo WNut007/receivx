@@ -224,13 +224,12 @@ Migration: **`db/042_delivery_order_signatures.sql`** (idempotent
 `db/035` wiped transactional data for Phase 14 — the new table holds no
 historical data so no backfill is needed.
 
-**Reconcile with the existing close-signature.** `Pulls.SignatureSvg`
-(the close "APPROVED FOR DELIVERY BY") overlaps conceptually with the
-**Warehouse** party. Decide (open Q): (a) leave close-signature as-is and
-add 3 new parties beside it (4 marks total), (b) map the close-signature
-onto the Warehouse party, or (c) deprecate the close-signature in favour
-of the new 3-party flow. Recommendation: **(a)** for the first cut — keep
-close-signature working, add the 3 parties as a new band — lowest risk.
+**Reconcile with the existing close-signature. — DECIDED (user, 2026-06-29):**
+`Pulls.SignatureSvg` (the close "APPROVED FOR DELIVERY BY") is **dropped
+from the report**. The 3 new party boxes (Customer / Warehouse /
+Production) **replace** the old 2 boxes outright — final layout is
+exactly 3 boxes, no 4th close-signature mark. (The pull-close flow
+elsewhere is untouched; only its display on the DO reports is removed.)
 
 ### 2.3 Sign workflow
 
@@ -272,8 +271,10 @@ the party is unsigned — a **"Sign as {Party}"** button.
 
 ### 2.4 Report display (both reports)
 
-Replace the current 2-box footer with a **3-party signature band** (or
-4-box if keeping close-signature per §2.2 recommendation (a)):
+Replace the current 2-box footer with a **3-party signature band** — the
+3 boxes (Customer / Warehouse / Production) **replace** the old 2 boxes
+(`ISSUED / PICKED BY` + `APPROVED FOR DELIVERY BY`); the pull-close
+signature is dropped from the report (decided — see §3.6):
 
 - **Signed:** party label + signer name + timestamp
   (`dd MMM yyyy · HH:mm UTC` to match `_DoPreview.cshtml:118`) + optional
@@ -336,9 +337,14 @@ or always allowed with blanks.
    admin-only void. Does signing **lock** anything?
 5. **PDF snapshot policy.** Allow export with unsigned blanks, or block
    export until all parties sign?
-6. **Close-signature reconciliation.** Keep the existing pull-close
-   "APPROVED FOR DELIVERY BY" as a 4th mark (recommended), map it to the
-   Warehouse party, or deprecate it?
+6. **Close-signature reconciliation. — DECIDED (user, 2026-06-29):**
+   **DROP** the old pull-close signature from the report. The 3 new boxes
+   (Customer / Warehouse / Production) **REPLACE** the current 2 boxes
+   (`ISSUED / PICKED BY` + `APPROVED FOR DELIVERY BY`) — not added beside
+   them. Net result: exactly 3 signature boxes on each report, no 4th
+   mark. The `Pulls.SignatureSvg` close-signature is no longer surfaced
+   on the DO reports (the pull-close flow itself is out of scope for this
+   feature — only its *display on the report* is removed).
 7. **Admin override.** Can an admin sign any/all parties (e.g. for
    backfill or absent signer)? Audited as override?
 8. **Warehouse scope.** Must a signer's session warehouse match the
