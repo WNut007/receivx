@@ -56,7 +56,8 @@
     <Relation Name="OrdersLines" ParentDataSource="Orders" ChildDataSource="Lines" ParentColumns="DeliveryNoteNo" ChildColumns="DeliveryNoteNo" Enabled="true"/>
   </Dictionary>
   <ReportPage Name="DsvDeliveryOrderPage" LeftMargin="15" TopMargin="15" RightMargin="15" BottomMargin="15" Watermark.Font="Arial, 60pt">
-    <DataBand Name="MasterDsv" Height="173.88" StartNewPage="true" DataSource="Orders">
+    <DataBand Name="MasterDsv" Height="0" StartNewPage="true" DataSource="Orders">
+      <DataHeaderBand Name="MasterHeaderDsv" Height="139.86" RepeatOnEveryPage="true">
       <PictureObject Name="WhLogo" Width="132.3" Height="52.92" DataColumn="Orders.WarehouseLogoBytes"/>
       <TextObject Name="DoTitle" Left="189" Top="7.56" Width="302.4" Height="34.02" CanGrow="true" Text="DELIVERY ORDER" HorzAlign="Center" Font="Arial, 18pt, style=Bold"/>
       <TextObject Name="DoNoLabel" Left="491.4" Top="3.78" Width="189" Height="15.12" CanGrow="true" Text="DELIVERY ORDER#" HorzAlign="Right" Font="Arial, 7pt"/>
@@ -72,14 +73,17 @@
       <TextObject Name="MetaRV0" Left="472.5" Top="68.04" Width="207.9" Height="18.9" CanGrow="true" Text="[Orders.SubInventory]" Font="Arial, 11pt, style=Bold"/>
       <TextObject Name="MetaRL1" Left="378" Top="90.72" Width="94.5" Height="18.9" CanGrow="true" Text="TO SUB" Font="Arial, 8pt, style=Bold"/>
       <TextObject Name="MetaRV1" Left="472.5" Top="90.72" Width="207.9" Height="18.9" CanGrow="true" Text="[Orders.ToLocation]" Font="Arial, 11pt, style=Bold"/>
-      <LineObject Name="Rule2" Top="139.86" Width="680.4" Border.Width="0.5"/>
-      <TextObject Name="HdrPart" Top="147.42" Width="158.76" Height="22.68" CanGrow="true" Text="PART NUMBER" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="HdrQty" Left="158.76" Top="147.42" Width="75.6" Height="22.68" CanGrow="true" Text="QTY ISSUE" HorzAlign="Right" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="HdrLoc" Left="234.36" Top="147.42" Width="189" Height="22.68" CanGrow="true" Text="LOCATOR" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="HdrVendor" Left="423.36" Top="147.42" Width="132.3" Height="22.68" CanGrow="true" Text="VENDOR" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="HdrDnInv" Left="555.66" Top="147.42" Width="124.74" Height="22.68" CanGrow="true" Text="DN/INV NUMBER" Font="Arial, 8pt, style=Bold"/>
-      <LineObject Name="Rule3" Top="170.1" Width="680.4" Border.Width="0.5"/>
+      </DataHeaderBand>
       <DataBand Name="DetailDsv" Height="52.92" DataSource="Lines" Relation="OrdersLines">
+        <DataHeaderBand Name="DetailHeaderDsv" Height="30.24" RepeatOnEveryPage="true">
+          <LineObject Name="Rule2" Width="680.4" Border.Width="0.5"/>
+          <TextObject Name="HdrPart" Top="7.56" Width="158.76" Height="22.68" CanGrow="true" Text="PART NUMBER" Font="Arial, 8pt, style=Bold"/>
+          <TextObject Name="HdrQty" Left="158.76" Top="7.56" Width="75.6" Height="22.68" CanGrow="true" Text="QTY ISSUE" HorzAlign="Right" Font="Arial, 8pt, style=Bold"/>
+          <TextObject Name="HdrLoc" Left="234.36" Top="7.56" Width="189" Height="22.68" CanGrow="true" Text="LOCATOR" Font="Arial, 8pt, style=Bold"/>
+          <TextObject Name="HdrVendor" Left="423.36" Top="7.56" Width="132.3" Height="22.68" CanGrow="true" Text="VENDOR" Font="Arial, 8pt, style=Bold"/>
+          <TextObject Name="HdrDnInv" Left="555.66" Top="7.56" Width="124.74" Height="22.68" CanGrow="true" Text="DN/INV NUMBER" Font="Arial, 8pt, style=Bold"/>
+          <LineObject Name="Rule3" Top="30.24" Width="680.4" Border.Width="0.5"/>
+        </DataHeaderBand>
         <TextObject Name="ColPart" Top="1.89" Width="158.76" Height="15.12" CanGrow="true" Text="[Lines.ItemCode]" Font="Arial, 9pt, style=Bold"/>
         <BarcodeObject Name="ColBc" Top="18.9" Width="143.64" Height="28.35" AutoSize="false" Text="[Lines.ItemCode]" Barcode="Code128" Barcode.AutoEncode="true"/>
         <TextObject Name="ColQty" Left="158.76" Top="1.89" Width="75.6" Height="18.9" CanGrow="true" Text="[Lines.TotalQty]" HorzAlign="Right" Font="Arial, 10pt, style=Bold"/>
@@ -88,22 +92,22 @@
         <TextObject Name="ColDnInv" Left="555.66" Top="1.89" Width="124.74" Height="45.36" CanGrow="true" Text="[Lines.DnInv]" Font="Arial, 8pt"/>
         <LineObject Name="RowRule" Top="51.03" Width="680.4" Border.Width="0.25"/>
       </DataBand>
-      <DataFooterBand Name="OrderFooterDsv" Height="45.36">
+      <DataFooterBand Name="OrderFooterDsv" Height="189">
         <LineObject Name="RuleTotal" Top="3.78" Width="680.4" Border.Width="0.5"/>
         <TextObject Name="TotalLabel" Top="11.34" Width="151.2" Height="22.68" CanGrow="true" Text="TOTAL QTY" HorzAlign="Right" Font="Arial, 9pt, style=Bold"/>
         <TextObject Name="TotalValue" Left="158.76" Top="11.34" Width="75.6" Height="22.68" CanGrow="true" Text="[Orders.TotalQty]" HorzAlign="Right" Font="Arial, 12pt, style=Bold"/>
+        <LineObject Name="FootRule0" Top="49.14" Width="680.4" Border.Width="0.5"/>
+        <TextObject Name="SigDelLabel" Top="56.7" Width="321.3" Height="18.9" CanGrow="true" Text="ISSUED / PICKED BY" Font="Arial, 8pt, style=Bold"/>
+        <TextObject Name="SigAppLabel" Left="359.1" Top="56.7" Width="321.3" Height="18.9" CanGrow="true" Text="APPROVED FOR DELIVERY BY" Font="Arial, 8pt, style=Bold"/>
+        <TextObject Name="SigDelBox" Top="79.38" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
+        <TextObject Name="SigAppBox" Left="359.1" Top="79.38" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
+        <PictureObject Name="AuthSig" Left="366.66" Top="83.16" Width="306.18" Height="75.6" DataColumn="Orders.SignatureBytes"/>
+        <TextObject Name="SigDelCap" Top="166.32" Width="321.3" Height="15.12" CanGrow="true" Text="Name / Signature / Date" HorzAlign="Center" Font="Arial, 7pt"/>
+        <TextObject Name="SigAppCap" Left="359.1" Top="166.32" Width="321.3" Height="15.12" CanGrow="true" Text="[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]" HorzAlign="Center" Font="Arial, 7pt"/>
       </DataFooterBand>
     </DataBand>
-    <PageFooterBand Name="PageFootDsv" Height="158.76">
-      <LineObject Name="FootRule0" Width="680.4" Border.Width="0.5"/>
-      <TextObject Name="SigDelLabel" Top="15.12" Width="321.3" Height="18.9" CanGrow="true" Text="ISSUED / PICKED BY" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="SigAppLabel" Left="359.1" Top="15.12" Width="321.3" Height="18.9" CanGrow="true" Text="APPROVED FOR DELIVERY BY" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="SigDelBox" Top="37.8" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
-      <TextObject Name="SigAppBox" Left="359.1" Top="37.8" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
-      <PictureObject Name="AuthSig" Left="366.66" Top="41.58" Width="306.18" Height="75.6" DataColumn="Orders.SignatureBytes"/>
-      <TextObject Name="SigDelCap" Top="124.74" Width="321.3" Height="15.12" CanGrow="true" Text="Name / Signature / Date" HorzAlign="Center" Font="Arial, 7pt"/>
-      <TextObject Name="SigAppCap" Left="359.1" Top="124.74" Width="321.3" Height="15.12" CanGrow="true" Text="[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]" HorzAlign="Center" Font="Arial, 7pt"/>
-      <TextObject Name="PageNum" Left="491.4" Top="143.64" Width="189" Height="15.12" CanGrow="true" Text="Page [Page#] of [TotalPages#]" HorzAlign="Right" Font="Arial, 7pt"/>
+    <PageFooterBand Name="PageFootDsv" Height="30.24">
+      <TextObject Name="PageNum" Left="491.4" Top="7.56" Width="189" Height="15.12" CanGrow="true" Text="Page [Page#] of [TotalPages#]" HorzAlign="Right" Font="Arial, 7pt"/>
     </PageFooterBand>
   </ReportPage>
 </Report>

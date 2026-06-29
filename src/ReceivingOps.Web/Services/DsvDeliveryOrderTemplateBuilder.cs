@@ -89,6 +89,8 @@ public static class DsvDeliveryOrderTemplateBuilder
         var detail = BuildDetailBand(linesDs);
         detail.Relation = report.Dictionary.Relations.FindByName(
             DoReportDataSetBuilder.OrdersLinesRelationName);
+        // Column header repeats on every page of a multi-page DO.
+        detail.Header = BuildDetailHeader();
         master.Bands.Add(detail);
 
         master.Footer = BuildOrderFooter();
@@ -98,8 +100,12 @@ public static class DsvDeliveryOrderTemplateBuilder
     }
 
     // ------------------------------------------------------------------
-    // Master band — title strip + meta grid + column header. ~46mm.
-    // Reprints per Orders row (each row = one page).
+    // Master band — zero-height driver. It only iterates Orders (one row =
+    // one DO) and carries StartNewPage so each DO opens on a fresh page.
+    // The visible doc header lives in its DataHeaderBand (BuildMasterHeader)
+    // so it repeats on every page of a multi-page DO; the column header is
+    // the detail band's DataHeader (BuildDetailHeader). Both repeat → page
+    // 2+ of a DO shows the complete header (logo · DO# · meta · columns).
     // ------------------------------------------------------------------
     private static DataBand BuildMasterBand(FastReport.Data.DataSourceBase ordersDs)
     {
@@ -108,49 +114,86 @@ public static class DsvDeliveryOrderTemplateBuilder
             Name = MasterBandName,
             DataSource = ordersDs,
             StartNewPage = true,
-            Height = Units.Millimeters * 46f,
+            Height = 0f,
+        };
+        master.Header = BuildMasterHeader();
+        return master;
+    }
+
+    // ------------------------------------------------------------------
+    // Master DataHeader — the document header (logo · DELIVERY ORDER title ·
+    // DELIVERY ORDER# · meta grid ORDER TIME/PRODUCTION LINE/ROUND ||
+    // FROM SUB/TO SUB). RepeatOnEveryPage=true + the band sits in the master
+    // (Orders) context, so its [Orders.*] bindings resolve to the current DO
+    // on every page — including page 1 (a DataHeader prints after the row is
+    // read, unlike a PageHeader). ~37mm.
+    // ------------------------------------------------------------------
+    private static DataHeaderBand BuildMasterHeader()
+    {
+        var header = new DataHeaderBand
+        {
+            Name = "MasterHeaderDsv",
+            Height = Units.Millimeters * 37f,
+            RepeatOnEveryPage = true,
         };
 
         // ----- (1) Top strip: logo · DELIVERY ORDER · DELIVERY ORDER# -----
-        master.Objects.Add(MakeDataPicture("WhLogo", 0, 0, 35, 14,
+        header.Objects.Add(MakeDataPicture("WhLogo", 0, 0, 35, 14,
             DoReportDataSetBuilder.OrdersTableName + ".WarehouseLogoBytes"));
-        master.Objects.Add(MakeText("DoTitle", 50, 2, 80, 9,
+        header.Objects.Add(MakeText("DoTitle", 50, 2, 80, 9,
             "DELIVERY ORDER", fontSize: 18f, bold: true, align: HorzAlign.Center));
-        master.Objects.Add(MakeText("DoNoLabel", 130, 1, 50, 4,
+        header.Objects.Add(MakeText("DoNoLabel", 130, 1, 50, 4,
             "DELIVERY ORDER#", fontSize: 7f, align: HorzAlign.Right));
-        master.Objects.Add(MakeText("DoNoValue", 130, 5, 50, 6,
+        header.Objects.Add(MakeText("DoNoValue", 130, 5, 50, 6,
             "[Orders.PullNumber]", fontSize: 12f, bold: true, align: HorzAlign.Right));
 
-        master.Objects.Add(MakeHRule("Rule1", 0, 15, 180));
+        header.Objects.Add(MakeHRule("Rule1", 0, 15, 180));
 
         // ----- (2) Meta grid: 3 left rows / 2 right rows -----
         // Left:  ORDER TIME · PRODUCTION LINE · ROUND
         // Right: FROM SUB · TO SUB
         const float y0 = 18f, rowH = 6f;
-        master.Objects.Add(MakeText("MetaLL0", 0, y0,            35, 5, "ORDER TIME",      8f, bold: true));
-        master.Objects.Add(MakeText("MetaLV0", 35, y0,          60, 5, "[Orders.OrderTimeText]", 10f));
-        master.Objects.Add(MakeText("MetaLL1", 0, y0 + rowH,    35, 5, "PRODUCTION LINE", 8f, bold: true));
-        master.Objects.Add(MakeText("MetaLV1", 35, y0 + rowH,   60, 5, "[Orders.ProductionLine]", 10f));
-        master.Objects.Add(MakeText("MetaLL2", 0, y0 + rowH * 2, 35, 5, "ROUND",          8f, bold: true));
-        master.Objects.Add(MakeText("MetaLV2", 35, y0 + rowH * 2, 145, 5, "[Orders.RoundDisplay]", 10f));
+        header.Objects.Add(MakeText("MetaLL0", 0, y0,            35, 5, "ORDER TIME",      8f, bold: true));
+        header.Objects.Add(MakeText("MetaLV0", 35, y0,          60, 5, "[Orders.OrderTimeText]", 10f));
+        header.Objects.Add(MakeText("MetaLL1", 0, y0 + rowH,    35, 5, "PRODUCTION LINE", 8f, bold: true));
+        header.Objects.Add(MakeText("MetaLV1", 35, y0 + rowH,   60, 5, "[Orders.ProductionLine]", 10f));
+        header.Objects.Add(MakeText("MetaLL2", 0, y0 + rowH * 2, 35, 5, "ROUND",          8f, bold: true));
+        header.Objects.Add(MakeText("MetaLV2", 35, y0 + rowH * 2, 145, 5, "[Orders.RoundDisplay]", 10f));
 
-        master.Objects.Add(MakeText("MetaRL0", 100, y0,         25, 5, "FROM SUB",        8f, bold: true));
-        master.Objects.Add(MakeText("MetaRV0", 125, y0,         55, 5, "[Orders.SubInventory]", 11f, bold: true));
-        master.Objects.Add(MakeText("MetaRL1", 100, y0 + rowH,  25, 5, "TO SUB",          8f, bold: true));
-        master.Objects.Add(MakeText("MetaRV1", 125, y0 + rowH,  55, 5, "[Orders.ToLocation]", 11f, bold: true));
+        header.Objects.Add(MakeText("MetaRL0", 100, y0,         25, 5, "FROM SUB",        8f, bold: true));
+        header.Objects.Add(MakeText("MetaRV0", 125, y0,         55, 5, "[Orders.SubInventory]", 11f, bold: true));
+        header.Objects.Add(MakeText("MetaRL1", 100, y0 + rowH,  25, 5, "TO SUB",          8f, bold: true));
+        header.Objects.Add(MakeText("MetaRV1", 125, y0 + rowH,  55, 5, "[Orders.ToLocation]", 11f, bold: true));
 
-        master.Objects.Add(MakeHRule("Rule2", 0, 37, 180));
+        return header;
+    }
 
-        // ----- (3) Column header: PART | QTY ISSUE | LOCATOR | VENDOR | DN/INV -----
-        // Widths (180mm): PART 42 · QTY 20 · LOCATOR 50 · VENDOR 35 · DN/INV 33
-        master.Objects.Add(MakeText("HdrPart",   0,  39, 42, 6, "PART NUMBER",   8f, bold: true));
-        master.Objects.Add(MakeText("HdrQty",   42,  39, 20, 6, "QTY ISSUE",     8f, bold: true, align: HorzAlign.Right));
-        master.Objects.Add(MakeText("HdrLoc",   62,  39, 50, 6, "LOCATOR",       8f, bold: true));
-        master.Objects.Add(MakeText("HdrVendor",112, 39, 35, 6, "VENDOR",        8f, bold: true));
-        master.Objects.Add(MakeText("HdrDnInv", 147, 39, 33, 6, "DN/INV NUMBER", 8f, bold: true));
-        master.Objects.Add(MakeHRule("Rule3", 0, 45, 180));
+    // ------------------------------------------------------------------
+    // Detail DataHeader — the column header (PART | QTY ISSUE | LOCATOR |
+    // VENDOR | DN/INV). RepeatOnEveryPage=true so a DO whose lines overflow
+    // onto page 2+ keeps the table header on every page. Lives on the
+    // detail band (not the master) so it prints below the doc header on the
+    // first page and at the top of each continuation page. ~8mm.
+    // Widths (180mm): PART 42 · QTY 20 · LOCATOR 50 · VENDOR 35 · DN/INV 33
+    // ------------------------------------------------------------------
+    private static DataHeaderBand BuildDetailHeader()
+    {
+        var header = new DataHeaderBand
+        {
+            Name = "DetailHeaderDsv",
+            Height = Units.Millimeters * 8f,
+            RepeatOnEveryPage = true,
+        };
 
-        return master;
+        header.Objects.Add(MakeHRule("Rule2", 0, 0, 180));
+        header.Objects.Add(MakeText("HdrPart",   0,  2, 42, 6, "PART NUMBER",   8f, bold: true));
+        header.Objects.Add(MakeText("HdrQty",   42,  2, 20, 6, "QTY ISSUE",     8f, bold: true, align: HorzAlign.Right));
+        header.Objects.Add(MakeText("HdrLoc",   62,  2, 50, 6, "LOCATOR",       8f, bold: true));
+        header.Objects.Add(MakeText("HdrVendor",112, 2, 35, 6, "VENDOR",        8f, bold: true));
+        header.Objects.Add(MakeText("HdrDnInv", 147, 2, 33, 6, "DN/INV NUMBER", 8f, bold: true));
+        header.Objects.Add(MakeHRule("Rule3", 0, 8, 180));
+
+        return header;
     }
 
     // ------------------------------------------------------------------
@@ -182,55 +225,63 @@ public static class DsvDeliveryOrderTemplateBuilder
     }
 
     // ------------------------------------------------------------------
-    // Per-master DataFooter — TOTAL QTY under the QTY ISSUE column.
+    // Per-master DataFooter — TOTAL QTY + the two signature boxes (Issued/
+    // Picked By + Approved For Delivery By with the closer's PNG mark).
+    // Because this is the master's DataFooter it prints once per DO, after
+    // the last line — i.e. on the DO's LAST page only. The signatures used
+    // to live in the PageFooter (every page); moved here so they sign off
+    // the document once. [Orders.*] resolves to the current DO (master
+    // context). ~50mm.
     // ------------------------------------------------------------------
     private static DataFooterBand BuildOrderFooter()
     {
         var footer = new DataFooterBand
         {
             Name = OrderFooterName,
-            Height = Units.Millimeters * 12f,
+            Height = Units.Millimeters * 50f,
         };
         footer.Objects.Add(MakeHRule("RuleTotal", 0, 1, 180));
         footer.Objects.Add(MakeText("TotalLabel", 0, 3, 40, 6,
             "TOTAL QTY", fontSize: 9f, bold: true, align: HorzAlign.Right));
         footer.Objects.Add(MakeText("TotalValue", 42, 3, 20, 6,
             "[Orders.TotalQty]", fontSize: 12f, bold: true, align: HorzAlign.Right));
+
+        footer.Objects.Add(MakeHRule("FootRule0", 0, 13, 180));
+
+        footer.Objects.Add(MakeText("SigDelLabel", 0, 15, 85, 5,
+            "ISSUED / PICKED BY", fontSize: 8f, bold: true));
+        footer.Objects.Add(MakeText("SigAppLabel", 95, 15, 85, 5,
+            "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
+
+        footer.Objects.Add(MakeBox("SigDelBox", 0, 21, 85, 22));
+        footer.Objects.Add(MakeBox("SigAppBox", 95, 21, 85, 22));
+        // PNG signature mark bound to Orders.SignatureBytes (pre-flattened
+        // onto white server-side). Inline-SVG / undecodable → DBNull → blank.
+        footer.Objects.Add(MakeDataPicture("AuthSig", 97, 22, 81, 20,
+            DoReportDataSetBuilder.OrdersTableName + ".SignatureBytes"));
+
+        footer.Objects.Add(MakeText("SigDelCap", 0, 44, 85, 4,
+            "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
+        footer.Objects.Add(MakeText("SigAppCap", 95, 44, 85, 4,
+            "[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]",
+            fontSize: 7f, align: HorzAlign.Center));
+
         return footer;
     }
 
     // ------------------------------------------------------------------
-    // PageFooter — two signature boxes + page number, repeats per page.
+    // PageFooter — page number only, repeats per page. The signatures moved
+    // to the per-DO DataFooter (last page only); page numbering stays here.
     // ------------------------------------------------------------------
     private static PageFooterBand BuildPageFooter()
     {
         var footer = new PageFooterBand
         {
             Name = PageFooterName,
-            Height = Units.Millimeters * 42f,
+            Height = Units.Millimeters * 8f,
         };
 
-        footer.Objects.Add(MakeHRule("FootRule0", 0, 0, 180));
-
-        footer.Objects.Add(MakeText("SigDelLabel", 0, 4, 85, 5,
-            "ISSUED / PICKED BY", fontSize: 8f, bold: true));
-        footer.Objects.Add(MakeText("SigAppLabel", 95, 4, 85, 5,
-            "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
-
-        footer.Objects.Add(MakeBox("SigDelBox", 0, 10, 85, 22));
-        footer.Objects.Add(MakeBox("SigAppBox", 95, 10, 85, 22));
-        // PNG signature mark bound to Orders.SignatureBytes (pre-flattened
-        // onto white server-side). Inline-SVG / undecodable → DBNull → blank.
-        footer.Objects.Add(MakeDataPicture("AuthSig", 97, 11, 81, 20,
-            DoReportDataSetBuilder.OrdersTableName + ".SignatureBytes"));
-
-        footer.Objects.Add(MakeText("SigDelCap", 0, 33, 85, 4,
-            "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
-        footer.Objects.Add(MakeText("SigAppCap", 95, 33, 85, 4,
-            "[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]",
-            fontSize: 7f, align: HorzAlign.Center));
-
-        footer.Objects.Add(MakeText("PageNum", 130, 38, 50, 4,
+        footer.Objects.Add(MakeText("PageNum", 130, 2, 50, 4,
             "Page [Page#] of [TotalPages#]", fontSize: 7f, align: HorzAlign.Right));
 
         return footer;
