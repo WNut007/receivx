@@ -104,6 +104,114 @@ public class PullSignatureService : IPullSignatureService
         }
     }
 
+    // Defensive cap so a runaway client can't sign an unbounded set in one call.
+    private const int MaxBatch = 500;
+
+    public async Task<SignBatchResult> SignBatchAsync(
+        IReadOnlyList<Guid> pullIds, string party, CancellationToken ct = default)
+    {
+        var canonical = Parties.FirstOrDefault(
+            p => string.Equals(p, party?.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? throw new BusinessException(
+                $"Invalid party '{party}'. Expected Customer or Production.");
+
+        // Warehouse is auto-signed at pull close (7b) — never batchable. Whole-batch
+        // reject (the controller's policy switch also blocks it before we get here).
+        if (string.Equals(canonical, "Warehouse", StringComparison.Ordinal))
+            throw new BusinessException(
+                "The Warehouse box is signed automatically at pull close and cannot be batch-signed.");
+
+        if (pullIds is null || pullIds.Count == 0)
+            throw new BusinessException("No pulls specified.");
+        if (pullIds.Count > MaxBatch)
+            throw new BusinessException($"Too many pulls in one batch (max {MaxBatch}).");
+
+        var ctx = _httpContext.HttpContext
+            ?? throw new InvalidOperationException("HttpContext unavailable");
+
+        var userId = ParseUserId(ctx);
+        var signerName = ctx.User.FindFirstValue("displayName")
+            ?? ctx.User.Identity?.Name ?? "(unknown)";
+        var sessionWh = Guid.TryParse(ctx.User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
+
+        // Capability gate — once, for the whole batch (party is batch-wide).
+        if (!ctx.User.HasClaim("canSign", canonical.ToLowerInvariant()))
+            throw new ForbiddenException($"Your role does not permit signing the {canonical} box.");
+
+        var results = new List<BatchSignItemResult>(pullIds.Count);
+        var seen = new HashSet<Guid>();
+
+        using var conn = _factory.Create();
+        conn.Open();
+
+        // One independent transaction per pull so an already-signed / cross-warehouse
+        // pull is recorded as skipped/error without rolling back the pulls that succeed.
+        foreach (var pullId in pullIds)
+        {
+            if (!seen.Add(pullId)) continue;  // ignore client-side duplicates
+
+            using var tx = conn.BeginTransaction();
+            try
+            {
+                var pull = await conn.QuerySingleOrDefaultAsync<PullScopeRow>(new CommandDefinition(@"
+                    SELECT Id, PullNumber, WarehouseId
+                    FROM dbo.Pulls WITH (UPDLOCK, ROWLOCK)
+                    WHERE Id = @Id;",
+                    new { Id = pullId }, transaction: tx, cancellationToken: ct));
+
+                if (pull is null)
+                {
+                    tx.Rollback();
+                    results.Add(new BatchSignItemResult { PullId = pullId, Outcome = "error", Detail = "Pull not found" });
+                    continue;
+                }
+
+                if (sessionWh != pull.WarehouseId)
+                {
+                    tx.Rollback();
+                    results.Add(new BatchSignItemResult { PullId = pullId, Outcome = "error", Detail = "Different warehouse" });
+                    continue;
+                }
+
+                if (await _repo.ExistsAsync(conn, tx, pullId, canonical, ct))
+                {
+                    tx.Rollback();
+                    results.Add(new BatchSignItemResult { PullId = pullId, Outcome = "skipped", Detail = "Already signed" });
+                    continue;
+                }
+
+                var sig = await _repo.InsertAsync(conn, tx, new PullSignature
+                {
+                    PullId = pullId,
+                    Party = canonical,
+                    WarehouseId = pull.WarehouseId,
+                    SignerUserId = userId,
+                    SignerName = signerName,
+                }, ct);
+
+                await _audit.WriteAsync(conn, tx, "do-sign", "Pull", pullId.ToString(),
+                    $"Batch-signed {canonical} on pull {pull.PullNumber} as {signerName}", ct);
+
+                tx.Commit();
+                results.Add(new BatchSignItemResult { PullId = pullId, Outcome = "signed", SignedAt = sig.SignedAt });
+            }
+            catch (Exception ex)
+            {
+                try { tx.Rollback(); } catch { /* tx already resolved */ }
+                results.Add(new BatchSignItemResult { PullId = pullId, Outcome = "error", Detail = ex.Message });
+            }
+        }
+
+        return new SignBatchResult
+        {
+            Party   = canonical,
+            Signed  = results.Count(r => r.Outcome == "signed"),
+            Skipped = results.Count(r => r.Outcome == "skipped"),
+            Errors  = results.Count(r => r.Outcome == "error"),
+            Results = results,
+        };
+    }
+
     private static Guid ParseUserId(HttpContext ctx)
     {
         var idClaim = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier);

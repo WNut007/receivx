@@ -117,6 +117,38 @@ public class ReportsApiController : Controller
         catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 409); }
     }
 
+    // POST /api/reports/sign-batch — sign one party (Customer/Production only) across
+    // many pulls. Warehouse is rejected (400) — it is auto-signed at pull close (7b).
+    // Partial success: per-pull outcomes (signed/skipped/error) + roll-up counts;
+    // an already-signed or cross-warehouse pull never fails the rest of the batch.
+    [HttpPost("sign-batch")]
+    public async Task<IActionResult> SignBatch([FromBody] SignBatchRequest req, CancellationToken ct)
+    {
+        var party = (req?.Party ?? "").Trim();
+        var policy = party.ToLowerInvariant() switch
+        {
+            "customer"   => "CanSignCustomer",
+            "production" => "CanSignProduction",
+            _            => null,   // Warehouse + anything else → not batchable
+        };
+        if (policy is null)
+            return Problem(
+                title: $"Party '{party}' cannot be batch-signed. Only Customer or Production are allowed (Warehouse is signed at close).",
+                statusCode: 400);
+
+        // Party-specific signer policy (same gate as single-sign).
+        var authz = await _authz.AuthorizeAsync(User, policy);
+        if (!authz.Succeeded)
+            return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
+
+        try
+        {
+            return Ok(await _sign.SignBatchAsync(req!.PullIds, party, ct));
+        }
+        catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 400); }
+    }
+
     // Sets per-party CanSign on the preview model: the current viewer may sign a
     // box when they hold the matching canSign capability AND their session
     // warehouse matches the pull's AND the box is unsigned. Mirrors the
