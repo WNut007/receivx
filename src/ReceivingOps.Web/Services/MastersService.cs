@@ -17,13 +17,13 @@ public class MastersService : IMastersService
     private static readonly HashSet<string> ValidRoles =
         new(StringComparer.OrdinalIgnoreCase) { "admin", "supervisor", "operator", "viewer" };
 
-    // Per-warehouse role (dbo.UserWarehouseAssignments.Role, → "whRole" claim) —
-    // gated by CK_UWA_Role (widened in db/042). Adds the 3 digital-signature
-    // signer parties: a user assigned customer/warehouse/production at a
-    // warehouse may sign that party's box on DOs for that warehouse.
+    // Per-warehouse operational role (dbo.UserWarehouseAssignments.Role, →
+    // "whRole" claim) — gated by CK_UWA_Role. Operational-only since db/043
+    // re-tightened the constraint: digital-signature capability is now carried
+    // by the additive CanSign* flags, NOT by overloading this role.
     private static readonly HashSet<string> ValidAssignmentRoles =
         new(StringComparer.OrdinalIgnoreCase)
-            { "admin", "supervisor", "operator", "viewer", "customer", "warehouse", "production" };
+            { "admin", "supervisor", "operator", "viewer" };
 
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
@@ -193,9 +193,13 @@ public class MastersService : IMastersService
             foreach (var a in assignments)
             {
                 await conn.ExecuteAsync(new CommandDefinition(@"
-                    INSERT INTO dbo.UserWarehouseAssignments (UserId, WarehouseId, Role, AssignedAt)
-                    VALUES (@UserId, @WarehouseId, @Role, SYSUTCDATETIME());",
-                    new { UserId = userId, a.WarehouseId, a.Role },
+                    INSERT INTO dbo.UserWarehouseAssignments
+                        (UserId, WarehouseId, Role,
+                         CanSignCustomer, CanSignWarehouse, CanSignProduction, AssignedAt)
+                    VALUES (@UserId, @WarehouseId, @Role,
+                         @CanSignCustomer, @CanSignWarehouse, @CanSignProduction, SYSUTCDATETIME());",
+                    new { UserId = userId, a.WarehouseId, a.Role,
+                          a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction },
                     transaction: tx, cancellationToken: ct));
             }
 

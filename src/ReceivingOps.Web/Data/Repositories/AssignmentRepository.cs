@@ -27,15 +27,15 @@ public class AssignmentRepository : IAssignmentRepository
         return rows.AsList();
     }
 
-    public async Task<string?> GetRoleAsync(Guid userId, Guid warehouseId, CancellationToken ct = default)
+    public async Task<AssignmentAccess?> GetAccessAsync(Guid userId, Guid warehouseId, CancellationToken ct = default)
     {
         const string sql = @"
-            SELECT Role
+            SELECT Role, CanSignCustomer, CanSignWarehouse, CanSignProduction
             FROM   dbo.UserWarehouseAssignments
             WHERE  UserId = @UserId AND WarehouseId = @WarehouseId;";
 
         using var conn = _factory.Create();
-        return await conn.QuerySingleOrDefaultAsync<string?>(
+        return await conn.QuerySingleOrDefaultAsync<AssignmentAccess?>(
             new CommandDefinition(sql, new { UserId = userId, WarehouseId = warehouseId }, cancellationToken: ct));
     }
 
@@ -43,7 +43,8 @@ public class AssignmentRepository : IAssignmentRepository
     {
         const string sql = @"
             SELECT a.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
-                   a.Role, a.AssignedAt
+                   a.Role, a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction,
+                   a.AssignedAt
             FROM   dbo.UserWarehouseAssignments a
             INNER JOIN dbo.Warehouses w ON w.Id = a.WarehouseId
             WHERE  a.UserId = @UserId
@@ -59,7 +60,9 @@ public class AssignmentRepository : IAssignmentRepository
         Guid warehouseId, CancellationToken ct = default)
     {
         const string sql = @"
-            SELECT a.UserId, u.Username, u.Name AS UserName, a.Role, a.AssignedAt
+            SELECT a.UserId, u.Username, u.Name AS UserName, a.Role,
+                   a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction,
+                   a.AssignedAt
             FROM   dbo.UserWarehouseAssignments a
             INNER JOIN dbo.Users u ON u.Id = a.UserId
             WHERE  a.WarehouseId = @WarehouseId
@@ -83,13 +86,17 @@ public class AssignmentRepository : IAssignmentRepository
 
         var inserted = 0;
         const string insertSql = @"
-            INSERT INTO dbo.UserWarehouseAssignments (UserId, WarehouseId, Role, AssignedAt)
-            VALUES (@UserId, @WarehouseId, @Role, SYSUTCDATETIME());";
+            INSERT INTO dbo.UserWarehouseAssignments
+                (UserId, WarehouseId, Role,
+                 CanSignCustomer, CanSignWarehouse, CanSignProduction, AssignedAt)
+            VALUES (@UserId, @WarehouseId, @Role,
+                 @CanSignCustomer, @CanSignWarehouse, @CanSignProduction, SYSUTCDATETIME());";
 
         foreach (var a in assignments)
         {
             inserted += await conn.ExecuteAsync(new CommandDefinition(insertSql,
-                new { UserId = userId, a.WarehouseId, a.Role },
+                new { UserId = userId, a.WarehouseId, a.Role,
+                      a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction },
                 transaction: tx, cancellationToken: ct));
         }
 

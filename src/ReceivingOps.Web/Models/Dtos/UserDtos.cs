@@ -22,6 +22,11 @@ public class AssignmentInput
 {
     public Guid WarehouseId { get; set; }
     public string Role { get; set; } = "operator"; // admin|supervisor|operator|viewer
+
+    // Digital-signature capabilities (db/043) — additive, independent of Role.
+    public bool CanSignCustomer { get; set; }
+    public bool CanSignWarehouse { get; set; }
+    public bool CanSignProduction { get; set; }
 }
 
 /// <summary>One assignment row enriched with warehouse code+name (for the detail view).</summary>
@@ -31,6 +36,9 @@ public class AssignmentRow
     public string WarehouseCode { get; set; } = "";
     public string WarehouseName { get; set; } = "";
     public string Role { get; set; } = "";
+    public bool CanSignCustomer { get; set; }
+    public bool CanSignWarehouse { get; set; }
+    public bool CanSignProduction { get; set; }
     public DateTime AssignedAt { get; set; }
 }
 
