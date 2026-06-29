@@ -103,10 +103,11 @@
     // workflow downstream.
     { id: 'imports',      label: 'Imports',         icon: 'bi-cloud-upload',         href: '/Imports' },
     { id: 'transactions', label: 'Transactions',    icon: 'bi-list-columns-reverse', href: '/Transactions' },
-    // v2.x Phase 7.3 — DO render. Same CanManagePulls role gate as /Pos
-    // (admin + supervisor) since the same operators who close pulls also
-    // print the paperwork. Operators (warehouse staff) don't see the entry.
-    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '/Reports', roles: ['admin', 'supervisor'] },
+    // Digital-signature feature — /Reports gate widened from CanManagePulls
+    // to CanViewReports so view-only viewers and the 3 signer roles
+    // (customer/warehouse/production) can open the DO reports + sign their
+    // party. Nav visibility mirrors that policy exactly (any recognized whRole).
+    { id: 'reports',      label: 'Reports',         icon: 'bi-bar-chart',            href: '/Reports', roles: ['admin', 'supervisor', 'operator', 'viewer', 'customer', 'warehouse', 'production'] },
     // Phase 8.5 — My Exports. Every authenticated user sees their own
     // exports; admin's see-all toggle lives in the page itself.
     { id: 'exports',      label: 'My Exports',      icon: 'bi-cloud-download',       href: '/Exports' },
