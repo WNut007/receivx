@@ -91,9 +91,13 @@ public class MastersService : IMastersService
                 foreach (var a in req.Assignments)
                 {
                     await conn.ExecuteAsync(new CommandDefinition(@"
-                        INSERT INTO dbo.UserWarehouseAssignments (UserId, WarehouseId, Role, AssignedAt)
-                        VALUES (@UserId, @WarehouseId, @Role, SYSUTCDATETIME());",
-                        new { UserId = newId, a.WarehouseId, a.Role },
+                        INSERT INTO dbo.UserWarehouseAssignments
+                            (UserId, WarehouseId, Role,
+                             CanSignCustomer, CanSignWarehouse, CanSignProduction, AssignedAt)
+                        VALUES (@UserId, @WarehouseId, @Role,
+                             @CanSignCustomer, @CanSignWarehouse, @CanSignProduction, SYSUTCDATETIME());",
+                        new { UserId = newId, a.WarehouseId, a.Role,
+                              a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction },
                         transaction: tx, cancellationToken: ct));
                 }
             }

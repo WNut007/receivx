@@ -97,6 +97,9 @@ async function syncUsers() {
         warehouseId: a.warehouseId,
         warehouseCode: a.warehouseCode,
         role: a.role,
+        canSignCustomer: !!a.canSignCustomer,
+        canSignWarehouse: !!a.canSignWarehouse,
+        canSignProduction: !!a.canSignProduction,
       });
     }
   }
@@ -149,6 +152,16 @@ function userWarehouses(userId) {
 function warehouseUsers(warehouseId) {
   return assignments.filter(a => a.warehouseId === warehouseId);
 }
+// " · Signs: Customer, Warehouse" — appended to an assignment label when the
+// row carries any of the additive CanSign* capabilities (db/043). Empty string
+// when the user signs nothing at that warehouse.
+function signSummary(a) {
+  const parties = [];
+  if (a.canSignCustomer)   parties.push('Customer');
+  if (a.canSignWarehouse)  parties.push('Warehouse');
+  if (a.canSignProduction) parties.push('Production');
+  return parties.length ? ` · Signs: ${parties.join(', ')}` : '';
+}
 function escHtml(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -190,7 +203,8 @@ function renderUsers() {
             const w = warehouses.find(x => x.id === a.warehouseId);
             const code = a.warehouseCode || (w && w.code) || '';
             const name = w ? w.name : code;
-            return `<span class="wh-chip" title="${escHtml(name)} · ${escHtml(a.role)}">${escHtml(code)}</span>`;
+            const tip = `${name} · ${a.role}${signSummary(a)}`;
+            return `<span class="wh-chip" title="${escHtml(tip)}">${escHtml(code)}</span>`;
           }).join('') + (whs.length > 4 ? `<span class="wh-chip">+${whs.length - 4}</span>` : '');
       return `
         <tr data-id="${u.id}">
@@ -265,10 +279,15 @@ function openUserModal(userId) {
   } else {
     const myAssigns = userId ? userWarehouses(userId) : [];
     const myMap = {};
-    myAssigns.forEach(a => { myMap[a.warehouseId] = a.role; });
+    myAssigns.forEach(a => { myMap[a.warehouseId] = a; });
     wrap.innerHTML = warehouses.map(w => {
-      const assigned = !!myMap[w.id];
-      const role = myMap[w.id] || 'operator';
+      const a = myMap[w.id];
+      const assigned = !!a;
+      const role = a ? a.role : 'operator';
+      // Operational role and signing capability are independent (db/043):
+      // the <select> carries only operational roles; the 3 checkboxes carry
+      // the additive CanSign* bits. A user may e.g. be Operator AND sign
+      // Warehouse at the same warehouse.
       return `
         <div class="assign-row ${w.active ? '' : 'disabled'}" data-wh="${w.id}">
           <input type="checkbox" data-wh-check="${w.id}" ${assigned ? 'checked' : ''}>
@@ -281,11 +300,12 @@ function openUserModal(userId) {
             <option value="operator" ${role==='operator'?'selected':''}>Operator</option>
             <option value="viewer" ${role==='viewer'?'selected':''}>Viewer</option>
             <option value="admin" ${role==='admin'?'selected':''}>Admin</option>
-            <option value="customer" ${role==='customer'?'selected':''}>Signer · Customer</option>
-            <option value="warehouse" ${role==='warehouse'?'selected':''}>Signer · Warehouse</option>
-            <option value="production" ${role==='production'?'selected':''}>Signer · Production</option>
           </select>
-          <span style="color: var(--text-muted); font-family: 'Roboto Mono', monospace; font-size: 10px;">${assigned ? 'ASSIGNED' : ''}</span>
+          <div class="assign-row-sign" title="Signing capabilities (independent of role)">
+            <label><input type="checkbox" data-wh-sign="customer"   data-wh="${w.id}" ${a && a.canSignCustomer   ? 'checked' : ''}> Customer</label>
+            <label><input type="checkbox" data-wh-sign="warehouse"  data-wh="${w.id}" ${a && a.canSignWarehouse  ? 'checked' : ''}> Warehouse</label>
+            <label><input type="checkbox" data-wh-sign="production" data-wh="${w.id}" ${a && a.canSignProduction ? 'checked' : ''}> Production</label>
+          </div>
         </div>
       `;
     }).join('');
@@ -400,7 +420,17 @@ async function saveUser() {
     if (cb.checked) {
       const whId = cb.getAttribute('data-wh-check');
       const r = document.querySelector(`[data-wh-role="${whId}"]`).value;
-      assignmentPayload.push({ warehouseId: whId, role: r });
+      const signBit = (party) => {
+        const el = document.querySelector(`[data-wh-sign="${party}"][data-wh="${whId}"]`);
+        return !!(el && el.checked);
+      };
+      assignmentPayload.push({
+        warehouseId: whId,
+        role: r,
+        canSignCustomer: signBit('customer'),
+        canSignWarehouse: signBit('warehouse'),
+        canSignProduction: signBit('production'),
+      });
     }
   });
 

@@ -534,7 +534,7 @@
   }
   .assign-row {
     display: grid;
-    grid-template-columns: auto 1fr 130px auto;
+    grid-template-columns: auto 1fr 120px auto;
     gap: 10px;
     align-items: center;
     background: var(--surface);
@@ -548,6 +548,24 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
+  /* Signing-capability checkboxes (db/043) — additive, independent of role. */
+  .assign-row-sign {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    white-space: nowrap;
+  }
+  .assign-row-sign label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .assign-row-sign input[type=checkbox] { width: 13px; height: 13px; }
   .assign-row-name { display: flex; flex-direction: column; gap: 1px; line-height: 1.2; }
   .assign-row-code {
     font-family: 'Roboto Mono', monospace;
