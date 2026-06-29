@@ -44,6 +44,17 @@
                 <option value="">All warehouses</option>
                 @* Warehouse options populated client-side from /api/warehouses *@
             </select>
+            @{ var signParties = (string[])(ViewData["SignPartiesArr"] ?? System.Array.Empty<string>());
+               var canBatch = signParties.Any(x => x == "customer" || x == "production"); }
+            <select class="form-select filter-sign" id="filter-sign" title="Filter by signature status">
+                <option value="all" selected>All signatures</option>
+                @if (signParties.Length > 0)
+                {
+                    <option value="unsigned_mine">Unsigned for my role</option>
+                }
+                <option value="awaiting">Awaiting any (&lt; 3/3)</option>
+                <option value="complete">Complete (3/3)</option>
+            </select>
             <span class="result-count" id="result-count">@Model.Items.Count of @Model.Total pull@(Model.Total == 1 ? "" : "s")</span>
         </div>
         <div class="reports-custom-date-row" id="reports-custom-date-row" hidden>
@@ -57,6 +68,18 @@
         <div class="reports-split">
             <aside class="reports-list-pane">
                 <div class="list-header">CLOSED PULLS</div>
+                @if (canBatch)
+                {
+                    <div class="batch-bar" id="batch-bar" hidden>
+                        <span class="batch-count" id="batch-count">0 selected</span>
+                        <label class="batch-party-wrap">Sign as
+                            <select class="form-select form-select-sm batch-party" id="batch-party"></select>
+                        </label>
+                        <button type="button" class="btn btn-sm btn-primary" id="batch-sign-btn">Sign</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="batch-clear-btn">Clear</button>
+                        <span class="batch-result" id="batch-result" aria-live="polite"></span>
+                    </div>
+                }
                 <ul class="pull-rows" id="pull-rows">
                     @if (Model.Items.Count == 0)
                     {
@@ -74,9 +97,20 @@
                                 data-pull-id="@p.Id"
                                 data-pull-number="@p.PullNumber"
                                 data-warehouse-id="@p.WarehouseId"
-                                data-closed-at="@(p.ClosedAt?.ToString("yyyy-MM-dd") ?? "")">
+                                data-closed-at="@(p.ClosedAt?.ToString("yyyy-MM-dd") ?? "")"
+                                data-signed-count="@p.SignedCount"
+                                data-customer-signed="@p.CustomerSigned.ToString().ToLowerInvariant()"
+                                data-warehouse-signed="@p.WarehouseSigned.ToString().ToLowerInvariant()"
+                                data-production-signed="@p.ProductionSigned.ToString().ToLowerInvariant()">
                                 <div class="row-top">
+                                    @if (canBatch)
+                                    {
+                                        <input type="checkbox" class="pull-check" data-pull-id="@p.Id"
+                                               aria-label="Select @p.PullNumber for batch signing">
+                                    }
                                     <span class="pull-number">@p.PullNumber</span>
+                                    <span class="sig-badge @(p.IsComplete ? "is-complete" : "")"
+                                          title="@p.SignedCount of 3 parties signed">@p.SignedCount/3</span>
                                     @if (p.LockPoByPull)
                                     {
                                         <span class="pull-lock-badge" title="PO allocation locked to this pull">PO LOCK</span>
@@ -93,6 +127,11 @@
                                     {
                                         <span title="Reference: @p.ReferenceNumber"><i class="bi bi-paperclip"></i></span>
                                     }
+                                    <span class="sig-chips" aria-label="Signature status">
+                                        <span class="sig-chip @(p.WarehouseSigned ? "on" : "")" title="Warehouse @(p.WarehouseSigned ? "signed" : "unsigned")">W</span>
+                                        <span class="sig-chip @(p.CustomerSigned ? "on" : "")" title="Customer @(p.CustomerSigned ? "signed" : "unsigned")">C</span>
+                                        <span class="sig-chip @(p.ProductionSigned ? "on" : "")" title="Production @(p.ProductionSigned ? "signed" : "unsigned")">P</span>
+                                    </span>
                                 </div>
                             </li>
                         }
@@ -131,6 +170,7 @@
         </div>
     </div>
 </div>
+<script>window.__signParties = @Html.Raw(ViewData["SignPartiesJson"] ?? "[]");</script>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
 <script src="~/js/reports.js" asp-append-version="true"></script>
 </body>

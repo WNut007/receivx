@@ -29,6 +29,9 @@
 
     // ----- Row selection ---------------------------------------------------
     rowsEl.addEventListener('click', (e) => {
+        // The batch-select checkbox lives inside the row but must not trigger
+        // a preview load (it toggles selection only).
+        if (e.target.closest('.pull-check')) return;
         const row = e.target.closest('.pull-row[data-pull-id]');
         if (!row) return;
         selectedPullId = row.dataset.pullId;
@@ -191,12 +194,20 @@
     const filterFrom      = document.querySelector('.filter-from');
     const filterTo        = document.querySelector('.filter-to');
     const filterWh        = document.querySelector('.filter-wh');
+    const filterSign      = document.getElementById('filter-sign');
     const customDateRow   = document.getElementById('reports-custom-date-row');
+
+    // Phase 7e — the current user's signing parties (lowercase: customer /
+    // warehouse / production). batchParties excludes Warehouse (auto-signed at
+    // close → never batch-signable).
+    const signParties  = Array.isArray(window.__signParties) ? window.__signParties : [];
+    const batchParties = signParties.filter(p => p === 'customer' || p === 'production');
 
     [filterQ, filterPull, filterFrom, filterTo, filterWh].forEach(el => {
         if (!el) return;
         el.addEventListener('input', applyFilters);
     });
+    if (filterSign) filterSign.addEventListener('change', applyFilters);
     if (filterDateRange) {
         filterDateRange.addEventListener('change', () => {
             if (customDateRow) customDateRow.hidden = filterDateRange.value !== 'custom';
@@ -228,6 +239,7 @@
         const from  = filterFrom.value || '';
         const to    = filterTo.value   || '';
         const wh    = filterWh.value   || '';
+        const sf    = filterSign ? filterSign.value : 'all';
         let visible = 0;
         rowsEl.querySelectorAll('.pull-row[data-pull-id]').forEach(row => {
             const pull     = (row.dataset.pullNumber || '').toLowerCase();
@@ -238,6 +250,18 @@
             if (q  && !hayQ.includes(q))    show = false;
             if (pn && !pull.includes(pn))   show = false;
             if (wh && row.dataset.warehouseId !== wh) show = false;
+            // Phase 7e — signature-status filter.
+            if (sf !== 'all') {
+                const sc = parseInt(row.dataset.signedCount || '0', 10);
+                if (sf === 'complete' && sc < 3)  show = false;
+                if (sf === 'awaiting' && sc >= 3) show = false;
+                if (sf === 'unsigned_mine') {
+                    // Any party this user can sign that isn't signed yet on this pull.
+                    const mineUnsigned = signParties.some(
+                        pt => row.dataset[pt + 'Signed'] === 'false');
+                    if (!mineUnsigned) show = false;
+                }
+            }
             // Date range — same semantics as Dashboard, but the source field
             // is ClosedAt (a Reports row is by definition a closed pull).
             if (dr !== 'all') {
@@ -254,9 +278,14 @@
                 }
             }
             row.style.display = show ? '' : 'none';
+            if (!show) {
+                const cb = row.querySelector('.pull-check');
+                if (cb && cb.checked) cb.checked = false;   // hidden rows leave the selection
+            }
             if (show) visible++;
         });
         countEl.textContent = visible + (visible === 1 ? ' pull' : ' pulls');
+        syncBatchBar();
     }
 
     // ----- Warehouse filter options ----------------------------------------
@@ -288,6 +317,117 @@
             if (customDateRow) customDateRow.hidden = want !== 'custom';
         }
     })();
+
+    // ----- Batch sign (Phase 7e) ------------------------------------------
+    // A user with canSign=Customer and/or Production gets per-row checkboxes
+    // (rendered server-side only when they can batch). Selecting pulls reveals
+    // the batch bar; "Sign N as {Party}" POSTs /api/reports/sign-batch (7d).
+    const batchBar    = document.getElementById('batch-bar');
+    const batchCount  = document.getElementById('batch-count');
+    const batchParty  = document.getElementById('batch-party');
+    const batchSign   = document.getElementById('batch-sign-btn');
+    const batchClear  = document.getElementById('batch-clear-btn');
+    const batchResult = document.getElementById('batch-result');
+
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+    if (batchParty && batchParties.length) {
+        batchParties.forEach(p => {
+            const o = document.createElement('option');
+            o.value = cap(p); o.textContent = cap(p);
+            batchParty.appendChild(o);
+        });
+    }
+
+    // The party currently targeted by the batch (Title-case). Drives which rows
+    // are eligible: a row is checkable only when that party is still unsigned.
+    function currentParty() { return batchParty ? batchParty.value : (batchParties[0] ? cap(batchParties[0]) : ''); }
+
+    // Disable + clear checkboxes whose current-party box is already signed, so
+    // the selection can only ever target genuinely-unsigned boxes.
+    function refreshEligibility() {
+        const party = (currentParty() || '').toLowerCase();
+        rowsEl.querySelectorAll('.pull-row[data-pull-id]').forEach(row => {
+            const cb = row.querySelector('.pull-check');
+            if (!cb) return;
+            const signed = row.dataset[party + 'Signed'] === 'true';
+            cb.disabled = signed;
+            if (signed && cb.checked) cb.checked = false;
+            row.classList.toggle('sig-ineligible', signed);
+        });
+    }
+
+    function selectedIds() {
+        return Array.from(rowsEl.querySelectorAll('.pull-check:checked'))
+            .map(cb => cb.dataset.pullId);
+    }
+
+    // Hoisted (function declaration) so applyFilters can call it before this
+    // block runs on first load.
+    function syncBatchBar() {
+        if (!batchBar) return;
+        const n = selectedIds().length;
+        batchBar.hidden = n === 0;
+        if (batchCount) batchCount.textContent = `${n} selected`;
+        if (batchSign)  batchSign.textContent  = `Sign ${n} as ${currentParty()}`;
+    }
+
+    if (rowsEl && batchParties.length) {
+        rowsEl.addEventListener('change', (e) => {
+            if (e.target.classList.contains('pull-check')) { batchResult.textContent = ''; syncBatchBar(); }
+        });
+    }
+    if (batchParty) batchParty.addEventListener('change', () => { refreshEligibility(); syncBatchBar(); });
+    if (batchClear) batchClear.addEventListener('click', () => {
+        rowsEl.querySelectorAll('.pull-check:checked').forEach(cb => cb.checked = false);
+        batchResult.textContent = '';
+        syncBatchBar();
+    });
+
+    if (batchSign) batchSign.addEventListener('click', async () => {
+        const ids = selectedIds();
+        const party = currentParty();
+        if (!ids.length || !party) return;
+
+        const ok = await confirmAction({
+            title: `Sign ${ids.length} pull${ids.length === 1 ? '' : 's'} as ${party}?`,
+            message: `This records your name + timestamp on the ${party} box of each selected pull. ` +
+                     `Already-signed pulls are skipped. This cannot be undone.`,
+            icon: 'info',
+            confirmLabel: `Sign as ${party}`,
+        });
+        if (!ok) return;
+
+        batchSign.disabled = true;
+        batchResult.textContent = 'Signing…';
+        try {
+            const resp = await fetch('/api/reports/sign-batch', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pullIds: ids, party }),
+            });
+            if (!resp.ok) {
+                let msg = `Batch sign failed (HTTP ${resp.status})`;
+                try { const j = await resp.json(); if (j && (j.title || j.error)) msg = j.title || j.error; } catch { /* keep */ }
+                batchResult.textContent = msg;
+                batchSign.disabled = false;
+                return;
+            }
+            const r = await resp.json();
+            const parts = [`${r.signed} signed`];
+            if (r.skipped) parts.push(`${r.skipped} skipped`);
+            if (r.errors)  parts.push(`${r.errors} error${r.errors === 1 ? '' : 's'}`);
+            batchResult.textContent = parts.join(' · ');
+            // Reload to re-render the N/3 badges, chips, and eligibility from truth.
+            setTimeout(() => window.location.reload(), 1100);
+        } catch (err) {
+            batchResult.textContent = `Network error: ${err.message || String(err)}`;
+            batchSign.disabled = false;
+        }
+    });
+
+    refreshEligibility();
 
     // Run the filter once on load so the default "last_2_days" narrows the
     // list immediately (the HTML <option selected> doesn't itself filter).

@@ -6,19 +6,34 @@
     old 2-box footer (ISSUED/PICKED BY + APPROVED FOR DELIVERY BY) and the
     pull-close SignatureSvg display (decision #6).
 
-    Signed   → signer name + timestamp.
+    Signed   → signer name + timestamp. The WAREHOUSE box also shows the drawn
+               close-pad signature image (D4) — the Warehouse party is auto-signed
+               at pull close (7b) and SignatureSvg carries the drawing.
     Unsigned → blank box; a "Sign as {Party}" button appears only when the
                current viewer is eligible (CanSign, set server-side to mirror
                the POST guards). reports.js delegates the click.
 *@
+@{
+    var signedCount = Model.Signatures.All.Count(s => s.IsSigned);
+    // Warehouse box only renders the drawing for a PNG/JPEG data URL — the same
+    // constraint the PDF export honours (System.Drawing can't rasterize inline
+    // SVG; raw SVG is also an HTML-injection risk, so it is never emitted raw).
+    var drawn = (Model.SignatureSvg ?? "").TrimStart();
+    var hasDrawn = drawn.StartsWith("data:image", StringComparison.OrdinalIgnoreCase);
+}
 <div class="do-sign-row" data-pull-id="@Model.Id">
     @foreach (var p in Model.Signatures.All)
     {
+        var isWarehouse = string.Equals(p.Party, "Warehouse", StringComparison.OrdinalIgnoreCase);
         <div class="do-sign-box @(p.IsSigned ? "is-signed" : "")">
             <div class="do-sign-label">@p.Party.ToUpperInvariant()</div>
             <div class="do-sign-area">
                 @if (p.IsSigned)
                 {
+                    @if (isWarehouse && hasDrawn)
+                    {
+                        <div class="do-sign-drawn"><img src="@Model.SignatureSvg" alt="Signature of @p.SignerName"></div>
+                    }
                     <div class="do-sign-name">@p.SignerName</div>
                     <div class="do-sign-date mono">
                         @((p.SignedAt?.ToString("dd MMM yyyy · HH:mm", CultureInfo.InvariantCulture) ?? "") + " UTC")
@@ -33,5 +48,15 @@
             </div>
             <div class="do-sign-caption">Name / Date</div>
         </div>
+    }
+</div>
+<div class="do-sign-complete @(signedCount == 3 ? "is-complete" : "")">
+    @if (signedCount == 3)
+    {
+        <span><i class="bi bi-check-circle-fill"></i> Document complete — all 3 parties signed</span>
+    }
+    else
+    {
+        <span>@signedCount/3 signed · complete when all 3 parties sign</span>
     }
 </div>

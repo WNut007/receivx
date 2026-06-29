@@ -45,6 +45,16 @@ public class ReportsController : Controller
         var req = new PaginatedRequest { Page = page, PageSize = pageSize };
         var (items, total) = await _pulls.GetClosedWithReceiptsAsync(wh, req.Skip, req.Take, ct);
         ViewData["PageId"] = "reports";
+
+        // Phase 7e — the current user's signing capabilities (lowercase party
+        // peers from the canSign claims, 6b). Drives the per-row batch checkboxes,
+        // the batch-party selector, and the "unsigned for my role" filter. The
+        // list is already warehouse-scoped above, so every visible row is a pull
+        // this user could sign (scope-wise); eligibility narrows to unsigned boxes
+        // client-side. Warehouse is excluded from batch (auto-signed at close).
+        var signParties = User.FindAll("canSign").Select(c => c.Value).ToArray();
+        ViewData["SignPartiesArr"]  = signParties;
+        ViewData["SignPartiesJson"] = System.Text.Json.JsonSerializer.Serialize(signParties);
         return View(new PaginatedResponse<PullSummary>
         {
             Items = items,

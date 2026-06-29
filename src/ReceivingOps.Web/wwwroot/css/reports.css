@@ -915,3 +915,72 @@
 @media print {
   .do-sign-btn { display: none !important; }
 }
+
+/* ===========================================================================
+   Phase 7e — Reports list signature UI: N/3 badge, party chips, batch-select,
+   sign-status filter + the Warehouse drawn-signature in the preview boxes.
+   =========================================================================== */
+
+/* Row top realigns to group [checkbox · pull# · badge] on the left; the badge
+   pushes any trailing PO-LOCK chip to the right. */
+.pull-row .row-top { align-items: center; justify-content: flex-start; }
+.pull-row .pull-check {
+  width: 15px; height: 15px; margin: 0 2px 0 0;
+  accent-color: var(--accent); cursor: pointer; flex: 0 0 auto;
+}
+.pull-row .pull-check:disabled { cursor: not-allowed; opacity: 0.45; }
+.pull-row .pull-lock-badge { margin-left: auto; }
+
+.sig-badge {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 2px 6px; border-radius: 999px;
+  background: color-mix(in srgb, #d97706 22%, transparent);
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #d97706 45%, transparent);
+}
+.sig-badge.is-complete {
+  background: color-mix(in srgb, var(--ok, #16a34a) 20%, transparent);
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 45%, transparent);
+}
+
+.sig-chips { display: inline-flex; gap: 3px; margin-left: auto; }
+.sig-chip {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 9px; font-weight: 700; line-height: 1;
+  width: 15px; height: 15px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.sig-chip.on {
+  background: color-mix(in srgb, var(--ok, #16a34a) 18%, transparent);
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
+}
+
+/* Batch-sign bar (revealed when ≥1 pull is checked). */
+.batch-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin: 0 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.batch-bar .batch-count { font-size: 12px; font-weight: 600; color: var(--text); }
+.batch-bar .batch-party-wrap { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
+.batch-bar .batch-party { width: auto; min-width: 110px; }
+.batch-bar .batch-result { font-size: 11px; color: var(--text-muted); flex-basis: 100%; }
+
+/* Warehouse drawn signature in the preview box (D4). */
+.do-sign-drawn { margin-bottom: 2px; }
+.do-sign-drawn img {
+  max-height: 38px; max-width: 100%;
+  object-fit: contain; display: block;
+}
+
+/* Per-document completeness line under the 3 boxes. */
+.do-sign-complete {
+  margin-top: 6px; font-size: 8pt; color: var(--text-muted); text-align: right;
+}
+.do-sign-complete.is-complete { color: var(--ok, #16a34a); font-weight: 600; }
