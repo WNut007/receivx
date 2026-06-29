@@ -139,9 +139,10 @@ public class PullsApiController : ControllerBase
         catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
     }
 
-    // §7.4 POST /api/pulls/{id}/close
+    // §7.4 POST /api/pulls/{id}/close — Phase 7a: gated by CanCloseWithSign so
+    // the closer is also the Warehouse signer (admin bypasses the bit, D1a).
     [HttpPost("{id:guid}/close")]
-    [Authorize(Policy = "CanManagePulls")]
+    [Authorize(Policy = "CanCloseWithSign")]
     public async Task<ActionResult<CloseResult>> Close(Guid id, [FromBody] CloseRequest req, CancellationToken ct)
     {
         try

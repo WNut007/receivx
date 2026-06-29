@@ -99,6 +99,15 @@ builder.Services.AddAuthorization(opts =>
         ctx.User.IsInRole("admin") ||
         ctx.User.HasClaim("whRole", "supervisor")));
 
+    // CanCloseWithSign (Phase 7a): closing a pull auto-signs the Warehouse
+    // box (Phase 7b) in the closer's name, so the closer must be a Warehouse
+    // signer. = CanManagePulls AND (admin OR canSign=warehouse). Admins bypass
+    // the bit (D1a — they may close any warehouse; the Warehouse box records
+    // the admin's name). A supervisor without CanSignWarehouse → 403.
+    opts.AddPolicy("CanCloseWithSign", p => p.RequireAssertion(ctx =>
+        (ctx.User.IsInRole("admin") || ctx.User.HasClaim("whRole", "supervisor")) &&
+        (ctx.User.IsInRole("admin") || ctx.User.HasClaim("canSign", "warehouse"))));
+
     opts.AddPolicy("CanReceive", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole("admin") ||
         new[] { "supervisor", "operator" }.Contains(
