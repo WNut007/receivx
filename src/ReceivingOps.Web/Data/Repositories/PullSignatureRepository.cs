@@ -56,6 +56,39 @@ public class PullSignatureRepository : IPullSignatureRepository
         return s;
     }
 
+    public async Task<bool> UpsertWarehouseAsync(IDbConnection conn, IDbTransaction tx,
+        Guid pullId, Guid warehouseId, Guid signerUserId, string signerName,
+        DateTime signedAt, CancellationToken ct = default)
+    {
+        // UPDATE-then-conditional-INSERT (rather than MERGE) for the (PullId,'Warehouse')
+        // grain. Serialized by the close tx's UPDLOCK on the Pulls row — only one close
+        // can run per pull — with UQ_PullSig_Party as the hard backstop. SignedAt is set
+        // explicitly to the close timestamp (not the SYSUTCDATETIME default).
+        const string sql = @"
+            UPDATE dbo.PullSignatures
+               SET WarehouseId  = @WarehouseId,
+                   SignerUserId = @SignerUserId,
+                   SignerName   = @SignerName,
+                   SignedAt     = @SignedAt
+             WHERE PullId = @PullId AND Party = 'Warehouse';
+
+            IF @@ROWCOUNT = 0
+            BEGIN
+                INSERT INTO dbo.PullSignatures
+                    (PullId, Party, WarehouseId, SignerUserId, SignerName, SignedAt)
+                VALUES (@PullId, 'Warehouse', @WarehouseId, @SignerUserId, @SignerName, @SignedAt);
+                SELECT 1;   -- inserted
+            END
+            ELSE SELECT 0;  -- updated";
+
+        var inserted = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+            sql,
+            new { PullId = pullId, WarehouseId = warehouseId, SignerUserId = signerUserId,
+                  SignerName = signerName, SignedAt = signedAt },
+            transaction: tx, cancellationToken: ct));
+        return inserted == 1;
+    }
+
     private sealed class InsertedRow
     {
         public Guid Id { get; set; }

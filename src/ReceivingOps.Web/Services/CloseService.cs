@@ -16,12 +16,15 @@ public class CloseService : ICloseService
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
     private readonly IHttpContextAccessor _httpContext;
+    private readonly Data.Repositories.IPullSignatureRepository _signatures;
 
-    public CloseService(IDbConnectionFactory factory, IAuditService audit, IHttpContextAccessor httpContext)
+    public CloseService(IDbConnectionFactory factory, IAuditService audit,
+        IHttpContextAccessor httpContext, Data.Repositories.IPullSignatureRepository signatures)
     {
         _factory = factory;
         _audit = audit;
         _httpContext = httpContext;
+        _signatures = signatures;
     }
 
     public async Task<CloseResult> CloseAsync(Guid pullId, CloseRequest req, CancellationToken ct = default)
@@ -95,6 +98,17 @@ public class CloseService : ICloseService
 
             await _audit.WriteAsync(conn, tx, "close", "Pull", pullId.ToString(),
                 $"Closed pull {pull.PullNumber} ({totalReceived} pcs received)", ct);
+
+            // Phase 7b — the close IS the Warehouse signature. Upsert the Warehouse
+            // party row in this same tx (D2: reopen→reclose re-stamps the new closer).
+            // SignerName is denormalized from the closer's displayName claim; SignedAt
+            // is the close timestamp. The drawn SignatureSvg (close pad) is surfaced
+            // alongside name+date in the Warehouse box at display (7e, D4).
+            var closerName = CurrentUserName();
+            var inserted = await _signatures.UpsertWarehouseAsync(
+                conn, tx, pullId, pull.WarehouseId, actorId, closerName, closedAt, ct);
+            await _audit.WriteAsync(conn, tx, "do-sign", "Pull", pullId.ToString(),
+                $"Auto-signed Warehouse on pull {pull.PullNumber} as {closerName} (via close)", ct);
 
             tx.Commit();
 
@@ -182,6 +196,16 @@ public class CloseService : ICloseService
         if (!Guid.TryParse(idClaim, out var id))
             throw new InvalidOperationException("Authenticated user has no NameIdentifier claim");
         return id;
+    }
+
+    // Closer's display name, denormalized onto the Warehouse signature (mirrors
+    // PullSignatureService — displayName is Users.Name copied into the cookie at login).
+    private string CurrentUserName()
+    {
+        var ctx = _httpContext.HttpContext;
+        return ctx?.User.FindFirstValue("displayName")
+            ?? ctx?.User.Identity?.Name
+            ?? "(unknown)";
     }
 
     private (Guid? warehouseId, bool isAdmin) SessionWarehouseContext()
