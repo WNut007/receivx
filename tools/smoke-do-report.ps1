@@ -243,16 +243,17 @@ foreach ($val in 'SUB-DOR','TLOC-DOR','INV-DOR-001','V-DOR','Vendor DOR Inc') {
 OK "Info grid renders Phase 14 vendor / FROM / TO / VENDOR INVOICE values"
 
 # ----------------------------------------------------------------------------
-# 2d. Phase 14 DO identity — the DSV header reframes the legacy do-number
-#     element. Delivery Note No (Pull.Id[..8] + DO-letter) now sits in
-#     .dsv-dn-value; vendor lives in the info grid <dd> after the VENDOR <dt>.
+# 2d. DO identity = OrderId. DeliveryNoteNo now equals the line's OrderId
+#     (regroup: was Pull.Id[..8] + DO-letter). The single received line carries
+#     OrderId 'ORD-DOR-001', so the DSV header's Delivery Note No must be that.
+#     Vendor lives in the info grid <dd> after the VENDOR <dt>.
 # ----------------------------------------------------------------------------
-Step "DSV header carries Delivery Note No + vendor in info grid (Phase 14)"
+Step "DSV header carries Delivery Note No = OrderId + vendor in info grid"
 $dnMatch = [regex]::Match($prev.Content, '<div class="dsv-dn-value">([^<]*)</div>')
 if (-not $dnMatch.Success) { Fail "DSV preview missing .dsv-dn-value element" }
 $dnValue = $dnMatch.Groups[1].Value.Trim()
-if ($dnValue -notmatch '^[0-9A-F]{8}[A-Z]+$') {
-    Fail "dsv-dn-value expected Pull.Id[..8] + DO-letter (e.g. 'A1B2C3D4A'), got '$dnValue'"
+if ($dnValue -ne 'ORD-DOR-001') {
+    Fail "dsv-dn-value expected DeliveryNoteNo = OrderId 'ORD-DOR-001', got '$dnValue'"
 }
 # Vendor <dd> must follow VENDOR <dt> in the info grid
 if ($prev.Content -notmatch '<dt>VENDOR</dt>\s*<dd[^>]*>Vendor DOR Inc</dd>') {

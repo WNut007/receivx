@@ -18,31 +18,53 @@
     const btnPrint  = document.getElementById('btn-print');
     const countEl   = document.getElementById('result-count');
 
+    const toggleEl  = document.getElementById('report-type-toggle');
+
     let selectedPullId = null;
     let selectedPullNumber = null;
+    // 'note' (Delivery Note, OrderId grouping) | 'order' (DSV Delivery Order,
+    // SubInventory × ToLocation grouping). PDF export is Note-only for now;
+    // the Order tab keeps Print (which renders the HTML preview).
+    let reportType = 'note';
 
     // ----- Row selection ---------------------------------------------------
     rowsEl.addEventListener('click', (e) => {
         const row = e.target.closest('.pull-row[data-pull-id]');
         if (!row) return;
-        selectRow(row);
-    });
-
-    async function selectRow(row) {
         selectedPullId = row.dataset.pullId;
         selectedPullNumber = row.dataset.pullNumber;
         rowsEl.querySelectorAll('.pull-row').forEach(r =>
             r.classList.toggle('selected', r === row));
+        loadPreview();
+    });
 
+    // ----- Report-type toggle ---------------------------------------------
+    if (toggleEl) {
+        toggleEl.addEventListener('click', (e) => {
+            const tab = e.target.closest('.rt-tab[data-report-type]');
+            if (!tab || tab.classList.contains('active')) return;
+            reportType = tab.dataset.reportType;
+            toggleEl.querySelectorAll('.rt-tab').forEach(t => {
+                const on = t === tab;
+                t.classList.toggle('active', on);
+                t.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            if (selectedPullId) loadPreview();
+        });
+    }
+
+    const docNoun = () => (reportType === 'order' ? 'delivery order' : 'delivery note');
+
+    async function loadPreview() {
+        if (!selectedPullId) return;
         titleEl.textContent = `${selectedPullNumber} · loading…`;
-        bodyEl.innerHTML = '<div class="preview-loading">Loading delivery orders…</div>';
+        bodyEl.innerHTML = `<div class="preview-loading">Loading ${docNoun()}s…</div>`;
         btnPdf.disabled = true;
         btnPrint.disabled = true;
 
         try {
-            const resp = await fetch(`/api/reports/do/${encodeURIComponent(selectedPullId)}/preview`, {
-                credentials: 'same-origin',
-            });
+            const url = `/api/reports/do/${encodeURIComponent(selectedPullId)}/preview?type=${reportType}`;
+            const resp = await fetch(url, { credentials: 'same-origin' });
             if (!resp.ok) {
                 let msg = `Preview failed (HTTP ${resp.status})`;
                 try {
@@ -61,10 +83,12 @@
             }
             const html = await resp.text();
             bodyEl.innerHTML = html;
-            const doCount = bodyEl.querySelectorAll('.do-document').length;
+            const doCount = bodyEl.querySelectorAll('article').length;
             titleEl.textContent =
-                `${selectedPullNumber} · ${doCount} delivery order${doCount === 1 ? '' : 's'}`;
+                `${selectedPullNumber} · ${doCount} ${docNoun()}${doCount === 1 ? '' : 's'}`;
+            // PDF export works for both report types (each loads its own .frx).
             btnPdf.disabled = false;
+            btnPdf.title = '';
             btnPrint.disabled = false;
         } catch (err) {
             bodyEl.innerHTML =
@@ -78,7 +102,7 @@
     // attachment so navigating to it triggers a Save As dialog.
     btnPdf.addEventListener('click', () => {
         if (!selectedPullId || btnPdf.disabled) return;
-        window.location.href = `/api/reports/do/${encodeURIComponent(selectedPullId)}/export.pdf`;
+        window.location.href = `/api/reports/do/${encodeURIComponent(selectedPullId)}/export.pdf?type=${reportType}`;
     });
 
     // ----- Print ----------------------------------------------------------

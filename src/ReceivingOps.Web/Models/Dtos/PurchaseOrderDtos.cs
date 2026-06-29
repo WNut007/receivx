@@ -59,6 +59,7 @@ public class PoLineRow
     public string? KanbanNo { get; set; }
     public string? AsnNo { get; set; }
     public string? OrderId { get; set; }            // Phase 12.1 (db/031) — C2=C split sibling of AsnNo (sales-order ref vs ASN ref)
+    public string? SourcePoNo { get; set; }         // db/040 — actual upstream PO number from the import's "PO" column (distinct from PoNumber=PRS_ID)
     public string? PCCNo { get; set; }
     public string? BatchNo { get; set; }
     public string? ManufacturingControlNo { get; set; }
@@ -147,6 +148,7 @@ public class PoLineExportRow
     public string? KanbanNo { get; set; }
     public string? AsnNo { get; set; }
     public string? OrderId { get; set; }
+    public string? SourcePoNo { get; set; }         // db/040 — upstream PO number from import "PO" column
     public string? PCCNo { get; set; }
     public string? BatchNo { get; set; }
     public string? ManufacturingControlNo { get; set; }
@@ -261,6 +263,7 @@ public class PoLineExtendedFieldsUpdateRequest
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
     public string? OrderId { get; set; }
+    public string? SourcePoNo { get; set; }   // db/040 — upstream PO number (import "PO" column)
     public string? AsnNo { get; set; }
     public string? KanbanNo { get; set; }
     public string? VendorItem { get; set; }

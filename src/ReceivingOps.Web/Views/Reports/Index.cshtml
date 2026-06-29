@@ -111,6 +111,10 @@
             <main class="reports-preview-pane">
                 <div class="preview-toolbar">
                     <div class="preview-title" id="preview-title">SELECT A PULL TO PREVIEW</div>
+                    <div class="report-type-toggle" id="report-type-toggle" role="tablist" aria-label="Report type">
+                        <button type="button" class="rt-tab active" data-report-type="note" role="tab" aria-selected="true">Delivery Note</button>
+                        <button type="button" class="rt-tab" data-report-type="order" role="tab" aria-selected="false">Delivery Order</button>
+                    </div>
                     <div class="preview-actions">
                         <button class="btn btn-outline-secondary btn-print" id="btn-print" disabled>
                             <i class="bi bi-printer"></i> Print

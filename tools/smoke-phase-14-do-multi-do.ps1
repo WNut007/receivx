@@ -1,11 +1,13 @@
-# Smoke: Phase 14 — one pull spawns multiple DOs when its receipts span
-# more than one (Vendor × FromSubInv × ToLoc) triple.
+# Smoke: DO regroup — DO identity = OrderId. One pull spawns one DO per
+# distinct OrderId among its received lines (OrderId is unique per PO line,
+# so 1 DO = 1 OrderId = 1 line). DeliveryNoteNo = OrderId.
 #
-# Pre-Phase-14 the DO report grouped by PO alone, so a pull that touched
-# two POs got two DOs (one per PO). Phase 14 makes the DO identity the
-# shipment triple — a single pull can now spawn 2+ DOs if its receipts
-# physically came from different vendors or move between different
-# locations.
+# Lineage: pre-Phase-14 grouped by PO; Phase 14 grouped by the
+# (Vendor × FromSubInv × ToLoc × Invoice) tuple; the regroup makes OrderId
+# the sole DO key. This smoke seeds two lines with distinct OrderIds
+# (OID-MULTI-A1/B1) and asserts two DOs whose DeliveryNoteNo == OrderId.
+# The vendor / sub-inventory / location stamps still differ per line so the
+# per-DO display attributes are exercised too.
 #
 # Setup:
 #   1. Create a fresh pull PL-PH14MULTI-* on WH-01.
@@ -95,14 +97,14 @@ VALUES ('$poB', '$poBnum', '$WH_01', '2026-01-02', NULL, 'open', N'Phase 14 mult
 -- chars wrapping in the info grid's right-value cell) slipped past the
 -- battery. These widths still wrap on detail cells but stay ≤2 lines,
 -- so the regression case is exercised end-to-end.
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo)
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId)
 VALUES ('$lineA', '$poA', 1, 'PH14MULTI-ITEM-A', N'Multi-DO smoke item A', 100, 0,
         'V-MULTI-A', N'Multi Vendor Alpha (BRANCH OFFICE)', 'SUBINV-AAA', 'LOC-ALPHA',
-        'PALLET-MULTI-A-001', '0000099001', 'ASN-MULTI-A-001', '07:00', 'INV-MULTI-A');
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo)
+        'PALLET-MULTI-A-001', '0000099001', 'ASN-MULTI-A-001', '07:00', 'INV-MULTI-A', 'OID-MULTI-A1');
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId)
 VALUES ('$lineB', '$poB', 1, 'PH14MULTI-ITEM-B', N'Multi-DO smoke item B', 100, 0,
         'V-MULTI-B', N'Multi Vendor Beta Industries Ltd.', 'SUBINV-BBB', 'LOC-BETA',
-        'PALLET-MULTI-B-001', '0000099002', 'ASN-MULTI-B-001', '07:00', 'INV-MULTI-B');
+        'PALLET-MULTI-B-001', '0000099002', 'ASN-MULTI-B-001', '07:00', 'INV-MULTI-B', 'OID-MULTI-B1');
 "@ | Out-Null
 OK "Two POs seeded with distinct (Vendor × SubInv × ToLoc) triples + wide ERP stamps"
 
@@ -159,9 +161,28 @@ if ($prev.StatusCode -ne 200) { Fail "Preview returned $($prev.StatusCode)" }
 
 $articleCount = ([regex]::Matches($prev.Content, '<article class="dsv-do"')).Count
 if ($articleCount -ne 2) {
-    Fail "Expected 2 .dsv-do blocks (one per Vendor x SubInv x ToLoc triple), got $articleCount"
+    Fail "Expected 2 .dsv-do blocks (one per OrderId), got $articleCount"
 }
 OK "Preview rendered 2 separate DOs"
+
+# ----------------------------------------------------------------------------
+# 3b. DO identity = OrderId. Each DO's DeliveryNoteNo must equal its line's
+#     OrderId, and the DO count must equal the distinct OrderId count (2).
+# ----------------------------------------------------------------------------
+Step "DeliveryNoteNo = OrderId (DO count == distinct OrderId count)"
+$dnValues = @(
+    [regex]::Matches($prev.Content, '<div class="dsv-dn-value">([^<]*)</div>') |
+        ForEach-Object { $_.Groups[1].Value.Trim() }
+)
+if ($dnValues.Count -ne 2) {
+    Fail "Expected 2 dsv-dn-value (DeliveryNoteNo) elements, got $($dnValues.Count)"
+}
+foreach ($oid in 'OID-MULTI-A1','OID-MULTI-B1') {
+    if ($dnValues -notcontains $oid) {
+        Fail "DeliveryNoteNo must equal OrderId '$oid'; got: $($dnValues -join ' | ')"
+    }
+}
+OK "Both DeliveryNoteNo values equal the seeded OrderIds (OID-MULTI-A1/B1)"
 
 # ----------------------------------------------------------------------------
 # 4. Each DO's info grid carries a vendor name + From/To sentinels present

@@ -306,8 +306,9 @@ function renderLines() {
   const lines = currentDetail.lines || [];
   if (lines.length === 0) {
     // Colspan history: 12 baseline → 13 (Phase 9.2 added Order ID) →
-    // 14 (Phase 14 added Vendor as the new leftmost ERP column).
-    tbody.innerHTML = `<tr><td colspan="14" class="empty-row">
+    // 14 (Phase 14 added Vendor as the new leftmost ERP column) →
+    // 15 (db/040 added Source PO).
+    tbody.innerHTML = `<tr><td colspan="15" class="empty-row">
       <i class="bi bi-inbox"></i> No lines yet — click <b>Add line</b>
     </td></tr>`;
   } else {
@@ -339,6 +340,7 @@ function renderLines() {
           <td class="num">${(l.remainingQty | 0).toLocaleString()}</td>
           ${vendorCell(l.vendorName, l.vendorCode)}
           ${erpCell(l.orderId)}
+          ${erpCell(l.sourcePoNo)}
           ${erpCell(l.invoiceNo)}
           ${erpCell(l.subInventory)}
           ${erpCell(l.toLocation)}
@@ -856,7 +858,7 @@ const EF_FIELDS = [
   // matches the modal's Tracking section so the read/write code stays
   // declarative and the operator's eye reads top-to-bottom in one pass.
   'vendorCode', 'vendorName',
-  'orderId', 'asnNo', 'kanbanNo', 'vendorItem',
+  'orderId', 'sourcePoNo', 'asnNo', 'kanbanNo', 'vendorItem',
   'location', 'subInventory', 'toLocation', 'building', 'productionLine',
   'palletId', 'vmiPalletId', 'batchNo',
   'invoiceNo', 'pccNo', 'manufacturingControlNo', 'orderRound',

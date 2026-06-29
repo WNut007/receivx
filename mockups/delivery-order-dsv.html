@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<!--
+  MOCKUP — DSV Delivery Order (2nd report, alongside the existing Delivery Note).
+
+  Grouping:  one document per (Pull × FromSubInventory × ToLocation).
+  Vendor + DN/INV are PER-LINE columns (opposite of the Delivery Note,
+  which groups by OrderId and treats vendor as a per-DO attribute).
+
+  Field mapping (resolved 2026-06-11, confirmed against live DB):
+    Delivery Order#  = Pulls.PullNumber               (no upstream DO#; PullNumber as-is)
+    Order Time       = pol.DeliveryDate               (DATE; rendered d-MMM-yyyy 0:00:00)
+    Production Line   = pol.ProductionLine — collapse-if-constant, else "—"
+                       (⚠️ numeric + unreliable in current data; often mirrors qty)
+    Round            = UNION of distinct hours across the group's lines,
+                       formatted [HH:00],[HH:00]…   (source: pol.OrderRound, pipe-delimited)
+    From Sub         = pol.SubInventory
+    To Sub           = pol.ToLocation
+    Part Number      = pol.ItemCode  (Code128 barcode beneath)
+    Qty Issue        = SUM(Receipts.QtyReceived)
+    Locator          = SubInventory . DeliveryDate(dd-MMM-yyyy) . OrderId
+    Vendor           = pol.VendorName
+    DN/INV Number    = pol.OrderId  " +"  pol.InvoiceNo
+
+  Sample data is real (pull 0000012949, STKCOI-B7 → CHDE-H4).
+  Standalone print-oriented A4 page; colors inline so this file defines the
+  layout exactly (matches mockups/ convention — do not redesign in build).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DSV Delivery Order — Mockup</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #6b7280;
+    --line: #c9ccd1;
+    --line-strong: #1a1a1a;
+    --head-bg: #f1f3f5;
+    --accent: #0b5cab;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #888;
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 11px;
+  }
+  .page {
+    width: 210mm; min-height: 297mm;
+    margin: 12px auto; padding: 12mm 10mm;
+    background: #fff;
+    box-shadow: 0 2px 14px rgba(0,0,0,.35);
+  }
+  .mono { font-family: "Consolas", "Courier New", monospace; }
+
+  /* ---- Header strip ---- */
+  .do-top {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    border-bottom: 2px solid var(--line-strong);
+    padding-bottom: 8px;
+  }
+  .do-logo {
+    font-weight: 800; font-size: 20px; letter-spacing: .5px;
+    color: var(--accent);
+  }
+  .do-logo small { display: block; font-size: 9px; font-weight: 600; color: var(--muted); letter-spacing: 2px; }
+  .do-title { text-align: center; font-size: 19px; font-weight: 800; letter-spacing: 1px; }
+  .do-no { text-align: right; }
+  .do-no .lbl { font-size: 8px; letter-spacing: 1px; color: var(--muted); }
+  .do-no .val { font-size: 15px; font-weight: 800; }
+
+  /* ---- Header info grid (DSV: Order Time / Production Line / Round / From / To) ---- */
+  .do-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 0 24px;
+    margin: 10px 0 4px;
+  }
+  .do-meta dl { display: grid; grid-template-columns: 120px 1fr; row-gap: 3px; margin: 0; }
+  .do-meta dt { font-size: 8.5px; font-weight: 700; letter-spacing: .4px; color: var(--muted); padding: 2px 0; text-transform: uppercase; }
+  .do-meta dd { margin: 0; padding: 2px 0; font-weight: 600; }
+  .do-meta dd.big { font-size: 12px; }
+
+  /* ---- Lines table ---- */
+  table.lines { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  table.lines thead th {
+    background: var(--head-bg);
+    border-top: 1.5px solid var(--line-strong);
+    border-bottom: 1.5px solid var(--line-strong);
+    font-size: 8.5px; letter-spacing: .5px; text-transform: uppercase;
+    text-align: left; padding: 5px 6px; color: #333;
+  }
+  table.lines th.num, table.lines td.num { text-align: right; }
+  table.lines tbody td {
+    border-bottom: 1px solid var(--line);
+    padding: 6px 6px; vertical-align: top;
+  }
+  .col-part   { width: 30%; }
+  .col-qty    { width: 9%; }
+  .col-loc    { width: 26%; }
+  .col-vendor { width: 17%; }
+  .col-dninv  { width: 18%; }
+
+  .part-no { font-weight: 700; font-size: 11.5px; }
+  /* CSS barcode — visual stand-in for the PDF's real Code128 BarcodeObject */
+  .barcode {
+    margin-top: 4px; height: 26px; width: 86%;
+    background: repeating-linear-gradient(90deg,
+      #111 0, #111 1px, #fff 1px, #fff 2px,
+      #111 2px, #111 4px, #fff 4px, #fff 5px,
+      #111 5px, #111 6px, #fff 6px, #fff 8px);
+  }
+  .barcode-cap { font-size: 8px; letter-spacing: 1px; color: var(--muted); margin-top: 1px; }
+  .qty-big { font-weight: 800; font-size: 13px; }
+  .loc { font-size: 10px; word-break: break-all; }
+  .loc .seg-sub { color: var(--accent); font-weight: 700; }
+  .loc .seg-sep { color: var(--muted); }
+  .dninv .dn { font-weight: 700; }
+  .dninv .inv { color: #333; }
+  .vendor { font-weight: 600; }
+
+  tfoot td { border-top: 1.5px solid var(--line-strong); padding: 7px 6px; font-weight: 800; }
+  tfoot .tot-lbl { text-align: right; letter-spacing: 1px; }
+  tfoot .tot-val { text-align: right; font-size: 13px; }
+
+  /* ---- Footer ---- */
+  .do-footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .sig-box { border: 1px solid var(--line); border-radius: 4px; min-height: 80px; padding: 6px 8px; display: flex; flex-direction: column; }
+  .sig-lbl { font-size: 8.5px; font-weight: 700; letter-spacing: .6px; color: var(--muted); text-transform: uppercase; }
+  .sig-space { flex: 1; }
+  .sig-cap { font-size: 8px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 3px; }
+  .note-strip { margin-top: 10px; font-size: 9px; color: var(--muted); }
+
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; box-shadow: none; width: auto; min-height: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="do-top">
+    <div class="do-logo">RECEIVX<small>WAREHOUSE OPS</small></div>
+    <div class="do-title">DELIVERY ORDER</div>
+    <div class="do-no">
+      <div class="lbl">DELIVERY ORDER#</div>
+      <div class="val mono">0000012949</div>
+    </div>
+  </header>
+
+  <section class="do-meta">
+    <dl>
+      <dt>Order Time</dt>      <dd class="big">28-May-2026 0:00:00</dd>
+      <dt>Production Line</dt> <dd>&mdash;</dd>
+      <dt>Round</dt>           <dd class="mono">[07:00],[08:00],[09:00],[10:00]</dd>
+    </dl>
+    <dl>
+      <dt>From Sub</dt> <dd class="big mono">STKCOI-B7</dd>
+      <dt>To Sub</dt>   <dd class="big mono">CHDE-H4</dd>
+    </dl>
+  </section>
+
+  <table class="lines">
+    <thead>
+      <tr>
+        <th class="col-part">Part Number</th>
+        <th class="col-qty num">Qty Issue</th>
+        <th class="col-loc">Locator</th>
+        <th class="col-vendor">Vendor</th>
+        <th class="col-dninv">DN/INV Number</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B31177</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B31177</div>
+        </td>
+        <td class="num"><span class="qty-big mono">10,000</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497847B1</td>
+        <td class="vendor">DONALDSON (THAILAND) LIMITED</td>
+        <td class="dninv mono"><span class="dn">1497847B1</span> <span class="inv">+31700023312</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B31175</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B31175</div>
+        </td>
+        <td class="num"><span class="qty-big mono">6,300</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497854B1</td>
+        <td class="vendor">DONALDSON (THAILAND) LIMITED</td>
+        <td class="dninv mono"><span class="dn">1497854B1</span> <span class="inv">+31700023312</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B31175</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B31175</div>
+        </td>
+        <td class="num"><span class="qty-big mono">2,100</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497854B2</td>
+        <td class="vendor">DONALDSON (THAILAND) LIMITED</td>
+        <td class="dninv mono"><span class="dn">1497854B2</span> <span class="inv">+31700023312</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B41896</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B41896</div>
+        </td>
+        <td class="num"><span class="qty-big mono">4,000</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497881B1</td>
+        <td class="vendor">DONALDSON (THAILAND) LIMITED</td>
+        <td class="dninv mono"><span class="dn">1497881B1</span> <span class="inv">+31700023312</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">13G0724</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">13G0724</div>
+        </td>
+        <td class="num"><span class="qty-big mono">9,000</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497855B1</td>
+        <td class="vendor">DUFU INDUSTRIES SERVICES PTE LTD</td>
+        <td class="dninv mono"><span class="dn">1497855B1</span> <span class="inv">+DUF26050248</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">13G0724</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">13G0724</div>
+        </td>
+        <td class="num"><span class="qty-big mono">9,000</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497857B1</td>
+        <td class="vendor">DUFU INDUSTRIES SERVICES PTE LTD</td>
+        <td class="dninv mono"><span class="dn">1497857B1</span> <span class="inv">+DUF26050248</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B42600</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B42600</div>
+        </td>
+        <td class="num"><span class="qty-big mono">2,304</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497879B1</td>
+        <td class="vendor">I-PEX (THAILAND) CO.,LTD</td>
+        <td class="dninv mono"><span class="dn">1497879B1</span> <span class="inv">+FZ2604109</span></td>
+      </tr>
+      <tr>
+        <td class="col-part">
+          <div class="part-no mono">0B46683</div>
+          <div class="barcode"></div>
+          <div class="barcode-cap mono">0B46683</div>
+        </td>
+        <td class="num"><span class="qty-big mono">2,430</span></td>
+        <td class="loc mono"><span class="seg-sub">STKCOI-B7</span><span class="seg-sep">.</span>28-MAY-2026<span class="seg-sep">.</span>1497873B1</td>
+        <td class="vendor">I-PEX (THAILAND) CO.,LTD</td>
+        <td class="dninv mono"><span class="dn">1497873B1</span> <span class="inv">+FZ2604079</span></td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="1" class="tot-lbl">TOTAL QTY</td>
+        <td class="num tot-val mono">45,134</td>
+        <td colspan="3"></td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="note-strip">
+    Locator = From-sub · delivery-date · order-id &nbsp;|&nbsp; DN/INV = order-id + vendor-invoice.
+    One Delivery Order per (Pull × From Sub × To Sub); vendor &amp; DN/INV vary per line.
+  </div>
+
+  <footer class="do-footer">
+    <div class="sig-box">
+      <div class="sig-lbl">Issued / Picked By</div>
+      <div class="sig-space"></div>
+      <div class="sig-cap">Name / Signature / Date</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-lbl">Approved For Delivery By</div>
+      <div class="sig-space"></div>
+      <div class="sig-cap">supervisor · 28 May 2026 · 14:20 UTC</div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

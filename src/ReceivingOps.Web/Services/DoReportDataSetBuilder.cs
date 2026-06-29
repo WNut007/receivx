@@ -86,6 +86,14 @@ public static class DoReportDataSetBuilder
         t.Columns.Add("LastReceivedAt", typeof(DateTime));
         t.Columns.Add("TotalQty",       typeof(int));
 
+        // DSV Delivery Order header fields (2nd report). Additive — the
+        // Delivery Note .frx never references them. OrderTimeText is the
+        // pre-formatted "Order Time" so the .frx binds a string, matching
+        // the HTML preview format exactly (no FastReport date-format object).
+        t.Columns.Add("ProductionLine", typeof(string));
+        t.Columns.Add("RoundDisplay",   typeof(string));
+        t.Columns.Add("OrderTimeText",  typeof(string));
+
         // Pull-level (denormalized — same value across every Orders row in
         // one render, but the .frx is per-page so it needs them here)
         t.Columns.Add("PullId",               typeof(Guid));
@@ -144,6 +152,14 @@ public static class DoReportDataSetBuilder
         t.Columns.Add("ToLocation",     typeof(string));
         t.Columns.Add("AsnNo",          typeof(string));
         t.Columns.Add("OrderRound",     typeof(string));
+        t.Columns.Add("SourcePoNo",     typeof(string));
+
+        // DSV Delivery Order per-line columns (vendor + precomputed Locator
+        // and DN/INV). Additive — the Delivery Note .frx ignores them.
+        t.Columns.Add("VendorCode",     typeof(string));
+        t.Columns.Add("VendorName",     typeof(string));
+        t.Columns.Add("Locator",        typeof(string));
+        t.Columns.Add("DnInv",          typeof(string));
 
         foreach (DataColumn c in t.Columns)
             c.AllowDBNull = true;
@@ -164,6 +180,12 @@ public static class DoReportDataSetBuilder
         row["HeaderPoNumber"]       = NullIfEmpty(o.HeaderPoNumber);
         row["LastReceivedAt"]       = NullableDate(o.LastReceivedAt);
         row["TotalQty"]             = o.TotalQty;
+        row["ProductionLine"]       = NullIfEmpty(o.ProductionLine);
+        row["RoundDisplay"]         = NullIfEmpty(o.RoundDisplay);
+        row["OrderTimeText"]        = o.DeliveryDate.HasValue
+            ? (object)o.DeliveryDate.Value.ToString("d-MMM-yyyy 0:00:00",
+                System.Globalization.CultureInfo.InvariantCulture)
+            : DBNull.Value;
 
         row["PullId"]               = pull.Id;
         row["PullNumber"]           = pull.PullNumber;
@@ -202,6 +224,11 @@ public static class DoReportDataSetBuilder
         row["ToLocation"]     = NullIfEmpty(l.ToLocation);
         row["AsnNo"]          = NullIfEmpty(l.AsnNo);
         row["OrderRound"]     = NullIfEmpty(l.OrderRound);
+        row["SourcePoNo"]     = NullIfEmpty(l.SourcePoNo);
+        row["VendorCode"]     = NullIfEmpty(l.VendorCode);
+        row["VendorName"]     = NullIfEmpty(l.VendorName);
+        row["Locator"]        = NullIfEmpty(l.Locator);
+        row["DnInv"]          = NullIfEmpty(l.DnInv);
         lines.Rows.Add(row);
     }
 

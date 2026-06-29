@@ -1,0 +1,129 @@
+@model ReceivingOps.Web.Models.Dtos.DoReportData
+@*
+   DSV Delivery Order HTML preview (2nd report). One <article> per DoOrder,
+   where DoOrder identity = (SubInventory × ToLocation) within the pull.
+   Vendor + Locator + DN/INV are PER-LINE columns (opposite of the
+   Delivery Note). Mirrors mockups/delivery-order-dsv.html and the
+   forthcoming delivery-order-dsv.frx so screen + paper never drift.
+
+   Field mapping (resolved 2026-06-11):
+     Delivery Order#  = Pull.PullNumber        Order Time = DoOrder.DeliveryDate
+     Production Line   = DoOrder.ProductionLine  Round      = DoOrder.RoundDisplay
+     From / To Sub    = SubInventory / ToLocation
+     Line: ItemCode | TotalQty | Locator | VendorName | DnInv
+
+   .do-document class kept so reports.js counts docs + the print window's
+   page-break-before rule applies (shared with the Note preview's print path).
+*@
+@{
+    string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
+}
+@foreach (var order in Model.Orders)
+{
+    var orderTime = order.DeliveryDate?.ToString("d-MMM-yyyy 0:00:00") ?? "—";
+    <article class="do-document dord">
+        <header class="dord-top">
+            @if (!string.IsNullOrWhiteSpace(Model.Pull.WarehouseLogoDataUrl))
+            {
+                <img class="dord-logo" src="@Model.Pull.WarehouseLogoDataUrl" alt="@(Model.Pull.WarehouseCode) logo" />
+            }
+            else
+            {
+                <div class="dord-logo dord-logo-fallback">@Model.Pull.WarehouseCode</div>
+            }
+            <div class="dord-title">DELIVERY ORDER</div>
+            <div class="dord-no">
+                <div class="dord-no-label">DELIVERY ORDER#</div>
+                <div class="dord-no-value mono">@Model.Pull.PullNumber</div>
+            </div>
+        </header>
+
+        <section class="dord-meta">
+            <dl>
+                <dt>Order Time</dt>      <dd class="big">@orderTime</dd>
+                <dt>Production Line</dt> <dd>@Dash(order.ProductionLine)</dd>
+                <dt>Round</dt>           <dd class="mono">@Dash(order.RoundDisplay)</dd>
+            </dl>
+            <dl>
+                <dt>From Sub</dt> <dd class="big mono">@Dash(order.SubInventory)</dd>
+                <dt>To Sub</dt>   <dd class="big mono">@Dash(order.ToLocation)</dd>
+            </dl>
+        </section>
+
+        <section class="dord-lines">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="dord-c-part">PART NUMBER</th>
+                        <th class="dord-c-qty num">QTY ISSUE</th>
+                        <th class="dord-c-loc">LOCATOR</th>
+                        <th class="dord-c-vendor">VENDOR</th>
+                        <th class="dord-c-dninv">DN/INV NUMBER</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var line in order.Lines)
+                    {
+                        <tr>
+                            <td class="dord-part">
+                                <div class="dord-part-no mono">@line.ItemCode</div>
+                                <div class="dord-barcode-placeholder mono" title="Code128 on the PDF">@line.ItemCode</div>
+                            </td>
+                            <td class="num"><b class="mono">@line.TotalQty.ToString("N0")</b></td>
+                            <td class="dord-loc mono">@Dash(line.Locator)</td>
+                            <td class="dord-vendor">@Dash(line.VendorName ?? line.VendorCode)</td>
+                            <td class="dord-dninv mono">@Dash(line.DnInv)</td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td class="dord-total-label">TOTAL QTY</td>
+                        <td class="num dord-total-value mono">@order.TotalQty.ToString("N0")</td>
+                        <td colspan="3"></td>
+                    </tr>
+                </tfoot>
+            </table>
+            <div class="dord-note-strip">
+                Locator = from-sub · delivery-date · order-id &nbsp;|&nbsp; DN/INV = order-id + vendor-invoice.
+                One Delivery Order per (Pull × From Sub × To Sub); vendor &amp; DN/INV vary per line.
+            </div>
+        </section>
+
+        <footer class="dord-footer">
+            <div class="dord-sig-block">
+                <div class="dord-sig-label">ISSUED / PICKED BY</div>
+                <div class="dord-sig-box"></div>
+                <div class="dord-sig-caption">Name / Signature / Date</div>
+            </div>
+            <div class="dord-sig-block">
+                <div class="dord-sig-label">APPROVED FOR DELIVERY BY</div>
+                <div class="dord-sig-box">
+                    @{
+                        var sig = (Model.Pull.SignatureSvg ?? "").Trim();
+                    }
+                    @if (sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase))
+                    {
+                        @Html.Raw(sig)
+                    }
+                    else if (sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <img src="@sig" alt="Authorizing signature" />
+                    }
+                </div>
+                <div class="dord-sig-caption">
+                    @if (!string.IsNullOrWhiteSpace(Model.Pull.ClosedByName))
+                    {
+                        var roleStr = string.IsNullOrWhiteSpace(Model.Pull.ClosedByRole) ? "" : " · " + Model.Pull.ClosedByRole!.ToUpperInvariant();
+                        var closedStr = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
+                        @($"{Model.Pull.ClosedByName}{roleStr} · {closedStr}")
+                    }
+                    else
+                    {
+                        @:Name / Signature / Date
+                    }
+                </div>
+            </div>
+        </footer>
+    </article>
+}

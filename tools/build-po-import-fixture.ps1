@@ -53,7 +53,8 @@ $headers = @(
     "OPEN QTY",
     "DELIVERY DATE",
     "ORDER ID",
-    "PALLET ID"
+    "PALLET ID",
+    "PO"
 )
 
 $hr = $sheet.CreateRow(0)
@@ -69,11 +70,14 @@ $today = (Get-Date).ToUniversalTime().ToString('dd/MM/yyyy')
 # calendar day, so the smoke can compare against (Get-Date).ToUniversalTime().Date.
 $todayIso = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
+# 'Po' = the PULL SHEET ID / PRS NO (becomes PurchaseOrders.PoNumber).
+# 'SrcPo' = the source "PO" column (db/040 — lands on SourcePoNo, distinct
+# from the PRS_ID above).
 $rows = @(
-    @{ Po='P127TEST-001'; SC='VEND-A'; SN='Vendor Alpha'; SKU='TST-WIDGET-001'; Desc='Widget X — phase-12-7 fixture'; Qty=12; OrderId='ORD-A-1'; Pallet='PAL-A-1' },
-    @{ Po='P127TEST-001'; SC='VEND-A'; SN='Vendor Alpha'; SKU='TST-WIDGET-002'; Desc='Widget Y';                       Qty=24; OrderId='ORD-A-2'; Pallet='PAL-A-2' },
-    @{ Po='P127TEST-002'; SC='VEND-B'; SN='Vendor Beta';  SKU='TST-GIZMO-001';  Desc='Gizmo 1';                        Qty=6;  OrderId='ORD-B-1'; Pallet='PAL-B-1' },
-    @{ Po='P127TEST-002'; SC='VEND-B'; SN='Vendor Beta';  SKU='TST-GIZMO-002';  Desc='Gizmo 2';                        Qty=18; OrderId='ORD-B-2'; Pallet='PAL-B-2' }
+    @{ Po='P127TEST-001'; SC='VEND-A'; SN='Vendor Alpha'; SKU='TST-WIDGET-001'; Desc='Widget X — phase-12-7 fixture'; Qty=12; OrderId='ORD-A-1'; Pallet='PAL-A-1'; SrcPo='TH5805-A001' },
+    @{ Po='P127TEST-001'; SC='VEND-A'; SN='Vendor Alpha'; SKU='TST-WIDGET-002'; Desc='Widget Y';                       Qty=24; OrderId='ORD-A-2'; Pallet='PAL-A-2'; SrcPo='TH5805-A002' },
+    @{ Po='P127TEST-002'; SC='VEND-B'; SN='Vendor Beta';  SKU='TST-GIZMO-001';  Desc='Gizmo 1';                        Qty=6;  OrderId='ORD-B-1'; Pallet='PAL-B-1'; SrcPo='TH5805-B001' },
+    @{ Po='P127TEST-002'; SC='VEND-B'; SN='Vendor Beta';  SKU='TST-GIZMO-002';  Desc='Gizmo 2';                        Qty=18; OrderId='ORD-B-2'; Pallet='PAL-B-2'; SrcPo='TH5805-B002' }
 )
 
 for ($i = 0; $i -lt $rows.Count; $i++) {
@@ -88,6 +92,7 @@ for ($i = 0; $i -lt $rows.Count; $i++) {
     $row.CreateCell(6).SetCellValue([string]$today)
     $row.CreateCell(7).SetCellValue([string]$r.OrderId)
     $row.CreateCell(8).SetCellValue([string]$r.Pallet)
+    $row.CreateCell(9).SetCellValue([string]$r.SrcPo)
 }
 
 $fixtureDir = Split-Path $out -Parent

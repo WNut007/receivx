@@ -57,6 +57,7 @@ public class PoImportRow
 
     // Tracking IDs
     public string? OrderId { get; set; }             // ORDER ID            (db/031, kept separately per C2=C)
+    public string? SourcePoNo { get; set; }          // PO                  (db/040 — actual upstream PO number; C1=A no longer drops it)
     public string? AsnNo { get; set; }               // ASN NO              (db/021, kept separately per C2=C)
     public string? InvoiceNo { get; set; }           // INVOICE
     public string? KanbanNo { get; set; }            // KANBAN NO

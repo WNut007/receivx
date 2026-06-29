@@ -17,8 +17,6 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// </summary>
 public class PrbPrsSource : IErpSource
 {
-    private const int ItemCodeMaxLength = 64;  // matches Receivx PullItems.ItemCode
-
     private readonly IErpDbConnectionFactory _factory;
     private readonly ErpSyncOptions _opts;
     private readonly ILogger<PrbPrsSource> _log;
@@ -91,9 +89,18 @@ public class PrbPrsSource : IErpSource
                 PullDate = pullDate,
             };
 
+            // Group by BARE SKU — the item identity that matches the PO
+            // import side (PurchaseOrderLines.ItemCode is the bare SKU from
+            // the "SKU" column). Multiple PRB_PRS rows sharing a SKU but
+            // differing only in TRIAL_ID collapse into ONE Receivx item;
+            // their qty sums across windows below. TRIAL_ID is lot/trial
+            // metadata, captured separately in PullItemDraft.TrialId — it is
+            // NOT part of item identity. (Previously this synthesized
+            // "SKU-TRIAL_ID", which broke the §7.15 FIFO match against the
+            // bare-SKU PO lines and left receives blocked.)
             foreach (var itemGroup in pullGroup
                 .Where(r => !string.IsNullOrWhiteSpace(r.SKU))
-                .GroupBy(r => SynthesizeItemCode(r.SKU!, r.TRIAL_ID)))
+                .GroupBy(r => NormalizeItemCode(r.SKU!)))
             {
                 if (string.IsNullOrWhiteSpace(itemGroup.Key))
                 {
@@ -119,6 +126,9 @@ public class PrbPrsSource : IErpSource
                     Phase = NullIfBlank(sample.PHASE),
                 };
 
+                // One window per hour-of-day. Rows that collapsed into this
+                // SKU (different TRIAL_IDs, or the same SKU emitted multiple
+                // times for one hour) sum their qty into the matching window.
                 foreach (var row in itemGroup)
                 {
                     var qty = row.QTY ?? 0;
@@ -154,15 +164,12 @@ public class PrbPrsSource : IErpSource
         return draft;
     }
 
-    internal static string SynthesizeItemCode(string sku, string? trialId)
-    {
-        var s = sku.Trim();
-        var t = (trialId ?? string.Empty).Trim();
-        var combined = t.Length == 0 ? s : $"{s}-{t}";
-        if (combined.Length > ItemCodeMaxLength)
-            combined = combined[..ItemCodeMaxLength];
-        return combined;
-    }
+    // ItemCode = bare SKU, trimmed only. Trial/lot identity lives in
+    // PullItemDraft.TrialId, never in the ItemCode — the PO lines this
+    // must FIFO-match against carry the bare SKU. No length cap: the PO
+    // import (PoImportReader) doesn't cap either, and capping only one
+    // side would re-break the match for any SKU > 64 chars.
+    internal static string NormalizeItemCode(string sku) => sku.Trim();
 
     internal static byte? ParseHour(string? windowsTime)
     {

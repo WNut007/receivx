@@ -13,7 +13,9 @@ namespace ReceivingOps.Web.Services.PoImport;
 /// <para>Mapping resolves four header conflicts captured in the v3.2
 /// session decisions doc:</para>
 /// <list type="bullet">
-///   <item>C1=A — "PULL SHEET ID / PRS NO" wins for PoNumber; "PO" column is ignored.</item>
+///   <item>C1=A — "PULL SHEET ID / PRS NO" wins for PoNumber. The "PO" column
+///                is no longer ignored: db/040 lands it on SourcePoNo (the
+///                actual upstream PO number, distinct from the PRS_ID).</item>
 ///   <item>C2=C — "ORDER ID" and "ASN NO" both land (db/031 added OrderId).</item>
 ///   <item>C3=A — "PALLET ID" (uppercase, later in sheet) wins; "Pallet ID" ignored.
 ///                Encoded by the later-wins normalization in the header map.</item>
@@ -185,6 +187,10 @@ public class PoImportReader : IPoImportReader
             DeliveryDate = GetDate(row, map, "DELIVERY DATE"),
 
             OrderId = GetString(row, map, "ORDER ID"),
+            // db/040 — "PO" is the actual upstream purchase-order number.
+            // C1=A picks "PULL SHEET ID / PRS NO" for PoNumber; the "PO"
+            // column is no longer dropped, it lands on SourcePoNo.
+            SourcePoNo = GetString(row, map, "PO"),
             AsnNo = GetString(row, map, "ASN NO"),
             InvoiceNo = GetString(row, map, "INVOICE"),
             KanbanNo = GetString(row, map, "KANBAN NO"),

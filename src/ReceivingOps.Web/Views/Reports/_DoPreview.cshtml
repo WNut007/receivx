@@ -126,6 +126,7 @@
                         <th class="col-kanban">KANBAN</th>
                         <th class="col-asn">ASN</th>
                         <th class="col-round">ROUND</th>
+                        <th class="col-po">PO</th>
                         <th class="col-qty num">QTY</th>
                     </tr>
                 </thead>
@@ -139,13 +140,14 @@
                             <td class="mono">@Dash(line.KanbanNo)</td>
                             <td class="mono">@Dash(line.AsnNo)</td>
                             <td class="mono">@Dash(line.OrderRound)</td>
+                            <td class="mono">@Dash(line.SourcePoNo)</td>
                             <td class="num"><b>@line.TotalQty.ToString("N0")</b></td>
                         </tr>
                     }
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="6" class="dsv-total-label">TOTAL QTY</td>
+                        <td colspan="7" class="dsv-total-label">TOTAL QTY</td>
                         <td class="num dsv-total-value">@order.TotalQty.ToString("N0")</td>
                     </tr>
                 </tfoot>
