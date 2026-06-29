@@ -97,6 +97,53 @@
         }
     }
 
+    // ----- Sign a party box (digital signature) ---------------------------
+    // Delegated: the preview HTML is re-injected on every load, so bind once
+    // on the stable container. A "Sign as {Party}" button only renders when
+    // the server marked the box eligible (matching whRole + warehouse +
+    // unsigned), so the click maps 1:1 to a POST that should succeed.
+    bodyEl.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.do-sign-btn[data-party]');
+        if (!btn || !selectedPullId) return;
+        const party = btn.dataset.party;
+
+        const ok = await confirmAction({
+            title: `Sign as ${party}?`,
+            message: `You are signing the ${party} box for ${selectedPullNumber}. ` +
+                     `This records your name + timestamp and cannot be undone.`,
+            icon: 'info',
+            confirmLabel: `Sign as ${party}`,
+        });
+        if (!ok) return;
+
+        btn.disabled = true;
+        try {
+            const resp = await fetch(
+                `/api/reports/do/${encodeURIComponent(selectedPullId)}/sign`,
+                {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ party }),
+                });
+            if (!resp.ok) {
+                let msg = `Sign failed (HTTP ${resp.status})`;
+                try {
+                    const j = await resp.json();
+                    if (j && (j.title || j.error)) msg = j.title || j.error;
+                } catch { /* keep default */ }
+                alert(msg);
+                btn.disabled = false;
+                return;
+            }
+            // Success — reload the preview so the box flips to signed.
+            loadPreview();
+        } catch (err) {
+            alert(`Network error: ${err.message || String(err)}`);
+            btn.disabled = false;
+        }
+    });
+
     // ----- Export PDF -----------------------------------------------------
     // /api/reports/do/{id}/export.pdf always sets Content-Disposition:
     // attachment so navigating to it triggers a Save As dialog.

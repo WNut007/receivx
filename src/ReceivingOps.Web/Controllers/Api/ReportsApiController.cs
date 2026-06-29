@@ -45,6 +45,7 @@ public class ReportsApiController : Controller
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
             var reportType = ParseReportType(type);
             var data = await _doService.GetReportDataAsync(id, reportType, ct);
+            ApplySignEligibility(data);
             // Full path — the api controller's view discovery would look under
             // Views/ReportsApi/ otherwise (controller name → folder mapping).
             var partial = reportType == ReportType.DeliveryOrder
@@ -114,6 +115,22 @@ public class ReportsApiController : Controller
         catch (NotFoundException ex)  { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
         catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // Sets per-party CanSign on the preview model: the current viewer may sign a
+    // box when their whRole matches the party AND their session warehouse matches
+    // the pull's AND the box is unsigned. Mirrors the server-side sign guards so
+    // a "Sign as {Party}" button only appears when the POST would actually succeed.
+    private void ApplySignEligibility(Models.Dtos.DoReportData data)
+    {
+        var whRole = User.FindFirstValue("whRole") ?? "";
+        var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
+        var whMatch = sessionWh == data.Pull.WarehouseId;
+
+        foreach (var party in data.Pull.Signatures.All)
+            party.CanSign = whMatch
+                && !party.IsSigned
+                && string.Equals(whRole, party.Party.ToLowerInvariant(), StringComparison.Ordinal);
     }
 
     /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>

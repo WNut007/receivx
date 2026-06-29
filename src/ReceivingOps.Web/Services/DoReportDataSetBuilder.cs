@@ -114,8 +114,18 @@ public static class DoReportDataSetBuilder
         // SignatureSvg) stay alongside so the HTML preview path can keep
         // rendering data URLs directly; the byte[] columns serve the PDF
         // pipeline which can't decode the URL form natively.
+        // (SignatureBytes is retained for back-compat but the footer no longer
+        // binds it — the pull-close signature was dropped from the report in
+        // the digital-signature feature; the 3 party captions below replace it.)
         t.Columns.Add("WarehouseLogoBytes",   typeof(byte[]));
         t.Columns.Add("SignatureBytes",       typeof(byte[]));
+
+        // 3-party digital signature captions (per-pull, denormalized onto every
+        // Orders row). Pre-formatted "Name\nDD MMM YYYY · HH:mm UTC" or empty
+        // (blank box). The .frx footer binds one TextObject per party.
+        t.Columns.Add("CustomerSig",   typeof(string));
+        t.Columns.Add("WarehouseSig",  typeof(string));
+        t.Columns.Add("ProductionSig", typeof(string));
 
         foreach (DataColumn c in t.Columns)
             c.AllowDBNull = true;
@@ -201,6 +211,9 @@ public static class DoReportDataSetBuilder
         row["SignatureSvg"]         = NullIfEmpty(pull.SignatureSvg);
         row["WarehouseLogoBytes"]   = (object?)DecodeAndFlattenImage(pull.WarehouseLogoDataUrl) ?? DBNull.Value;
         row["SignatureBytes"]       = (object?)DecodeAndFlattenImage(pull.SignatureSvg)         ?? DBNull.Value;
+        row["CustomerSig"]          = SigCaption(pull.Signatures.Customer);
+        row["WarehouseSig"]         = SigCaption(pull.Signatures.Warehouse);
+        row["ProductionSig"]        = SigCaption(pull.Signatures.Production);
 
         orders.Rows.Add(row);
     }
@@ -231,6 +244,13 @@ public static class DoReportDataSetBuilder
         row["DnInv"]          = NullIfEmpty(l.DnInv);
         lines.Rows.Add(row);
     }
+
+    // Signature box caption for the PDF: "Name\nDD MMM YYYY · HH:mm UTC" when
+    // signed, else DBNull (blank box). Matches the HTML preview format.
+    private static object SigCaption(DoPartySignature s) =>
+        s.IsSigned && s.SignedAt.HasValue
+            ? (object)($"{s.SignerName}\n{s.SignedAt.Value.ToString("dd MMM yyyy · HH:mm", System.Globalization.CultureInfo.InvariantCulture)} UTC")
+            : DBNull.Value;
 
     private static object NullIfEmpty(string? s) =>
         string.IsNullOrEmpty(s) ? DBNull.Value : s;

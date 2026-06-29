@@ -248,23 +248,11 @@ public static class DsvDeliveryOrderTemplateBuilder
 
         footer.Objects.Add(MakeHRule("FootRule0", 0, 13, 180));
 
-        footer.Objects.Add(MakeText("SigDelLabel", 0, 15, 85, 5,
-            "ISSUED / PICKED BY", fontSize: 8f, bold: true));
-        footer.Objects.Add(MakeText("SigAppLabel", 95, 15, 85, 5,
-            "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
-
-        footer.Objects.Add(MakeBox("SigDelBox", 0, 21, 85, 22));
-        footer.Objects.Add(MakeBox("SigAppBox", 95, 21, 85, 22));
-        // PNG signature mark bound to Orders.SignatureBytes (pre-flattened
-        // onto white server-side). Inline-SVG / undecodable → DBNull → blank.
-        footer.Objects.Add(MakeDataPicture("AuthSig", 97, 22, 81, 20,
-            DoReportDataSetBuilder.OrdersTableName + ".SignatureBytes"));
-
-        footer.Objects.Add(MakeText("SigDelCap", 0, 44, 85, 4,
-            "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
-        footer.Objects.Add(MakeText("SigAppCap", 95, 44, 85, 4,
-            "[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]",
-            fontSize: 7f, align: HorzAlign.Center));
+        // 3-party digital signature boxes (Customer / Warehouse / Production),
+        // per-pull, denormalized onto every Orders row. Replaces the old 2-box
+        // footer + pull-close PNG (decision #6). Each box binds its caption
+        // column (CustomerSig/WarehouseSig/ProductionSig) — empty ⇒ blank box.
+        AddSignatureBoxes(footer);
 
         return footer;
     }
@@ -324,6 +312,29 @@ public static class DsvDeliveryOrderTemplateBuilder
                 0),
             Border = { Lines = BorderLines.Top, Width = thin ? 0.25f : 0.5f },
         };
+    }
+
+    // 3-party signature boxes at y=15..48mm across 180mm content width.
+    // Each: bold label, bordered box, bound caption (CustomerSig/WarehouseSig/
+    // ProductionSig — empty ⇒ blank), and a "Name / Date" sub-caption.
+    private static void AddSignatureBoxes(BandBase band)
+    {
+        var parties = new[]
+        {
+            (x: 0f,     label: "CUSTOMER",   col: "CustomerSig"),
+            (x: 61.5f,  label: "WAREHOUSE",  col: "WarehouseSig"),
+            (x: 123f,   label: "PRODUCTION", col: "ProductionSig"),
+        };
+        foreach (var p in parties)
+        {
+            var key = p.label[0] + p.label.Substring(1).ToLowerInvariant();
+            band.Objects.Add(MakeText($"Sig{key}Label", p.x, 15, 57, 5, p.label, fontSize: 8f, bold: true));
+            band.Objects.Add(MakeBox($"Sig{key}Box", p.x, 21, 57, 22));
+            band.Objects.Add(MakeText($"Sig{key}Val", p.x, 27, 57, 10,
+                $"[Orders.{p.col}]", fontSize: 9f, align: HorzAlign.Center));
+            band.Objects.Add(MakeText($"Sig{key}Cap", p.x, 44, 57, 4,
+                "Name / Date", fontSize: 7f, align: HorzAlign.Center));
+        }
     }
 
     private static TextObject MakeBox(string name, float xMm, float yMm, float wMm, float hMm)

@@ -33,16 +33,6 @@
     var dnPlusInv = string.IsNullOrWhiteSpace(order.InvoiceNo)
         ? order.DeliveryNoteNo
         : $"{order.DeliveryNoteNo}+{order.InvoiceNo}";
-    var sig = (Model.Pull.SignatureSvg ?? "").Trim();
-    var hasInlineSvg = sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase);
-    var hasDataUrl   = sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
-    var closedStr    = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
-    var roleStr      = string.IsNullOrWhiteSpace(Model.Pull.ClosedByRole)
-        ? ""
-        : " · " + Model.Pull.ClosedByRole!.ToUpperInvariant();
-    var approverCaption = string.IsNullOrWhiteSpace(Model.Pull.ClosedByName)
-        ? "Name / Signature / Date"
-        : $"{Model.Pull.ClosedByName}{roleStr} · {closedStr}";
 
     <article class="dsv-do">
         <header class="dsv-top">
@@ -169,27 +159,7 @@
                     <div><label>Delivery Note No + Inv</label><span class="mono">@dnPlusInv</span></div>
                 </div>
             </div>
-            <div class="dsv-sig-row">
-                <div class="dsv-sig-block">
-                    <div class="dsv-sig-label">DELIVERED BY</div>
-                    <div class="dsv-sig-box"></div>
-                    <div class="dsv-sig-caption">Name / Signature / Date</div>
-                </div>
-                <div class="dsv-sig-block">
-                    <div class="dsv-sig-label">APPROVED FOR DELIVERY BY</div>
-                    <div class="dsv-sig-box dsv-sig-box-filled">
-                        @if (hasInlineSvg)
-                        {
-                            @Html.Raw(sig)
-                        }
-                        else if (hasDataUrl)
-                        {
-                            <img src="@sig" alt="Authorizing signature" />
-                        }
-                    </div>
-                    <div class="dsv-sig-caption">@approverCaption</div>
-                </div>
-            </div>
+            @await Html.PartialAsync("~/Views/Reports/_SignatureBoxes.cshtml", Model.Pull)
         </footer>
     </article>
 }

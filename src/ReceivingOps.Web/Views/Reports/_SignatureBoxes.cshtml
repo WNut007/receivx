@@ -1,0 +1,37 @@
+@using System.Globalization
+@model ReceivingOps.Web.Models.Dtos.DoPullHeader
+@*
+    3-party digital signature row (Customer / Warehouse / Production).
+    Per-pull grain — the same set renders on every DO of the pull. Replaces the
+    old 2-box footer (ISSUED/PICKED BY + APPROVED FOR DELIVERY BY) and the
+    pull-close SignatureSvg display (decision #6).
+
+    Signed   → signer name + timestamp.
+    Unsigned → blank box; a "Sign as {Party}" button appears only when the
+               current viewer is eligible (CanSign, set server-side to mirror
+               the POST guards). reports.js delegates the click.
+*@
+<div class="do-sign-row" data-pull-id="@Model.Id">
+    @foreach (var p in Model.Signatures.All)
+    {
+        <div class="do-sign-box @(p.IsSigned ? "is-signed" : "")">
+            <div class="do-sign-label">@p.Party.ToUpperInvariant()</div>
+            <div class="do-sign-area">
+                @if (p.IsSigned)
+                {
+                    <div class="do-sign-name">@p.SignerName</div>
+                    <div class="do-sign-date mono">
+                        @((p.SignedAt?.ToString("dd MMM yyyy · HH:mm", CultureInfo.InvariantCulture) ?? "") + " UTC")
+                    </div>
+                }
+                else if (p.CanSign)
+                {
+                    <button type="button" class="do-sign-btn" data-party="@p.Party">
+                        Sign as @p.Party
+                    </button>
+                }
+            </div>
+            <div class="do-sign-caption">Name / Date</div>
+        </div>
+    }
+</div>

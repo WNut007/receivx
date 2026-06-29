@@ -97,13 +97,15 @@
       <TextObject Name="StoreDateLabel" Top="15.12" Width="113.4" Height="18.9" CanGrow="true" Text="DATE RECEIVED :" Font="Arial, 8pt, style=Bold"/>
       <TextObject Name="StoreDateValue" Left="113.4" Top="15.12" Width="226.8" Height="18.9" CanGrow="true" Text="[Orders.LastReceivedAt]" Format="Custom" Format.Format="dd/MM/yyyy" Font="Arial, 9pt"/>
       <LineObject Name="FootRule1" Top="45.36" Width="680.4" Border.Width="0.5"/>
-      <TextObject Name="SigDelLabel" Top="52.92" Width="321.3" Height="18.9" CanGrow="true" Text="DELIVERED BY" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="SigAppLabel" Left="359.1" Top="52.92" Width="321.3" Height="18.9" CanGrow="true" Text="APPROVED FOR DELIVERY BY" Font="Arial, 8pt, style=Bold"/>
-      <TextObject Name="SigDelBox" Top="75.6" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
-      <TextObject Name="SigAppBox" Left="359.1" Top="75.6" Width="321.3" Height="83.16" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Font="Arial, 10pt"/>
-      <PictureObject Name="AuthSig" Left="366.66" Top="79.38" Width="306.18" Height="75.6" DataColumn="Orders.SignatureBytes"/>
-      <TextObject Name="SigDelCap" Top="162.54" Width="321.3" Height="15.12" CanGrow="true" Text="Name / Signature / Date" HorzAlign="Center" Font="Arial, 7pt"/>
-      <TextObject Name="SigAppCap" Left="359.1" Top="162.54" Width="321.3" Height="15.12" CanGrow="true" Text="[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]" HorzAlign="Center" Font="Arial, 7pt"/>
+      <TextObject Name="SigCustLabel" Top="52.92" Width="218.4" Height="15.12" Text="CUSTOMER" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="SigCustBox" Top="70.0" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.CustomerSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+      <TextObject Name="SigCustCap" Top="140.0" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
+      <TextObject Name="SigWhLabel" Left="231" Top="52.92" Width="218.4" Height="15.12" Text="WAREHOUSE" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="SigWhBox" Left="231" Top="70.0" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.WarehouseSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+      <TextObject Name="SigWhCap" Left="231" Top="140.0" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
+      <TextObject Name="SigProdLabel" Left="462" Top="52.92" Width="218.4" Height="15.12" Text="PRODUCTION" Font="Arial, 8pt, style=Bold"/>
+      <TextObject Name="SigProdBox" Left="462" Top="70.0" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.ProductionSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+      <TextObject Name="SigProdCap" Left="462" Top="140.0" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
       <TextObject Name="PageNum" Left="491.4" Top="185.22" Width="189" Height="15.12" CanGrow="true" Text="Page [Page#] of [TotalPages#]" HorzAlign="Right" Font="Arial, 7pt"/>
       <BarcodeObject Name="BcTotal" Left="313.74" Top="3.78" Width="211.68" Height="37.8" AutoSize="false" Text="[Orders.TotalQty]" ShowText="false" HorzAlign="Center" Barcode="Code128" Barcode.AutoEncode="true"/>
       <TextObject Name="TotalValue" Left="532.98" Top="11.34" Width="139.86" Height="22.68" CanGrow="true" Text="[Orders.TotalQty]" HorzAlign="Right" Font="Arial, 12pt, style=Bold"/>
