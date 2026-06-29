@@ -12,8 +12,18 @@ namespace ReceivingOps.Web.Services;
 
 public class MastersService : IMastersService
 {
+    // Global role (dbo.Users.Role) — gated by CK_Users_Role. Unchanged by the
+    // digital-signature feature: signers keep an operator/viewer global role.
     private static readonly HashSet<string> ValidRoles =
         new(StringComparer.OrdinalIgnoreCase) { "admin", "supervisor", "operator", "viewer" };
+
+    // Per-warehouse role (dbo.UserWarehouseAssignments.Role, → "whRole" claim) —
+    // gated by CK_UWA_Role (widened in db/042). Adds the 3 digital-signature
+    // signer parties: a user assigned customer/warehouse/production at a
+    // warehouse may sign that party's box on DOs for that warehouse.
+    private static readonly HashSet<string> ValidAssignmentRoles =
+        new(StringComparer.OrdinalIgnoreCase)
+            { "admin", "supervisor", "operator", "viewer", "customer", "warehouse", "production" };
 
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
@@ -429,7 +439,7 @@ public class MastersService : IMastersService
         {
             if (a.WarehouseId == Guid.Empty)
                 throw new BusinessException("Assignment warehouseId is required");
-            if (!ValidRoles.Contains(a.Role))
+            if (!ValidAssignmentRoles.Contains(a.Role))
                 throw new BusinessException($"Invalid assignment role '{a.Role}'");
         }
         // Reject duplicate warehouses in the same payload (composite PK would block it anyway).

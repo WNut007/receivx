@@ -184,6 +184,9 @@ public class AuthService : IAuthService
         "supervisor" => "Inbound Supervisor",
         "operator"   => "Warehouse Operator",
         "viewer"     => "Viewer",
+        "customer"   => "Customer Signer",
+        "warehouse"  => "Warehouse Signer",
+        "production" => "Production Signer",
         _            => "User",
     };
 

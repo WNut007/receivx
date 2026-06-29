@@ -91,39 +91,7 @@
         </section>
 
         <footer class="dord-footer">
-            <div class="dord-sig-block">
-                <div class="dord-sig-label">ISSUED / PICKED BY</div>
-                <div class="dord-sig-box"></div>
-                <div class="dord-sig-caption">Name / Signature / Date</div>
-            </div>
-            <div class="dord-sig-block">
-                <div class="dord-sig-label">APPROVED FOR DELIVERY BY</div>
-                <div class="dord-sig-box">
-                    @{
-                        var sig = (Model.Pull.SignatureSvg ?? "").Trim();
-                    }
-                    @if (sig.StartsWith("<svg", StringComparison.OrdinalIgnoreCase))
-                    {
-                        @Html.Raw(sig)
-                    }
-                    else if (sig.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        <img src="@sig" alt="Authorizing signature" />
-                    }
-                </div>
-                <div class="dord-sig-caption">
-                    @if (!string.IsNullOrWhiteSpace(Model.Pull.ClosedByName))
-                    {
-                        var roleStr = string.IsNullOrWhiteSpace(Model.Pull.ClosedByRole) ? "" : " · " + Model.Pull.ClosedByRole!.ToUpperInvariant();
-                        var closedStr = Model.Pull.ClosedAt?.ToString("dd MMM yyyy · HH:mm") + " UTC";
-                        @($"{Model.Pull.ClosedByName}{roleStr} · {closedStr}")
-                    }
-                    else
-                    {
-                        @:Name / Signature / Date
-                    }
-                </div>
-            </div>
+            @await Html.PartialAsync("~/Views/Reports/_SignatureBoxes.cshtml", Model.Pull)
         </footer>
     </article>
 }

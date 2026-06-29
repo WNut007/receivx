@@ -343,26 +343,12 @@ public static class DeliveryOrderTemplateBuilder
 
         footer.Objects.Add(MakeHRule("FootRule1", 0, 18, 180));
 
-        // Two signature boxes — left is manual fill on paper, right is
-        // APPROVED FOR DELIVERY BY with the closer's PNG signature mark
-        // bound via Orders.SignatureBytes (Stage 6). The signature picture
-        // is inset 2mm from the SigAppBox border so the gray frame stays
-        // visible around the mark. Inline-SVG and other non-decodable
-        // values fall through to DBNull and the picture renders blank,
-        // leaving the box framed for manual signing.
-        footer.Objects.Add(MakeText("SigDelLabel",  0, 20, 85, 5,
-            "DELIVERED BY", fontSize: 8f, bold: true));
-        footer.Objects.Add(MakeText("SigAppLabel", 95, 20, 85, 5,
-            "APPROVED FOR DELIVERY BY", fontSize: 8f, bold: true));
-        footer.Objects.Add(MakeBox("SigDelBox",  0, 26, 85, 22));
-        footer.Objects.Add(MakeBox("SigAppBox", 95, 26, 85, 22));
-        footer.Objects.Add(MakeDataPicture("AuthSig", 97, 27, 81, 20,
-            DoReportDataSetBuilder.OrdersTableName + ".SignatureBytes"));
-        footer.Objects.Add(MakeText("SigDelCap",  0, 49, 85, 4,
-            "Name / Signature / Date", fontSize: 7f, align: HorzAlign.Center));
-        footer.Objects.Add(MakeText("SigAppCap", 95, 49, 85, 4,
-            "[Orders.ClosedByName] · [Orders.ClosedByRole] · [Orders.ClosedAt]",
-            fontSize: 7f, align: HorzAlign.Center));
+        // 3-party digital signature boxes (Customer / Warehouse / Production),
+        // per-pull, denormalized onto every Orders row. Replaces the old 2-box
+        // footer + pull-close PNG (decision #6). Each box binds its caption
+        // column (CustomerSig/WarehouseSig/ProductionSig) — empty ⇒ blank box
+        // for manual signing on paper.
+        AddSignatureBoxes(footer, yLabel: 20, yBox: 26, yVal: 32, yCap: 49);
 
         // FastReport system variables expand to the current page index and
         // the prepared report's page count at render time.
@@ -411,6 +397,30 @@ public static class DeliveryOrderTemplateBuilder
                 0),
             Border = { Lines = BorderLines.Top, Width = 0.5f },
         };
+    }
+
+    // 3-party signature boxes across 180mm content width (Customer / Warehouse
+    // / Production). Each: bold label, bordered box, bound caption column
+    // (empty ⇒ blank), and a "Name / Date" sub-caption. y offsets are passed in
+    // because the Note footer band lays out differently from the DSV one.
+    private static void AddSignatureBoxes(BandBase band, float yLabel, float yBox, float yVal, float yCap)
+    {
+        var parties = new[]
+        {
+            (x: 0f,    label: "CUSTOMER",   col: "CustomerSig"),
+            (x: 61.5f, label: "WAREHOUSE",  col: "WarehouseSig"),
+            (x: 123f,  label: "PRODUCTION", col: "ProductionSig"),
+        };
+        foreach (var p in parties)
+        {
+            var key = p.label[0] + p.label.Substring(1).ToLowerInvariant();
+            band.Objects.Add(MakeText($"Sig{key}Label", p.x, yLabel, 57, 5, p.label, fontSize: 8f, bold: true));
+            band.Objects.Add(MakeBox($"Sig{key}Box", p.x, yBox, 57, 22));
+            band.Objects.Add(MakeText($"Sig{key}Val", p.x, yVal, 57, 10,
+                $"[Orders.{p.col}]", fontSize: 9f, align: HorzAlign.Center));
+            band.Objects.Add(MakeText($"Sig{key}Cap", p.x, yCap, 57, 4,
+                "Name / Date", fontSize: 7f, align: HorzAlign.Center));
+        }
     }
 
     private static TextObject MakeBox(string name, float xMm, float yMm, float wMm, float hMm)

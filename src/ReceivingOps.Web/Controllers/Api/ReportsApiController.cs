@@ -3,6 +3,7 @@ using FastReport.Export.PdfSimple;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
 namespace ReceivingOps.Web.Controllers.Api;
@@ -11,17 +12,25 @@ namespace ReceivingOps.Web.Controllers.Api;
 //   GET /api/reports/do/{id}/preview     → HTML fragment from _DoPreview.cshtml
 //   GET /api/reports/do/{id}/export.pdf  → PDF stream (FastReport, multi-page)
 [ApiController]
-[Authorize(Policy = "CanManagePulls")]
+[Authorize(Policy = "CanViewReports")]
 [Route("api/reports")]
 public class ReportsApiController : Controller
 {
     private readonly IDeliveryOrderService _doService;
     private readonly IPullRepository _pulls;
+    private readonly IPullSignatureService _sign;
+    private readonly IAuthorizationService _authz;
 
-    public ReportsApiController(IDeliveryOrderService doService, IPullRepository pulls)
+    public ReportsApiController(
+        IDeliveryOrderService doService,
+        IPullRepository pulls,
+        IPullSignatureService sign,
+        IAuthorizationService authz)
     {
         _doService = doService;
         _pulls = pulls;
+        _sign = sign;
+        _authz = authz;
     }
 
     // GET /api/reports/do/{id}/preview → HTML fragment for the preview pane.
@@ -36,6 +45,7 @@ public class ReportsApiController : Controller
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
             var reportType = ParseReportType(type);
             var data = await _doService.GetReportDataAsync(id, reportType, ct);
+            ApplySignEligibility(data);
             // Full path — the api controller's view discovery would look under
             // Views/ReportsApi/ otherwise (controller name → folder mapping).
             var partial = reportType == ReportType.DeliveryOrder
@@ -70,6 +80,57 @@ public class ReportsApiController : Controller
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    // POST /api/reports/do/{id}/sign — sign one party box (Customer/Warehouse/
+    // Production) of a pull. Defense-in-depth: (1) the party-specific CanSign{Party}
+    // policy is checked here at runtime; (2) the service re-checks role + warehouse +
+    // immutability. Per-pull grain: one signature per (pull, party).
+    [HttpPost("do/{id:guid}/sign")]
+    public async Task<IActionResult> Sign(Guid id, [FromBody] SignPartyRequest req, CancellationToken ct)
+    {
+        var party = (req?.Party ?? "").Trim();
+        var policy = party.ToLowerInvariant() switch
+        {
+            "customer"   => "CanSignCustomer",
+            "warehouse"  => "CanSignWarehouse",
+            "production" => "CanSignProduction",
+            _            => null,
+        };
+        if (policy is null)
+            return Problem(
+                title: $"Invalid party '{party}'. Expected Customer, Warehouse, or Production.",
+                statusCode: 400);
+
+        // Defense-in-depth #1 — the party-specific signer policy (Phase 1).
+        var authz = await _authz.AuthorizeAsync(User, policy);
+        if (!authz.Succeeded)
+            return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
+
+        try
+        {
+            // Defense-in-depth #2 — service re-checks role + warehouse + immutability.
+            return Ok(await _sign.SignAsync(id, party, ct));
+        }
+        catch (NotFoundException ex)  { return Problem(title: ex.Message, statusCode: 404); }
+        catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // Sets per-party CanSign on the preview model: the current viewer may sign a
+    // box when their whRole matches the party AND their session warehouse matches
+    // the pull's AND the box is unsigned. Mirrors the server-side sign guards so
+    // a "Sign as {Party}" button only appears when the POST would actually succeed.
+    private void ApplySignEligibility(Models.Dtos.DoReportData data)
+    {
+        var whRole = User.FindFirstValue("whRole") ?? "";
+        var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
+        var whMatch = sessionWh == data.Pull.WarehouseId;
+
+        foreach (var party in data.Pull.Signatures.All)
+            party.CanSign = whMatch
+                && !party.IsSigned
+                && string.Equals(whRole, party.Party.ToLowerInvariant(), StringComparison.Ordinal);
     }
 
     /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>

@@ -30,6 +30,7 @@ public class DoPullHeader
     public string PullNumber { get; set; } = "";
     public DateTime PullDate { get; set; }
     public string? ReferenceNumber { get; set; }
+    public Guid WarehouseId { get; set; }
     public string WarehouseCode { get; set; } = "";
     public string WarehouseName { get; set; } = "";
     /// <summary>Free-text warehouse address (DSV header "Delivery To" block).</summary>
@@ -52,6 +53,41 @@ public class DoPullHeader
     public string? SignatureSvg { get; set; }
     /// <summary>Net delivered qty across every DO/line. Drives the toolbar caption.</summary>
     public int TotalQty { get; set; }
+
+    /// <summary>
+    /// 3-party digital signatures (per-pull grain — same set shown on every DO
+    /// the pull spawns). Replaces the old single pull-close signature display
+    /// on the DO reports (decision #6). Always present (3 boxes always render);
+    /// each party is signed or blank.
+    /// </summary>
+    public DoSignatureSet Signatures { get; set; } = new();
+}
+
+/// <summary>The 3 signature parties, fixed order Customer → Warehouse → Production.</summary>
+public class DoSignatureSet
+{
+    public DoPartySignature Customer   { get; set; } = new() { Party = "Customer" };
+    public DoPartySignature Warehouse  { get; set; } = new() { Party = "Warehouse" };
+    public DoPartySignature Production { get; set; } = new() { Party = "Production" };
+
+    /// <summary>Fixed display order for iteration in the views/builders.</summary>
+    public IEnumerable<DoPartySignature> All => new[] { Customer, Warehouse, Production };
+}
+
+/// <summary>One signature box's state for a pull.</summary>
+public class DoPartySignature
+{
+    /// <summary>Canonical party label — "Customer" | "Warehouse" | "Production".</summary>
+    public string Party { get; set; } = "";
+    public bool IsSigned { get; set; }
+    public string? SignerName { get; set; }
+    public DateTime? SignedAt { get; set; }
+    /// <summary>
+    /// True when the CURRENT viewer may sign this (unsigned) box — matching
+    /// whRole + same warehouse + not yet signed. Set only on the HTML-preview
+    /// path (controller); always false for PDF export (a static snapshot).
+    /// </summary>
+    public bool CanSign { get; set; }
 }
 
 /// <summary>

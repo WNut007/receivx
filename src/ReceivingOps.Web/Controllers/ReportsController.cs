@@ -12,10 +12,12 @@ namespace ReceivingOps.Web.Controllers;
 // at /api/reports/do/{id}/preview and /api/reports/do/{id}/export.pdf
 // (ReportsApiController).
 //
-// CanManagePulls = admin + supervisor (matches Phase 5c /Pos convention —
-// the operator who closed the pull also wants to print the paperwork; non-
-// admins on other warehouses are scoped out at the repo query.)
-[Authorize(Policy = "CanManagePulls")]
+// CanViewReports = admin + any recognized whRole (supervisor/operator/viewer/
+// customer/warehouse/production). Loosened from CanManagePulls for the digital-
+// signature feature so view-only viewers and the 3 signer roles can open the
+// DO reports; non-admins on other warehouses are still scoped out at the repo
+// query / EnsureWarehouseScopeAsync.
+[Authorize(Policy = "CanViewReports")]
 public class ReportsController : Controller
 {
     private readonly IPullRepository _pulls;

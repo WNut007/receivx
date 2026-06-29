@@ -43,6 +43,7 @@ public class DeliveryOrderService : IDeliveryOrderService
 {
     private readonly IPullRepository _pulls;
     private readonly IWarehouseRepository _warehouses;
+    private readonly IPullSignatureRepository _signatures;
     private readonly CompanyInfo _company;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<DeliveryOrderService> _log;
@@ -50,12 +51,14 @@ public class DeliveryOrderService : IDeliveryOrderService
     public DeliveryOrderService(
         IPullRepository pulls,
         IWarehouseRepository warehouses,
+        IPullSignatureRepository signatures,
         IOptions<CompanyInfo> company,
         IWebHostEnvironment env,
         ILogger<DeliveryOrderService> log)
     {
         _pulls = pulls;
         _warehouses = warehouses;
+        _signatures = signatures;
         _company = company.Value;
         _env = env;
         _log = log;
@@ -91,6 +94,11 @@ public class DeliveryOrderService : IDeliveryOrderService
         // Per-warehouse logo + address for the DSV header — null when unset.
         var wh = await _warehouses.GetByIdAsync(pull.WarehouseId, ct);
 
+        // 3-party digital signatures (per-pull). Map the stored rows onto the
+        // fixed Customer/Warehouse/Production set; unsigned parties stay blank.
+        var sigRows = await _signatures.GetByPullAsync(pullId, ct);
+        var signatures = BuildSignatureSet(sigRows);
+
         return new DoReportData
         {
             Pull = new DoPullHeader
@@ -99,6 +107,7 @@ public class DeliveryOrderService : IDeliveryOrderService
                 PullNumber           = pull.PullNumber,
                 PullDate             = pull.PullDate,
                 ReferenceNumber      = pull.ReferenceNumber,
+                WarehouseId          = pull.WarehouseId,
                 WarehouseCode        = pull.WarehouseCode,
                 WarehouseName        = pull.WarehouseName,
                 WarehouseAddress     = wh?.Address,
@@ -108,10 +117,30 @@ public class DeliveryOrderService : IDeliveryOrderService
                 ClosedByRole         = pull.ClosedByRole,
                 SignatureSvg         = pull.SignatureSvg,
                 TotalQty             = orders.Sum(o => o.TotalQty),
+                Signatures           = signatures,
             },
             Orders  = orders,
             Company = _company,
         };
+    }
+
+    /// <summary>Folds stored PullSignature rows onto the fixed 3-party set.</summary>
+    private static DoSignatureSet BuildSignatureSet(
+        IReadOnlyList<Models.Entities.PullSignature> rows)
+    {
+        var set = new DoSignatureSet();
+        foreach (var party in set.All)
+        {
+            var row = rows.FirstOrDefault(r =>
+                string.Equals(r.Party, party.Party, StringComparison.OrdinalIgnoreCase));
+            if (row is not null)
+            {
+                party.IsSigned   = true;
+                party.SignerName = row.SignerName;
+                party.SignedAt   = row.SignedAt;
+            }
+        }
+        return set;
     }
 
     // ------------------------------------------------------------------
