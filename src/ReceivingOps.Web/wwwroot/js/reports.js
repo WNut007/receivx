@@ -139,7 +139,11 @@
                 btn.disabled = false;
                 return;
             }
-            // Success — reload the preview so the box flips to signed.
+            // Success — update the list row (badge + chip) AND reload the
+            // preview so both surfaces reflect the sign immediately.
+            markRowSigned(selectedPullId, party);
+            applyFilters();        // re-evaluate filters + batch bar against new state
+            refreshEligibility();
             loadPreview();
         } catch (err) {
             alert(`Network error: ${err.message || String(err)}`);
@@ -372,6 +376,26 @@
         if (batchSign)  batchSign.textContent  = `Sign ${n} as ${currentParty()}`;
     }
 
+    // Flip a pull's list row to "party signed" in place — bumps the N/3 badge
+    // (+ is-complete at 3) and lights the party chip — so the list reflects a
+    // sign immediately, without a manual refresh or a full page reload.
+    function markRowSigned(pullId, party) {
+        const id = String(pullId).toLowerCase();
+        const row = Array.from(rowsEl.querySelectorAll('.pull-row[data-pull-id]'))
+            .find(r => (r.dataset.pullId || '').toLowerCase() === id);
+        if (!row) return;
+        row.dataset[party.toLowerCase() + 'Signed'] = 'true';
+        const count = ['customerSigned', 'warehouseSigned', 'productionSigned']
+            .filter(b => row.dataset[b] === 'true').length;
+        row.dataset.signedCount = String(count);
+        const badge = row.querySelector('.sig-badge');
+        if (badge) { badge.textContent = `${count}/3`; badge.classList.toggle('is-complete', count >= 3); }
+        const initial = party.charAt(0).toUpperCase();   // W / C / P
+        row.querySelectorAll('.sig-chip').forEach(ch => {
+            if (ch.textContent.trim().toUpperCase() === initial) ch.classList.add('on');
+        });
+    }
+
     if (rowsEl && batchParties.length) {
         rowsEl.addEventListener('change', (e) => {
             if (e.target.classList.contains('pull-check')) { batchResult.textContent = ''; syncBatchBar(); }
@@ -415,12 +439,23 @@
                 return;
             }
             const r = await resp.json();
+            const signedResults = (r.results || []).filter(x => x.outcome === 'signed');
+            // Update each signed row in place (badge + chip) — no full reload.
+            signedResults.forEach(x => markRowSigned(x.pullId, r.party || party));
+            // Signed rows are no longer eligible — clear the selection + re-sync.
+            rowsEl.querySelectorAll('.pull-check:checked').forEach(cb => cb.checked = false);
+            applyFilters();
+            refreshEligibility();
+            // If the open preview was among the signed pulls, flip its boxes too.
+            if (selectedPullId && signedResults.some(x =>
+                String(x.pullId).toLowerCase() === String(selectedPullId).toLowerCase())) {
+                loadPreview();
+            }
             const parts = [`${r.signed} signed`];
             if (r.skipped) parts.push(`${r.skipped} skipped`);
             if (r.errors)  parts.push(`${r.errors} error${r.errors === 1 ? '' : 's'}`);
             batchResult.textContent = parts.join(' · ');
-            // Reload to re-render the N/3 badges, chips, and eligibility from truth.
-            setTimeout(() => window.location.reload(), 1100);
+            batchSign.disabled = false;
         } catch (err) {
             batchResult.textContent = `Network error: ${err.message || String(err)}`;
             batchSign.disabled = false;
