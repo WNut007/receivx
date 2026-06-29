@@ -42,12 +42,29 @@ public class PullRepository : IPullRepository
                 (SELECT COUNT(*) FROM dbo.PullItemWindows piw
                  INNER JOIN dbo.PullItems pi ON pi.Id = piw.PullItemId
                  WHERE pi.PullId = p.Id AND pi.Status <> 'canceled'
-                   AND piw.ExpectedQty > piw.ReceivedQty) AS WindowsPending
+                   AND piw.ExpectedQty > piw.ReceivedQty) AS WindowsPending,
+                -- Phase 7c: digital-signature progress. One grouped join to the
+                -- tiny PullSignatures table (UQ_PullSig_Party caps it at 3 rows/
+                -- pull). SignedCount drives the N/3 badge; the per-party bits feed
+                -- the left-menu chips (7e) + the 'unsigned for my role' filter.
+                ISNULL(sg.SignedCount, 0)                     AS SignedCount,
+                CAST(ISNULL(sg.CustomerSigned,   0) AS BIT)   AS CustomerSigned,
+                CAST(ISNULL(sg.WarehouseSigned,  0) AS BIT)   AS WarehouseSigned,
+                CAST(ISNULL(sg.ProductionSigned, 0) AS BIT)   AS ProductionSigned
         FROM    dbo.Pulls p
         INNER JOIN dbo.Warehouses w  ON w.Id  = p.WarehouseId
         LEFT  JOIN dbo.Users u       ON u.Id  = p.CreatedBy
         LEFT  JOIN dbo.Users cb      ON cb.Id = p.ClosedBy
-        LEFT  JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id ";
+        LEFT  JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id
+        LEFT  JOIN (
+            SELECT  ps.PullId,
+                    COUNT(*) AS SignedCount,
+                    MAX(CASE WHEN ps.Party = 'Customer'   THEN 1 ELSE 0 END) AS CustomerSigned,
+                    MAX(CASE WHEN ps.Party = 'Warehouse'  THEN 1 ELSE 0 END) AS WarehouseSigned,
+                    MAX(CASE WHEN ps.Party = 'Production' THEN 1 ELSE 0 END) AS ProductionSigned
+            FROM    dbo.PullSignatures ps
+            GROUP BY ps.PullId
+        ) sg ON sg.PullId = p.Id ";
 
     private readonly IDbConnectionFactory _factory;
 

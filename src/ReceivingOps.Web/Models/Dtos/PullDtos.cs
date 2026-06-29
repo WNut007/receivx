@@ -36,6 +36,28 @@ public class PullSummary
     public int WindowsTotal { get; set; }
     public int WindowsPending { get; set; }
 
+    // Phase 7c — digital-signature progress (3 fixed parties: Customer /
+    // Warehouse / Production). SignedCount is the "N" in the N/3 badge;
+    // the per-party bits feed the left-menu chips + the per-role filter.
+    // Warehouse is auto-signed at close (7b); Customer/Production via sign.
+    public int SignedCount { get; set; }
+    public bool CustomerSigned { get; set; }
+    public bool WarehouseSigned { get; set; }
+    public bool ProductionSigned { get; set; }
+    // Computed (get-only → ignored by Dapper, serialized to JSON for the UI).
+    public bool IsComplete => SignedCount >= 3;
+    public List<string> SignedParties
+    {
+        get
+        {
+            var list = new List<string>(3);
+            if (CustomerSigned)   list.Add("Customer");
+            if (WarehouseSigned)  list.Add("Warehouse");
+            if (ProductionSigned) list.Add("Production");
+            return list;
+        }
+    }
+
     // §3.5 — per-pull strict-mode flag. Default false = warehouse-wide FIFO.
     // Set at create-time; immutable thereafter (PUT refuses any change).
     public bool LockPoByPull { get; set; }
