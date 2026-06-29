@@ -150,6 +150,7 @@ builder.Services.AddScoped<IExportJobLogRepository, ExportJobLogRepository>();
 builder.Services.AddScoped<IErpSyncLogRepository, ErpSyncLogRepository>();
 builder.Services.AddScoped<IPoImportLogRepository, PoImportLogRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
+builder.Services.AddScoped<IPullSignatureRepository, PullSignatureRepository>();
 // Phase 11.1 — admin-edited config storage. Repository is Scoped (matches
 // project convention); the service that wraps it is Singleton (see below).
 builder.Services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
@@ -158,6 +159,7 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IReceiptService, ReceiptService>();
 builder.Services.AddScoped<ICloseService, CloseService>();
+builder.Services.AddScoped<IPullSignatureService, PullSignatureService>();
 builder.Services.AddScoped<IMastersService, MastersService>();
 builder.Services.AddScoped<IPurchaseOrderAdminService, PurchaseOrderAdminService>();
 builder.Services.AddScoped<IPullAdminService, PullAdminService>();
