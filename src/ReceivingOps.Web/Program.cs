@@ -107,6 +107,28 @@ builder.Services.AddAuthorization(opts =>
     opts.AddPolicy("CanReopenPull", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole("admin") ||
         ctx.User.HasClaim("whRole", "supervisor")));
+
+    // ---- Digital signature (3-party, per-warehouse) ----
+    // CanViewReports: read-only access to the DO reports. Wider than
+    // CanManagePulls so view-only viewers and the 3 signer roles can open
+    // /Reports. Any authenticated user with a recognized whRole qualifies;
+    // admins always qualify.
+    var reportRoles = new[]
+        { "supervisor", "operator", "viewer", "customer", "warehouse", "production" };
+    opts.AddPolicy("CanViewReports", p => p.RequireAssertion(ctx =>
+        ctx.User.IsInRole("admin") ||
+        reportRoles.Contains(ctx.User.FindFirst("whRole")?.Value ?? "")));
+
+    // CanSign{Party}: a user may sign a party's box only when their
+    // per-warehouse role matches the party. Warehouse-scope (session WH ==
+    // pull WH) is enforced at the endpoint (Phase 3), not in the policy.
+    // Strict whRole match — no admin override (admins manage/view, not sign).
+    opts.AddPolicy("CanSignCustomer", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("whRole", "customer")));
+    opts.AddPolicy("CanSignWarehouse", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("whRole", "warehouse")));
+    opts.AddPolicy("CanSignProduction", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("whRole", "production")));
 });
 
 // ---- Data + repositories + services ----

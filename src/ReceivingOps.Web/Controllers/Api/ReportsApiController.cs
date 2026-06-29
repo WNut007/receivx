@@ -11,7 +11,7 @@ namespace ReceivingOps.Web.Controllers.Api;
 //   GET /api/reports/do/{id}/preview     → HTML fragment from _DoPreview.cshtml
 //   GET /api/reports/do/{id}/export.pdf  → PDF stream (FastReport, multi-page)
 [ApiController]
-[Authorize(Policy = "CanManagePulls")]
+[Authorize(Policy = "CanViewReports")]
 [Route("api/reports")]
 public class ReportsApiController : Controller
 {

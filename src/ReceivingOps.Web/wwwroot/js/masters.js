@@ -281,6 +281,9 @@ function openUserModal(userId) {
             <option value="operator" ${role==='operator'?'selected':''}>Operator</option>
             <option value="viewer" ${role==='viewer'?'selected':''}>Viewer</option>
             <option value="admin" ${role==='admin'?'selected':''}>Admin</option>
+            <option value="customer" ${role==='customer'?'selected':''}>Signer · Customer</option>
+            <option value="warehouse" ${role==='warehouse'?'selected':''}>Signer · Warehouse</option>
+            <option value="production" ${role==='production'?'selected':''}>Signer · Production</option>
           </select>
           <span style="color: var(--text-muted); font-family: 'Roboto Mono', monospace; font-size: 10px;">${assigned ? 'ASSIGNED' : ''}</span>
         </div>
