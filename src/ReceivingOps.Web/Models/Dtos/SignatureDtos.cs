@@ -5,6 +5,9 @@ namespace ReceivingOps.Web.Models.Dtos;
 public class SignPartyRequest
 {
     public string Party { get; set; } = "";
+    // Phase 8 — drawn signature (PNG data URL) from the sign pad. Optional at the
+    // schema level; the pad UI (8b) makes it required client-side.
+    public string? SignatureSvg { get; set; }
 }
 
 // Returned on a successful sign.
@@ -22,6 +25,9 @@ public class SignBatchRequest
 {
     public List<Guid> PullIds { get; set; } = new();
     public string Party { get; set; } = "";
+    // Phase 8 — one drawing applied to every pull in the batch (drawn once in the
+    // batch pad, 8c). Optional at the schema level; required client-side.
+    public string? SignatureSvg { get; set; }
 }
 
 // One pull's outcome inside a batch. Outcome ∈ signed | skipped | error.

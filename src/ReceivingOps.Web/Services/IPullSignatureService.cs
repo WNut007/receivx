@@ -11,7 +11,7 @@ public interface IPullSignatureService
     /// (pull, party)). Writes an audit row. Throws ForbiddenException (role/warehouse),
     /// NotFoundException (pull), or BusinessException (already signed / invalid party).
     /// </summary>
-    Task<SignatureResult> SignAsync(Guid pullId, string party, CancellationToken ct = default);
+    Task<SignatureResult> SignAsync(Guid pullId, string party, string? signatureSvg = null, CancellationToken ct = default);
 
     /// <summary>
     /// Phase 7d — signs one party (Customer or Production only) across many pulls in a
@@ -22,5 +22,5 @@ public interface IPullSignatureService
     /// auto-signed at close. Throws ForbiddenException when the caller lacks the canSign
     /// claim, BusinessException for an invalid/Warehouse party or an empty/oversized batch.
     /// </summary>
-    Task<SignBatchResult> SignBatchAsync(IReadOnlyList<Guid> pullIds, string party, CancellationToken ct = default);
+    Task<SignBatchResult> SignBatchAsync(IReadOnlyList<Guid> pullIds, string party, string? signatureSvg = null, CancellationToken ct = default);
 }

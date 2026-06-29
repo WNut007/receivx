@@ -14,4 +14,10 @@ public class PullSignature
     public Guid SignerUserId { get; set; }
     public string SignerName { get; set; } = "";
     public DateTime SignedAt { get; set; }
+
+    // Phase 8 (db/045) — the drawn signature as a PNG data URL (same shape as the
+    // close pad's Pulls.SignatureSvg). Nullable: name+date alone still authorizes
+    // a box. Warehouse copies the close drawing in at close time; Customer/
+    // Production carry the signer's own drawing from the sign pad.
+    public string? SignatureSvg { get; set; }
 }

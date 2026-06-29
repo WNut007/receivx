@@ -110,7 +110,7 @@ public class ReportsApiController : Controller
         try
         {
             // Defense-in-depth #2 — service re-checks role + warehouse + immutability.
-            return Ok(await _sign.SignAsync(id, party, ct));
+            return Ok(await _sign.SignAsync(id, party, req?.SignatureSvg, ct));
         }
         catch (NotFoundException ex)  { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
@@ -143,7 +143,7 @@ public class ReportsApiController : Controller
 
         try
         {
-            return Ok(await _sign.SignBatchAsync(req!.PullIds, party, ct));
+            return Ok(await _sign.SignBatchAsync(req!.PullIds, party, req.SignatureSvg, ct));
         }
         catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
         catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 400); }

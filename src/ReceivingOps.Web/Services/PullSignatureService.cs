@@ -14,6 +14,10 @@ public class PullSignatureService : IPullSignatureService
     // production) — see RequiredWhRole below.
     private static readonly string[] Parties = { "Customer", "Warehouse", "Production" };
 
+    // Same bound the close pad enforces (CloseService) — refuses a pathological
+    // upload. ~a 1024-wide PNG data URL; generous for a signature pad.
+    private const int MaxSignatureLength = 200 * 1024;
+
     private readonly IDbConnectionFactory _factory;
     private readonly IPullSignatureRepository _repo;
     private readonly IAuditService _audit;
@@ -31,13 +35,16 @@ public class PullSignatureService : IPullSignatureService
         _httpContext = httpContext;
     }
 
-    public async Task<SignatureResult> SignAsync(Guid pullId, string party, CancellationToken ct = default)
+    public async Task<SignatureResult> SignAsync(Guid pullId, string party, string? signatureSvg = null, CancellationToken ct = default)
     {
         // Normalize + validate against the canonical party set.
         var canonical = Parties.FirstOrDefault(
             p => string.Equals(p, party?.Trim(), StringComparison.OrdinalIgnoreCase))
             ?? throw new BusinessException(
                 $"Invalid party '{party}'. Expected Customer, Warehouse, or Production.");
+
+        if (signatureSvg is { Length: > MaxSignatureLength })
+            throw new BusinessException($"Signature is too large (max {MaxSignatureLength} bytes).");
 
         var ctx = _httpContext.HttpContext
             ?? throw new InvalidOperationException("HttpContext unavailable");
@@ -82,6 +89,7 @@ public class PullSignatureService : IPullSignatureService
                 WarehouseId = pull.WarehouseId,
                 SignerUserId = userId,
                 SignerName = signerName,
+                SignatureSvg = signatureSvg,
             }, ct);
 
             await _audit.WriteAsync(conn, tx, "do-sign", "Pull", pullId.ToString(),
@@ -108,7 +116,7 @@ public class PullSignatureService : IPullSignatureService
     private const int MaxBatch = 500;
 
     public async Task<SignBatchResult> SignBatchAsync(
-        IReadOnlyList<Guid> pullIds, string party, CancellationToken ct = default)
+        IReadOnlyList<Guid> pullIds, string party, string? signatureSvg = null, CancellationToken ct = default)
     {
         var canonical = Parties.FirstOrDefault(
             p => string.Equals(p, party?.Trim(), StringComparison.OrdinalIgnoreCase))
@@ -125,6 +133,8 @@ public class PullSignatureService : IPullSignatureService
             throw new BusinessException("No pulls specified.");
         if (pullIds.Count > MaxBatch)
             throw new BusinessException($"Too many pulls in one batch (max {MaxBatch}).");
+        if (signatureSvg is { Length: > MaxSignatureLength })
+            throw new BusinessException($"Signature is too large (max {MaxSignatureLength} bytes).");
 
         var ctx = _httpContext.HttpContext
             ?? throw new InvalidOperationException("HttpContext unavailable");
@@ -187,6 +197,7 @@ public class PullSignatureService : IPullSignatureService
                     WarehouseId = pull.WarehouseId,
                     SignerUserId = userId,
                     SignerName = signerName,
+                    SignatureSvg = signatureSvg,
                 }, ct);
 
                 await _audit.WriteAsync(conn, tx, "do-sign", "Pull", pullId.ToString(),

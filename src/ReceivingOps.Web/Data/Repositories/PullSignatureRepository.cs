@@ -13,7 +13,7 @@ public class PullSignatureRepository : IPullSignatureRepository
     public async Task<IReadOnlyList<PullSignature>> GetByPullAsync(Guid pullId, CancellationToken ct = default)
     {
         const string sql = @"
-            SELECT  Id, PullId, Party, WarehouseId, SignerUserId, SignerName, SignedAt
+            SELECT  Id, PullId, Party, WarehouseId, SignerUserId, SignerName, SignedAt, SignatureSvg
             FROM    dbo.PullSignatures
             WHERE   PullId = @PullId
             ORDER BY Party;";
@@ -42,13 +42,13 @@ public class PullSignatureRepository : IPullSignatureRepository
     {
         // Id (NEWID) + SignedAt (SYSUTCDATETIME) are DB defaults — OUTPUT them back.
         const string sql = @"
-            INSERT INTO dbo.PullSignatures (PullId, Party, WarehouseId, SignerUserId, SignerName)
+            INSERT INTO dbo.PullSignatures (PullId, Party, WarehouseId, SignerUserId, SignerName, SignatureSvg)
             OUTPUT INSERTED.Id, INSERTED.SignedAt
-            VALUES (@PullId, @Party, @WarehouseId, @SignerUserId, @SignerName);";
+            VALUES (@PullId, @Party, @WarehouseId, @SignerUserId, @SignerName, @SignatureSvg);";
 
         var ins = await conn.QuerySingleAsync<InsertedRow>(new CommandDefinition(
             sql,
-            new { s.PullId, s.Party, s.WarehouseId, s.SignerUserId, s.SignerName },
+            new { s.PullId, s.Party, s.WarehouseId, s.SignerUserId, s.SignerName, s.SignatureSvg },
             transaction: tx, cancellationToken: ct));
 
         s.Id = ins.Id;
@@ -58,25 +58,28 @@ public class PullSignatureRepository : IPullSignatureRepository
 
     public async Task<bool> UpsertWarehouseAsync(IDbConnection conn, IDbTransaction tx,
         Guid pullId, Guid warehouseId, Guid signerUserId, string signerName,
-        DateTime signedAt, CancellationToken ct = default)
+        DateTime signedAt, string? signatureSvg, CancellationToken ct = default)
     {
         // UPDATE-then-conditional-INSERT (rather than MERGE) for the (PullId,'Warehouse')
         // grain. Serialized by the close tx's UPDLOCK on the Pulls row — only one close
         // can run per pull — with UQ_PullSig_Party as the hard backstop. SignedAt is set
-        // explicitly to the close timestamp (not the SYSUTCDATETIME default).
+        // explicitly to the close timestamp (not the SYSUTCDATETIME default). Phase 8:
+        // SignatureSvg carries the drawn close-pad image so the Warehouse box renders
+        // a drawing (D1) — uniform with Customer/Production.
         const string sql = @"
             UPDATE dbo.PullSignatures
                SET WarehouseId  = @WarehouseId,
                    SignerUserId = @SignerUserId,
                    SignerName   = @SignerName,
-                   SignedAt     = @SignedAt
+                   SignedAt     = @SignedAt,
+                   SignatureSvg = @SignatureSvg
              WHERE PullId = @PullId AND Party = 'Warehouse';
 
             IF @@ROWCOUNT = 0
             BEGIN
                 INSERT INTO dbo.PullSignatures
-                    (PullId, Party, WarehouseId, SignerUserId, SignerName, SignedAt)
-                VALUES (@PullId, 'Warehouse', @WarehouseId, @SignerUserId, @SignerName, @SignedAt);
+                    (PullId, Party, WarehouseId, SignerUserId, SignerName, SignedAt, SignatureSvg)
+                VALUES (@PullId, 'Warehouse', @WarehouseId, @SignerUserId, @SignerName, @SignedAt, @SignatureSvg);
                 SELECT 1;   -- inserted
             END
             ELSE SELECT 0;  -- updated";
@@ -84,7 +87,7 @@ public class PullSignatureRepository : IPullSignatureRepository
         var inserted = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
             sql,
             new { PullId = pullId, WarehouseId = warehouseId, SignerUserId = signerUserId,
-                  SignerName = signerName, SignedAt = signedAt },
+                  SignerName = signerName, SignedAt = signedAt, SignatureSvg = signatureSvg },
             transaction: tx, cancellationToken: ct));
         return inserted == 1;
     }

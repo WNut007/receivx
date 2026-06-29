@@ -27,5 +27,5 @@ public interface IPullSignatureRepository
     /// </summary>
     Task<bool> UpsertWarehouseAsync(IDbConnection conn, IDbTransaction tx,
         Guid pullId, Guid warehouseId, Guid signerUserId, string signerName,
-        DateTime signedAt, CancellationToken ct = default);
+        DateTime signedAt, string? signatureSvg, CancellationToken ct = default);
 }

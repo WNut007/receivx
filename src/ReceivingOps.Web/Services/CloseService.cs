@@ -106,7 +106,7 @@ public class CloseService : ICloseService
             // alongside name+date in the Warehouse box at display (7e, D4).
             var closerName = CurrentUserName();
             var inserted = await _signatures.UpsertWarehouseAsync(
-                conn, tx, pullId, pull.WarehouseId, actorId, closerName, closedAt, ct);
+                conn, tx, pullId, pull.WarehouseId, actorId, closerName, closedAt, sig, ct);
             await _audit.WriteAsync(conn, tx, "do-sign", "Pull", pullId.ToString(),
                 $"Auto-signed Warehouse on pull {pull.PullNumber} as {closerName} (via close)", ct);
 
