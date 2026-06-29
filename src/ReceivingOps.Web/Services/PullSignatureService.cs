@@ -45,13 +45,13 @@ public class PullSignatureService : IPullSignatureService
         var userId = ParseUserId(ctx);
         var signerName = ctx.User.FindFirstValue("displayName")
             ?? ctx.User.Identity?.Name ?? "(unknown)";
-        var whRole = ctx.User.FindFirstValue("whRole") ?? "";
         var sessionWh = Guid.TryParse(ctx.User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
 
-        // Role gate (defense-in-depth alongside the controller's CanSign{Party} policy):
-        // whRole must equal the lowercase peer of the party. No admin override — admins
-        // manage/view, they don't sign.
-        if (!string.Equals(whRole, canonical.ToLowerInvariant(), StringComparison.Ordinal))
+        // Capability gate (defense-in-depth alongside the controller's CanSign{Party}
+        // policy): the user must hold the matching canSign claim (db/043 flags, minted
+        // in 6b — additive, independent of the operational whRole). No admin override —
+        // admins manage/view, they don't sign.
+        if (!ctx.User.HasClaim("canSign", canonical.ToLowerInvariant()))
             throw new ForbiddenException($"Your role does not permit signing the {canonical} box.");
 
         using var conn = _factory.Create();

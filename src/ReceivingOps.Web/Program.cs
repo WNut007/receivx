@@ -110,25 +110,28 @@ builder.Services.AddAuthorization(opts =>
 
     // ---- Digital signature (3-party, per-warehouse) ----
     // CanViewReports: read-only access to the DO reports. Wider than
-    // CanManagePulls so view-only viewers and the 3 signer roles can open
-    // /Reports. Any authenticated user with a recognized whRole qualifies;
+    // CanManagePulls so view-only viewers and signers can open /Reports.
+    // Any authenticated user with a recognized operational whRole qualifies,
+    // OR anyone holding a signing capability (so a signer can see what they
+    // sign even if their operational role wouldn't otherwise grant view);
     // admins always qualify.
-    var reportRoles = new[]
-        { "supervisor", "operator", "viewer", "customer", "warehouse", "production" };
+    var reportRoles = new[] { "supervisor", "operator", "viewer" };
     opts.AddPolicy("CanViewReports", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole("admin") ||
-        reportRoles.Contains(ctx.User.FindFirst("whRole")?.Value ?? "")));
+        reportRoles.Contains(ctx.User.FindFirst("whRole")?.Value ?? "") ||
+        ctx.User.HasClaim(c => c.Type == "canSign")));
 
-    // CanSign{Party}: a user may sign a party's box only when their
-    // per-warehouse role matches the party. Warehouse-scope (session WH ==
-    // pull WH) is enforced at the endpoint (Phase 3), not in the policy.
-    // Strict whRole match — no admin override (admins manage/view, not sign).
+    // CanSign{Party}: a user may sign a party's box only when they hold the
+    // matching canSign capability (db/043 flags → "canSign" claim, minted in
+    // 6b — additive, independent of the operational whRole). Warehouse-scope
+    // (session WH == pull WH) is enforced at the endpoint (Phase 3), not in
+    // the policy. No admin override (admins manage/view, not sign).
     opts.AddPolicy("CanSignCustomer", p => p.RequireAssertion(ctx =>
-        ctx.User.HasClaim("whRole", "customer")));
+        ctx.User.HasClaim("canSign", "customer")));
     opts.AddPolicy("CanSignWarehouse", p => p.RequireAssertion(ctx =>
-        ctx.User.HasClaim("whRole", "warehouse")));
+        ctx.User.HasClaim("canSign", "warehouse")));
     opts.AddPolicy("CanSignProduction", p => p.RequireAssertion(ctx =>
-        ctx.User.HasClaim("whRole", "production")));
+        ctx.User.HasClaim("canSign", "production")));
 });
 
 // ---- Data + repositories + services ----

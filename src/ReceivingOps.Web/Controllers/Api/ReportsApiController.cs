@@ -118,19 +118,19 @@ public class ReportsApiController : Controller
     }
 
     // Sets per-party CanSign on the preview model: the current viewer may sign a
-    // box when their whRole matches the party AND their session warehouse matches
-    // the pull's AND the box is unsigned. Mirrors the server-side sign guards so
-    // a "Sign as {Party}" button only appears when the POST would actually succeed.
+    // box when they hold the matching canSign capability AND their session
+    // warehouse matches the pull's AND the box is unsigned. Mirrors the
+    // server-side sign guards so a "Sign as {Party}" button only appears when
+    // the POST would actually succeed.
     private void ApplySignEligibility(Models.Dtos.DoReportData data)
     {
-        var whRole = User.FindFirstValue("whRole") ?? "";
         var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
         var whMatch = sessionWh == data.Pull.WarehouseId;
 
         foreach (var party in data.Pull.Signatures.All)
             party.CanSign = whMatch
                 && !party.IsSigned
-                && string.Equals(whRole, party.Party.ToLowerInvariant(), StringComparison.Ordinal);
+                && User.HasClaim("canSign", party.Party.ToLowerInvariant());
     }
 
     /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>
