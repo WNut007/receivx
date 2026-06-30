@@ -26,6 +26,14 @@
 #   15. batch rejects Warehouse → 400 — 7d
 #   16. "unsigned for my role" filter wiring on /Reports (option + signParties) — 7e
 #
+# Phase 8 paths (drawn signatures — Customer/Production upgraded typed → drawn):
+#   17. drawn single sign persists the PNG data URL (SignatureSvg) — 8b
+#   18. drawn batch — ONE drawing recorded identically on every pull — 8c
+#   19. preview renders the drawn <img src="data:image..."> — 8b/8d
+#   20. PDF export embeds the per-party signature image, both reports — 8e
+#   21. drawn signature REQUIRED (empty → 400) + bounded (oversize → 413),
+#       single + batch — 8f
+#
 # Receive capability is probed side-effect-free via the CanReceive-gated
 # GET /api/receipts/preview (bogus item → 404 when authorized, 403 when not).
 # Phase 7 seeds dedicated PL-Z7F-* pulls (bare → closeable). ALL test data
@@ -102,8 +110,16 @@ function Code([scriptblock]$call) {
     catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode } else { throw } }
 }
 function SignCode($sv, $pull, $party) {
+    # Phase 8: a drawn signatureSvg is now required by the endpoint, so every
+    # happy-path sign carries one. Auth/immutability failures are checked before
+    # the SVG validation, so the 403/409 cases below still surface their codes.
     Code { Invoke-RestMethod -Uri "$base/api/reports/do/$pull/sign" -Method POST `
-            -Body (@{ party = $party } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sv }
+            -Body (@{ party = $party; signatureSvg = $SIG } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sv }
+}
+# Raw-body single sign — for the 8f validation cases (empty / oversize SVG).
+function SignBody($sv, $pull, $hash) {
+    Code { Invoke-RestMethod -Uri "$base/api/reports/do/$pull/sign" -Method POST `
+            -Body ($hash | ConvertTo-Json) -ContentType 'application/json' -WebSession $sv }
 }
 function CloseCode($sv, $pull) {
     Code { Invoke-RestMethod -Uri "$base/api/pulls/$pull/close" -Method POST `
@@ -114,12 +130,17 @@ function Reopen($sv, $pull) {
         -Body (@{ reason = '7f reclose' } | ConvertTo-Json) -ContentType 'application/json' -WebSession $sv | Out-Null
 }
 function Batch($sv, $ids, $party) {
-    $body = @{ pullIds = @($ids); party = $party } | ConvertTo-Json
+    $body = @{ pullIds = @($ids); party = $party; signatureSvg = $SIG } | ConvertTo-Json
     Invoke-RestMethod -Uri "$base/api/reports/sign-batch" -Method POST -Body $body -ContentType 'application/json' -WebSession $sv
 }
 function BatchCode($sv, $ids, $party) {
-    $body = @{ pullIds = @($ids); party = $party } | ConvertTo-Json
+    $body = @{ pullIds = @($ids); party = $party; signatureSvg = $SIG } | ConvertTo-Json
     Code { Invoke-RestMethod -Uri "$base/api/reports/sign-batch" -Method POST -Body $body -ContentType 'application/json' -WebSession $sv }
+}
+# Raw-body batch sign — for the 8f validation cases (empty / oversize SVG).
+function BatchBody($sv, $hash) {
+    Code { Invoke-RestMethod -Uri "$base/api/reports/sign-batch" -Method POST `
+            -Body ($hash | ConvertTo-Json) -ContentType 'application/json' -WebSession $sv }
 }
 function ReceiveProbe($sv) {
     $g = [guid]::NewGuid().ToString()
@@ -259,6 +280,38 @@ try {
     $reportsHtml = Invoke-RestMethod -Uri "$base/Reports?pageSize=200" -WebSession $cust
     if ($reportsHtml -match 'value="unsigned_mine"') { OK "'Unsigned for my role' filter option present" } else { Fail "unsigned_mine filter option missing" }
     if ($reportsHtml -match '__signParties\s*=\s*\[[^\]]*"customer"[^\]]*"production"') { OK "signParties global carries the user's parties (customer+production)" } else { Fail "signParties global not wired for the filter" }
+
+    # ==================== PHASE 8 — drawn signatures (single / batch / display / PDF / validation) ====================
+
+    Step "17. drawn single sign persisted the drawing (8b)"
+    # $BPI_PULL Customer was signed WITH a drawing (SIG) back in step 3.
+    if ((SqlVal "SELECT CASE WHEN SignatureSvg LIKE 'data:image%' THEN 1 ELSE 0 END FROM dbo.PullSignatures WHERE PullId='$BPI_PULL' AND Party='Customer';") -eq '1') { OK "Customer SignatureSvg is a drawing (data:image)" } else { Fail "single-sign did not persist a drawing" }
+
+    Step "18. drawn batch — same drawing on every pull (8c)"
+    # $p1 + $p2 Customer were batch-signed with ONE drawing in step 13.
+    if ((SqlVal "SELECT CASE WHEN SignatureSvg LIKE 'data:image%' THEN 1 ELSE 0 END FROM dbo.PullSignatures WHERE PullId='$p1' AND Party='Customer';") -eq '1') { OK "batch pull carries a drawing" } else { Fail "batch pull missing drawing" }
+    if ((SqlVal "SELECT CASE WHEN (SELECT SignatureSvg FROM dbo.PullSignatures WHERE PullId='$p1' AND Party='Customer') = (SELECT SignatureSvg FROM dbo.PullSignatures WHERE PullId='$p2' AND Party='Customer') THEN 1 ELSE 0 END;") -eq '1') { OK "both batch pulls carry the SAME drawing" } else { Fail "batch drawings differ across pulls" }
+
+    Step "19. preview renders the drawn <img> (8b/8d)"
+    $drawHtml = Preview $cust $BPI_PULL
+    if ($drawHtml -match 'do-sign-drawn' -and $drawHtml -match 'src="data:image') { OK "drawn signature <img> present in preview" } else { Fail "preview has no drawn signature img" }
+
+    Step "20. PDF embeds the per-party signature image (8e)"
+    foreach ($rt in 'note','order') {
+        $pdfPath = Join-Path $env:TEMP ("smoke-do-" + [guid]::NewGuid().ToString('N') + ".pdf")
+        Invoke-WebRequest -Uri "$base/api/reports/do/$BPI_PULL/export.pdf?type=$rt" -WebSession $cust -OutFile $pdfPath | Out-Null
+        $b = [System.IO.File]::ReadAllBytes($pdfPath)
+        $magic = -join ($b[0..4] | ForEach-Object { [char]$_ })
+        if ($magic -eq '%PDF-' -and $b.Length -gt 50000) { OK "$rt PDF valid + non-trivial ($([int]($b.Length/1024)) KB)" } else { Fail "$rt PDF bad: magic=$magic size=$($b.Length)" }
+        Remove-Item $pdfPath -ErrorAction SilentlyContinue
+    }
+
+    Step "21. drawn signature REQUIRED + bounded (8f)"
+    $bigSvg = 'data:image/png;base64,' + ('A' * 205000)   # > 200KB cap
+    if ((SignBody  $cust $BPI_PULL @{ party = 'Customer' })                          -eq 400) { OK "single: empty SVG -> 400" } else { Fail "single empty SVG not 400" }
+    if ((SignBody  $cust $BPI_PULL @{ party = 'Customer'; signatureSvg = $bigSvg })  -eq 413) { OK "single: oversize SVG -> 413" } else { Fail "single oversize SVG not 413" }
+    if ((BatchBody $cust @{ pullIds = @($p1,$p2); party = 'Customer' })                         -eq 400) { OK "batch: empty SVG -> 400" } else { Fail "batch empty SVG not 400" }
+    if ((BatchBody $cust @{ pullIds = @($p1,$p2); party = 'Customer'; signatureSvg = $bigSvg })  -eq 413) { OK "batch: oversize SVG -> 413" } else { Fail "batch oversize SVG not 413" }
 }
 finally {
     Step "cleanup"

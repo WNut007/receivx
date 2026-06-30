@@ -107,6 +107,13 @@ public class ReportsApiController : Controller
         if (!authz.Succeeded)
             return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
 
+        // Phase 8f — a DRAWN signature is required (empty → 400) and bounded
+        // (oversize → 413). Checked after the policy gate so wrong-role still
+        // 403s first. The close auto-sign path (CloseService) is separate and
+        // unaffected by this report-endpoint validation.
+        var sigErr = ValidateSignatureSvg(req?.SignatureSvg);
+        if (sigErr is not null) return sigErr;
+
         try
         {
             // Defense-in-depth #2 — service re-checks role + warehouse + immutability.
@@ -141,6 +148,10 @@ public class ReportsApiController : Controller
         if (!authz.Succeeded)
             return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
 
+        // Phase 8f — drawn signature required (empty → 400) + bounded (413).
+        var sigErr = ValidateSignatureSvg(req?.SignatureSvg);
+        if (sigErr is not null) return sigErr;
+
         try
         {
             return Ok(await _sign.SignBatchAsync(req!.PullIds, party, req.SignatureSvg, ct));
@@ -163,6 +174,24 @@ public class ReportsApiController : Controller
             party.CanSign = whMatch
                 && !party.IsSigned
                 && User.HasClaim("canSign", party.Party.ToLowerInvariant());
+    }
+
+    // Same bound the service + close pad enforce (PullSignatureService.MaxSignatureLength).
+    private const int MaxSignatureLength = 200 * 1024;
+
+    /// <summary>
+    /// Phase 8f — validates the drawn signature payload for the sign endpoints:
+    /// required (empty/whitespace → 400) and bounded (over the cap → 413).
+    /// Returns null when the SVG is acceptable. The service keeps its own cap
+    /// check as defense-in-depth.
+    /// </summary>
+    private IActionResult? ValidateSignatureSvg(string? svg)
+    {
+        if (string.IsNullOrWhiteSpace(svg))
+            return Problem(title: "A signature drawing is required.", statusCode: 400);
+        if (svg.Length > MaxSignatureLength)
+            return Problem(title: $"Signature is too large (max {MaxSignatureLength} bytes).", statusCode: 413);
+        return null;
     }
 
     /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>
