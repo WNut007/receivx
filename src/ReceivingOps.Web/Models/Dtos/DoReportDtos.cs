@@ -82,6 +82,8 @@ public class DoPartySignature
     public bool IsSigned { get; set; }
     public string? SignerName { get; set; }
     public DateTime? SignedAt { get; set; }
+    /// <summary>Phase 8 — the drawn signature (PNG data URL) for this party, or null.</summary>
+    public string? SignatureSvg { get; set; }
     /// <summary>
     /// True when the CURRENT viewer may sign this (unsigned) box — matching
     /// whRole + same warehouse + not yet signed. Set only on the HTML-preview

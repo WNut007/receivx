@@ -170,8 +170,31 @@
         </div>
     </div>
 </div>
+
+@* Phase 8b — signature pad modal for single sign (Customer/Production). The
+   batch pad (8c) reuses the same shell. *@
+<div class="sign-pad-modal" id="sign-pad-modal" hidden>
+    <div class="sign-pad-dialog" role="dialog" aria-modal="true" aria-labelledby="sign-pad-title">
+        <div class="sign-pad-head" id="sign-pad-title">Sign as <span id="sign-pad-party">Customer</span></div>
+        <div class="sign-pad-sub" id="sign-pad-sub"></div>
+        <div class="signature-host" id="sign-pad-host">
+            <canvas class="signature-canvas" id="sign-pad-canvas" width="600" height="140"></canvas>
+            <div class="signature-placeholder">Sign here</div>
+        </div>
+        <div class="signature-foot">
+            <span class="line"></span>
+            <button type="button" class="clear-sig-btn" id="sign-pad-clear">Clear</button>
+        </div>
+        <div class="sign-pad-actions">
+            <button type="button" class="btn btn-outline-secondary" id="sign-pad-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="sign-pad-confirm" disabled>Sign</button>
+        </div>
+    </div>
+</div>
+
 <script>window.__signParties = @Html.Raw(ViewData["SignPartiesJson"] ?? "[]");</script>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="~/js/components/signature-pad.js" asp-append-version="true"></script>
 <script src="~/js/reports.js" asp-append-version="true"></script>
 </body>
 </html>

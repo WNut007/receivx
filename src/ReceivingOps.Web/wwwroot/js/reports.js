@@ -103,23 +103,53 @@
     // ----- Sign a party box (digital signature) ---------------------------
     // Delegated: the preview HTML is re-injected on every load, so bind once
     // on the stable container. A "Sign as {Party}" button only renders when
-    // the server marked the box eligible (matching whRole + warehouse +
-    // unsigned), so the click maps 1:1 to a POST that should succeed.
-    bodyEl.addEventListener('click', async (e) => {
+    // the server marked the box eligible. Phase 8b: the click opens the
+    // signature-pad modal; the POST happens on the pad's confirm.
+    bodyEl.addEventListener('click', (e) => {
         const btn = e.target.closest('.do-sign-btn[data-party]');
         if (!btn || !selectedPullId) return;
-        const party = btn.dataset.party;
+        openSignPad(btn.dataset.party);
+    });
 
-        const ok = await confirmAction({
-            title: `Sign as ${party}?`,
-            message: `You are signing the ${party} box for ${selectedPullNumber}. ` +
-                     `This records your name + timestamp and cannot be undone.`,
-            icon: 'info',
-            confirmLabel: `Sign as ${party}`,
+    // ----- Signature pad modal (single sign) ------------------------------
+    const signPadModal   = document.getElementById('sign-pad-modal');
+    const signPadHost     = document.getElementById('sign-pad-host');
+    const signPadCanvas   = document.getElementById('sign-pad-canvas');
+    const signPadConfirm  = document.getElementById('sign-pad-confirm');
+    let signPad = null;
+    let signPendingParty = null;
+
+    if (signPadCanvas && window.SignaturePad) {
+        signPad = window.SignaturePad.mount(signPadCanvas, {
+            onChange: (hasInk) => {
+                if (signPadHost) signPadHost.classList.toggle('signed', hasInk);
+                if (signPadConfirm) signPadConfirm.disabled = !hasInk;
+            },
         });
-        if (!ok) return;
+    }
 
-        btn.disabled = true;
+    function openSignPad(party) {
+        if (!signPad || !selectedPullId) return;
+        signPendingParty = party;
+        document.getElementById('sign-pad-party').textContent = party;
+        document.getElementById('sign-pad-sub').innerHTML =
+            `Draw your signature for <b>${escapeHtml(selectedPullNumber)}</b>. ` +
+            `This records your drawing, name + timestamp and cannot be undone.`;
+        signPadConfirm.disabled = true;
+        signPadModal.hidden = false;
+        // Canvas must be visible before sizing (mirror the close modal).
+        requestAnimationFrame(() => { signPad.resize(); signPad.clear(); });
+    }
+    function closeSignPad() { if (signPadModal) signPadModal.hidden = true; signPendingParty = null; }
+
+    document.getElementById('sign-pad-clear')?.addEventListener('click', () => signPad && signPad.clear());
+    document.getElementById('sign-pad-cancel')?.addEventListener('click', closeSignPad);
+    signPadModal?.addEventListener('click', (e) => { if (e.target === signPadModal) closeSignPad(); });
+
+    signPadConfirm?.addEventListener('click', async () => {
+        if (!signPendingParty || !selectedPullId || !signPad || signPad.isEmpty()) return;
+        const party = signPendingParty;
+        signPadConfirm.disabled = true;
         try {
             const resp = await fetch(
                 `/api/reports/do/${encodeURIComponent(selectedPullId)}/sign`,
@@ -127,27 +157,24 @@
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ party }),
+                    body: JSON.stringify({ party, signatureSvg: signPad.toDataUrl() }),
                 });
             if (!resp.ok) {
                 let msg = `Sign failed (HTTP ${resp.status})`;
-                try {
-                    const j = await resp.json();
-                    if (j && (j.title || j.error)) msg = j.title || j.error;
-                } catch { /* keep default */ }
+                try { const j = await resp.json(); if (j && (j.title || j.error)) msg = j.title || j.error; } catch { /* keep */ }
                 alert(msg);
-                btn.disabled = false;
+                signPadConfirm.disabled = false;
                 return;
             }
-            // Success — update the list row (badge + chip) AND reload the
-            // preview so both surfaces reflect the sign immediately.
+            closeSignPad();
+            // Update the list row (badge + chip) AND reload the preview immediately.
             markRowSigned(selectedPullId, party);
-            applyFilters();        // re-evaluate filters + batch bar against new state
+            applyFilters();
             refreshEligibility();
             loadPreview();
         } catch (err) {
             alert(`Network error: ${err.message || String(err)}`);
-            btn.disabled = false;
+            signPadConfirm.disabled = false;
         }
     });
 

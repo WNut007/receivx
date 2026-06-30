@@ -772,64 +772,15 @@
 
   // ============ CLOSE PULL MODAL ============
   const closeModalEl = document.getElementById('close-modal');
-  const sigCanvas = document.getElementById('sig-canvas');
   const sigHost = document.getElementById('sig-host');
-  const sigCtx = sigCanvas.getContext('2d');
-  let sigDrawing = false, sigHasInk = false;
-
-  function setupSignatureCanvas() {
-    const ratio = window.devicePixelRatio || 1;
-    const rect = sigCanvas.getBoundingClientRect();
-    sigCanvas.width = rect.width * ratio;
-    sigCanvas.height = rect.height * ratio;
-    sigCtx.scale(ratio, ratio);
-    sigCtx.strokeStyle = '#1a1d20';
-    sigCtx.lineWidth = 2;
-    sigCtx.lineCap = 'round';
-    sigCtx.lineJoin = 'round';
-  }
-
-  function getSigPos(e) {
-    const rect = sigCanvas.getBoundingClientRect();
-    const t = e.touches ? e.touches[0] : e;
-    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
-  }
-
-  function sigStart(e) {
-    e.preventDefault();
-    sigDrawing = true;
-    const p = getSigPos(e);
-    sigCtx.beginPath();
-    sigCtx.moveTo(p.x, p.y);
-  }
-  function sigMove(e) {
-    if (!sigDrawing) return;
-    e.preventDefault();
-    const p = getSigPos(e);
-    sigCtx.lineTo(p.x, p.y);
-    sigCtx.stroke();
-    if (!sigHasInk) {
-      sigHasInk = true;
-      sigHost.classList.add('signed');
-      document.getElementById('cm-confirm').disabled = false;
-    }
-  }
-  function sigEnd() { sigDrawing = false; }
-
-  sigCanvas.addEventListener('mousedown', sigStart);
-  sigCanvas.addEventListener('mousemove', sigMove);
-  sigCanvas.addEventListener('mouseup', sigEnd);
-  sigCanvas.addEventListener('mouseleave', sigEnd);
-  sigCanvas.addEventListener('touchstart', sigStart);
-  sigCanvas.addEventListener('touchmove', sigMove);
-  sigCanvas.addEventListener('touchend', sigEnd);
-
-  function clearSignature() {
-    sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
-    sigHasInk = false;
-    sigHost.classList.remove('signed');
-    document.getElementById('cm-confirm').disabled = true;
-  }
+  // Phase 8b — the canvas drawing is now the shared SignaturePad component.
+  const sigPad = window.SignaturePad.mount(document.getElementById('sig-canvas'), {
+    onChange: (hasInk) => {
+      sigHost.classList.toggle('signed', hasInk);
+      document.getElementById('cm-confirm').disabled = !hasInk;
+    },
+  });
+  function clearSignature() { sigPad.clear(); }
   document.getElementById('sig-clear').addEventListener('click', clearSignature);
 
   function openCloseModal() {
@@ -860,8 +811,7 @@
     document.getElementById('cm-date').textContent = dateStr;
 
     closeModalEl.classList.add('open');
-    requestAnimationFrame(setupSignatureCanvas);
-    clearSignature();
+    requestAnimationFrame(() => { sigPad.resize(); sigPad.clear(); });
   }
 
   function closeCloseModal() { closeModalEl.classList.remove('open'); }
@@ -873,7 +823,7 @@
 
   // Stage B: §7.4 close — POST signature to server, then reflect closed state.
   document.getElementById('cm-confirm').addEventListener('click', async () => {
-    if (!sigHasInk) return;
+    if (sigPad.isEmpty()) return;
     if (!currentPullId) {
       showToast('Cannot close', 'Pull not loaded yet', 'error');
       return;
@@ -882,7 +832,7 @@
     btn.disabled = true;
     try {
       // Canvas exports PNG; the server column NVARCHAR(MAX) stores the data URL verbatim.
-      const sig = sigCanvas.toDataURL('image/png');
+      const sig = sigPad.toDataUrl();
       const resp = await fetch(`/api/pulls/${encodeURIComponent(currentPullId)}/close`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

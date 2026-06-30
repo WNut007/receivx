@@ -984,3 +984,46 @@
   margin-top: 6px; font-size: 8pt; color: var(--text-muted); text-align: right;
 }
 .do-sign-complete.is-complete { color: var(--ok, #16a34a); font-weight: 600; }
+
+/* ===========================================================================
+   Phase 8b — signature pad modal (single sign; batch reuses it in 8c). The
+   .signature-* classes mirror the close pad (receiving.css), which the Reports
+   page doesn't load.
+   =========================================================================== */
+.sign-pad-modal {
+  position: fixed; inset: 0; z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); padding: 20px;
+}
+.sign-pad-modal[hidden] { display: none; }
+.sign-pad-dialog {
+  background: var(--surface); border: 1px solid var(--border-bright, var(--border));
+  border-radius: 14px; padding: 20px; width: 100%; max-width: 460px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.sign-pad-head { font-size: 16px; font-weight: 700; color: var(--text); }
+.sign-pad-sub  { font-size: 12px; color: var(--text-muted); margin: 4px 0 14px; }
+.sign-pad-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+.signature-host {
+  background: var(--surface); border: 1px dashed var(--border-bright, var(--border));
+  border-radius: 10px; padding: 4px; margin-bottom: 8px; position: relative;
+}
+.signature-canvas {
+  width: 100%; height: 140px; display: block;
+  cursor: crosshair; touch-action: none; border-radius: 8px;
+}
+.signature-placeholder {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none; color: var(--text-dim);
+  font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.signature-host.signed .signature-placeholder { display: none; }
+.signature-foot { display: flex; align-items: center; margin-bottom: 14px; }
+.signature-foot .line { flex: 1; border-bottom: 1px solid var(--border); margin-right: 12px; }
+.clear-sig-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+  padding: 4px 10px; border-radius: 6px;
+  font-family: 'Roboto Mono', monospace; font-size: 11px; cursor: pointer;
+}
+.clear-sig-btn:hover { background: var(--surface-3); color: var(--text); }

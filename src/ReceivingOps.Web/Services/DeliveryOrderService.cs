@@ -135,9 +135,10 @@ public class DeliveryOrderService : IDeliveryOrderService
                 string.Equals(r.Party, party.Party, StringComparison.OrdinalIgnoreCase));
             if (row is not null)
             {
-                party.IsSigned   = true;
-                party.SignerName = row.SignerName;
-                party.SignedAt   = row.SignedAt;
+                party.IsSigned    = true;
+                party.SignerName  = row.SignerName;
+                party.SignedAt    = row.SignedAt;
+                party.SignatureSvg = row.SignatureSvg;
             }
         }
         return set;
