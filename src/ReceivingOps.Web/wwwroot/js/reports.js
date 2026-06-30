@@ -108,16 +108,21 @@
     bodyEl.addEventListener('click', (e) => {
         const btn = e.target.closest('.do-sign-btn[data-party]');
         if (!btn || !selectedPullId) return;
-        openSignPad(btn.dataset.party);
+        openSignPad(btn.dataset.party, 'single');
     });
 
-    // ----- Signature pad modal (single sign) ------------------------------
+    // ----- Signature pad modal (single + batch sign) ----------------------
+    // Phase 8b single sign + Phase 8c batch: both draw on the SAME pad. The
+    // confirm dispatches by mode — single POSTs /sign for the open pull; batch
+    // POSTs /sign-batch with the checked pulls (one drawing reused on each).
     const signPadModal   = document.getElementById('sign-pad-modal');
     const signPadHost     = document.getElementById('sign-pad-host');
     const signPadCanvas   = document.getElementById('sign-pad-canvas');
     const signPadConfirm  = document.getElementById('sign-pad-confirm');
     let signPad = null;
     let signPendingParty = null;
+    let signPadMode = 'single';   // 'single' | 'batch'
+    let signPadBatchIds = [];     // batch mode only: the pulls to sign
 
     if (signPadCanvas && window.SignaturePad) {
         signPad = window.SignaturePad.mount(signPadCanvas, {
@@ -128,28 +133,52 @@
         });
     }
 
-    function openSignPad(party) {
-        if (!signPad || !selectedPullId) return;
+    // mode 'single' signs the open pull (selectedPullId); mode 'batch' signs the
+    // ids passed in (the checked rows). The drawing is captured once on confirm.
+    function openSignPad(party, mode, ids) {
+        if (!signPad) return;
+        signPadMode = mode || 'single';
         signPendingParty = party;
+        signPadBatchIds = ids || [];
         document.getElementById('sign-pad-party').textContent = party;
-        document.getElementById('sign-pad-sub').innerHTML =
-            `Draw your signature for <b>${escapeHtml(selectedPullNumber)}</b>. ` +
-            `This records your drawing, name + timestamp and cannot be undone.`;
+        const sub = document.getElementById('sign-pad-sub');
+        if (signPadMode === 'batch') {
+            const n = signPadBatchIds.length;
+            sub.innerHTML =
+                `Draw your signature once for <b>${n}</b> selected pull${n === 1 ? '' : 's'}. ` +
+                `The same drawing, your name + timestamp is recorded on each ${escapeHtml(party)} box. ` +
+                `Already-signed pulls are skipped. This cannot be undone.`;
+        } else {
+            sub.innerHTML =
+                `Draw your signature for <b>${escapeHtml(selectedPullNumber)}</b>. ` +
+                `This records your drawing, name + timestamp and cannot be undone.`;
+        }
         signPadConfirm.disabled = true;
         signPadModal.hidden = false;
         // Canvas must be visible before sizing (mirror the close modal).
         requestAnimationFrame(() => { signPad.resize(); signPad.clear(); });
     }
-    function closeSignPad() { if (signPadModal) signPadModal.hidden = true; signPendingParty = null; }
+    function closeSignPad() {
+        if (signPadModal) signPadModal.hidden = true;
+        signPendingParty = null;
+        signPadBatchIds = [];
+    }
 
     document.getElementById('sign-pad-clear')?.addEventListener('click', () => signPad && signPad.clear());
     document.getElementById('sign-pad-cancel')?.addEventListener('click', closeSignPad);
     signPadModal?.addEventListener('click', (e) => { if (e.target === signPadModal) closeSignPad(); });
 
     signPadConfirm?.addEventListener('click', async () => {
-        if (!signPendingParty || !selectedPullId || !signPad || signPad.isEmpty()) return;
+        if (!signPendingParty || !signPad || signPad.isEmpty()) return;
         const party = signPendingParty;
+        const signatureSvg = signPad.toDataUrl();
         signPadConfirm.disabled = true;
+        if (signPadMode === 'batch') await submitBatchSign(party, signPadBatchIds, signatureSvg);
+        else                         await submitSingleSign(party, signatureSvg);
+    });
+
+    async function submitSingleSign(party, signatureSvg) {
+        if (!selectedPullId) { closeSignPad(); return; }
         try {
             const resp = await fetch(
                 `/api/reports/do/${encodeURIComponent(selectedPullId)}/sign`,
@@ -157,7 +186,7 @@
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ party, signatureSvg: signPad.toDataUrl() }),
+                    body: JSON.stringify({ party, signatureSvg }),
                 });
             if (!resp.ok) {
                 let msg = `Sign failed (HTTP ${resp.status})`;
@@ -176,7 +205,50 @@
             alert(`Network error: ${err.message || String(err)}`);
             signPadConfirm.disabled = false;
         }
-    });
+    }
+
+    // Phase 8c — one drawing, many pulls. Reuses the batch result line + the same
+    // partial-success roll-up (signed / skipped / errors) the 7d handler used.
+    async function submitBatchSign(party, ids, signatureSvg) {
+        if (!ids.length) { closeSignPad(); return; }
+        if (batchResult) batchResult.textContent = 'Signing…';
+        try {
+            const resp = await fetch('/api/reports/sign-batch', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pullIds: ids, party, signatureSvg }),
+            });
+            if (!resp.ok) {
+                let msg = `Batch sign failed (HTTP ${resp.status})`;
+                try { const j = await resp.json(); if (j && (j.title || j.error)) msg = j.title || j.error; } catch { /* keep */ }
+                if (batchResult) batchResult.textContent = msg;
+                closeSignPad();
+                return;
+            }
+            const r = await resp.json();
+            closeSignPad();
+            const signedResults = (r.results || []).filter(x => x.outcome === 'signed');
+            // Update each signed row in place (badge + chip) — no full reload.
+            signedResults.forEach(x => markRowSigned(x.pullId, r.party || party));
+            // Signed rows are no longer eligible — clear the selection + re-sync.
+            rowsEl.querySelectorAll('.pull-check:checked').forEach(cb => cb.checked = false);
+            applyFilters();
+            refreshEligibility();
+            // If the open preview was among the signed pulls, flip its boxes too.
+            if (selectedPullId && signedResults.some(x =>
+                String(x.pullId).toLowerCase() === String(selectedPullId).toLowerCase())) {
+                loadPreview();
+            }
+            const parts = [`${r.signed} signed`];
+            if (r.skipped) parts.push(`${r.skipped} skipped`);
+            if (r.errors)  parts.push(`${r.errors} error${r.errors === 1 ? '' : 's'}`);
+            if (batchResult) batchResult.textContent = parts.join(' · ');
+        } catch (err) {
+            if (batchResult) batchResult.textContent = `Network error: ${err.message || String(err)}`;
+            closeSignPad();
+        }
+    }
 
     // ----- Export PDF -----------------------------------------------------
     // /api/reports/do/{id}/export.pdf always sets Content-Disposition:
@@ -435,58 +507,15 @@
         syncBatchBar();
     });
 
-    if (batchSign) batchSign.addEventListener('click', async () => {
+    // Phase 8c — the batch action now opens the signature pad (draw once). The
+    // POST + partial-success roll-up live in submitBatchSign (shared with the
+    // pad's confirm dispatch). The old confirmAction text gate is replaced by
+    // the pad's own has-ink gate.
+    if (batchSign) batchSign.addEventListener('click', () => {
         const ids = selectedIds();
         const party = currentParty();
         if (!ids.length || !party) return;
-
-        const ok = await confirmAction({
-            title: `Sign ${ids.length} pull${ids.length === 1 ? '' : 's'} as ${party}?`,
-            message: `This records your name + timestamp on the ${party} box of each selected pull. ` +
-                     `Already-signed pulls are skipped. This cannot be undone.`,
-            icon: 'info',
-            confirmLabel: `Sign as ${party}`,
-        });
-        if (!ok) return;
-
-        batchSign.disabled = true;
-        batchResult.textContent = 'Signing…';
-        try {
-            const resp = await fetch('/api/reports/sign-batch', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pullIds: ids, party }),
-            });
-            if (!resp.ok) {
-                let msg = `Batch sign failed (HTTP ${resp.status})`;
-                try { const j = await resp.json(); if (j && (j.title || j.error)) msg = j.title || j.error; } catch { /* keep */ }
-                batchResult.textContent = msg;
-                batchSign.disabled = false;
-                return;
-            }
-            const r = await resp.json();
-            const signedResults = (r.results || []).filter(x => x.outcome === 'signed');
-            // Update each signed row in place (badge + chip) — no full reload.
-            signedResults.forEach(x => markRowSigned(x.pullId, r.party || party));
-            // Signed rows are no longer eligible — clear the selection + re-sync.
-            rowsEl.querySelectorAll('.pull-check:checked').forEach(cb => cb.checked = false);
-            applyFilters();
-            refreshEligibility();
-            // If the open preview was among the signed pulls, flip its boxes too.
-            if (selectedPullId && signedResults.some(x =>
-                String(x.pullId).toLowerCase() === String(selectedPullId).toLowerCase())) {
-                loadPreview();
-            }
-            const parts = [`${r.signed} signed`];
-            if (r.skipped) parts.push(`${r.skipped} skipped`);
-            if (r.errors)  parts.push(`${r.errors} error${r.errors === 1 ? '' : 's'}`);
-            batchResult.textContent = parts.join(' · ');
-            batchSign.disabled = false;
-        } catch (err) {
-            batchResult.textContent = `Network error: ${err.message || String(err)}`;
-            batchSign.disabled = false;
-        }
+        openSignPad(party, 'batch', ids);
     });
 
     refreshEligibility();
