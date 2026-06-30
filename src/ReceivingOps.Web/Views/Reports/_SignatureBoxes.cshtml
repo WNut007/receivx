@@ -7,9 +7,12 @@
     pull-close SignatureSvg display (decision #6).
 
     Signed   → drawn signature image + signer name + timestamp. All 3 parties
-               carry a drawing now (Phase 8): Warehouse from the close pad
-               (D1, currently via Pulls.SignatureSvg — 8d unifies the source),
-               Customer/Production from the per-party sign pad.
+               carry a drawing now (Phase 8) and all 3 read it from the SAME
+               source — their per-party PullSignatures row (p.SignatureSvg).
+               Warehouse's row is populated at close (8a copies the close pad
+               SVG into it; db/045 backfilled history), Customer/Production from
+               the per-party sign pad (8b/8c). Pulls.SignatureSvg is no longer
+               read here (8d uniform source).
     Unsigned → blank box; a "Sign as {Party}" button appears only when the
                current viewer is eligible (CanSign, set server-side to mirror
                the POST guards). reports.js delegates the click.
@@ -28,10 +31,8 @@
 <div class="do-sign-row" data-pull-id="@Model.Id">
     @foreach (var p in Model.Signatures.All)
     {
-        var isWarehouse = string.Equals(p.Party, "Warehouse", StringComparison.OrdinalIgnoreCase);
-        // Warehouse currently sources its drawing from the pull-level close SVG;
-        // Customer/Production from their own per-party row. 8d unifies on the row.
-        var partySvg = isWarehouse ? Model.SignatureSvg : p.SignatureSvg;
+        // 8d — uniform source: every box reads its own per-party row drawing.
+        var partySvg = p.SignatureSvg;
         <div class="do-sign-box @(p.IsSigned ? "is-signed" : "")">
             <div class="do-sign-label">@p.Party.ToUpperInvariant()</div>
             <div class="do-sign-area">
