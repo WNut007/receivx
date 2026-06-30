@@ -116,7 +116,7 @@ public static class DoReportDataSetBuilder
         // pipeline which can't decode the URL form natively.
         // (SignatureBytes is retained for back-compat but the footer no longer
         // binds it — the pull-close signature was dropped from the report in
-        // the digital-signature feature; the 3 party captions below replace it.)
+        // the digital-signature feature; the per-party images below replace it.)
         t.Columns.Add("WarehouseLogoBytes",   typeof(byte[]));
         t.Columns.Add("SignatureBytes",       typeof(byte[]));
 
@@ -126,6 +126,15 @@ public static class DoReportDataSetBuilder
         t.Columns.Add("CustomerSig",   typeof(string));
         t.Columns.Add("WarehouseSig",  typeof(string));
         t.Columns.Add("ProductionSig", typeof(string));
+
+        // Phase 8e — per-party DRAWN signature image bytes (flattened the same
+        // way as WarehouseLogoBytes / the old SignatureBytes). PictureObject.
+        // DataColumn binds these in both .frx so the PDF shows the drawing above
+        // each party's name/date — parity with the HTML preview (8b/8c/8d).
+        // DBNull when the party hasn't signed or drew nothing → blank box.
+        t.Columns.Add("CustomerSigBytes",   typeof(byte[]));
+        t.Columns.Add("WarehouseSigBytes",  typeof(byte[]));
+        t.Columns.Add("ProductionSigBytes", typeof(byte[]));
 
         foreach (DataColumn c in t.Columns)
             c.AllowDBNull = true;
@@ -214,6 +223,10 @@ public static class DoReportDataSetBuilder
         row["CustomerSig"]          = SigCaption(pull.Signatures.Customer);
         row["WarehouseSig"]         = SigCaption(pull.Signatures.Warehouse);
         row["ProductionSig"]        = SigCaption(pull.Signatures.Production);
+        // 8e — drawing bytes per party, from the per-party row (uniform with 8d).
+        row["CustomerSigBytes"]     = (object?)DecodeAndFlattenImage(pull.Signatures.Customer.SignatureSvg)   ?? DBNull.Value;
+        row["WarehouseSigBytes"]    = (object?)DecodeAndFlattenImage(pull.Signatures.Warehouse.SignatureSvg)  ?? DBNull.Value;
+        row["ProductionSigBytes"]   = (object?)DecodeAndFlattenImage(pull.Signatures.Production.SignatureSvg) ?? DBNull.Value;
 
         orders.Rows.Add(row);
     }

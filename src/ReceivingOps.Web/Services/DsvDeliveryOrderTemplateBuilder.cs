@@ -321,16 +321,18 @@ public static class DsvDeliveryOrderTemplateBuilder
     {
         var parties = new[]
         {
-            (x: 0f,     label: "CUSTOMER",   col: "CustomerSig"),
-            (x: 61.5f,  label: "WAREHOUSE",  col: "WarehouseSig"),
-            (x: 123f,   label: "PRODUCTION", col: "ProductionSig"),
+            (x: 0f,     label: "CUSTOMER",   col: "CustomerSig",   img: "CustomerSigBytes"),
+            (x: 61.5f,  label: "WAREHOUSE",  col: "WarehouseSig",  img: "WarehouseSigBytes"),
+            (x: 123f,   label: "PRODUCTION", col: "ProductionSig", img: "ProductionSigBytes"),
         };
         foreach (var p in parties)
         {
             var key = p.label[0] + p.label.Substring(1).ToLowerInvariant();
             band.Objects.Add(MakeText($"Sig{key}Label", p.x, 15, 57, 5, p.label, fontSize: 8f, bold: true));
             band.Objects.Add(MakeBox($"Sig{key}Box", p.x, 21, 57, 22));
-            band.Objects.Add(MakeText($"Sig{key}Val", p.x, 27, 57, 10,
+            // 8e — drawn signature image in the top of the box; name/date below.
+            band.Objects.Add(MakeDataPicture($"Sig{key}Img", p.x + 1, 22.5f, 55, 12, $"Orders.{p.img}"));
+            band.Objects.Add(MakeText($"Sig{key}Val", p.x, 35, 57, 7,
                 $"[Orders.{p.col}]", fontSize: 9f, align: HorzAlign.Center));
             band.Objects.Add(MakeText($"Sig{key}Cap", p.x, 44, 57, 4,
                 "Name / Date", fontSize: 7f, align: HorzAlign.Center));

@@ -407,16 +407,18 @@ public static class DeliveryOrderTemplateBuilder
     {
         var parties = new[]
         {
-            (x: 0f,    label: "CUSTOMER",   col: "CustomerSig"),
-            (x: 61.5f, label: "WAREHOUSE",  col: "WarehouseSig"),
-            (x: 123f,  label: "PRODUCTION", col: "ProductionSig"),
+            (x: 0f,    label: "CUSTOMER",   col: "CustomerSig",   img: "CustomerSigBytes"),
+            (x: 61.5f, label: "WAREHOUSE",  col: "WarehouseSig",  img: "WarehouseSigBytes"),
+            (x: 123f,  label: "PRODUCTION", col: "ProductionSig", img: "ProductionSigBytes"),
         };
         foreach (var p in parties)
         {
             var key = p.label[0] + p.label.Substring(1).ToLowerInvariant();
             band.Objects.Add(MakeText($"Sig{key}Label", p.x, yLabel, 57, 5, p.label, fontSize: 8f, bold: true));
             band.Objects.Add(MakeBox($"Sig{key}Box", p.x, yBox, 57, 22));
-            band.Objects.Add(MakeText($"Sig{key}Val", p.x, yVal, 57, 10,
+            // 8e — drawn signature image in the top of the box; name/date below it.
+            band.Objects.Add(MakeDataPicture($"Sig{key}Img", p.x + 1, yBox + 1.5f, 55, 12, $"Orders.{p.img}"));
+            band.Objects.Add(MakeText($"Sig{key}Val", p.x, yVal + 8, 57, 7,
                 $"[Orders.{p.col}]", fontSize: 9f, align: HorzAlign.Center));
             band.Objects.Add(MakeText($"Sig{key}Cap", p.x, yCap, 57, 4,
                 "Name / Date", fontSize: 7f, align: HorzAlign.Center));

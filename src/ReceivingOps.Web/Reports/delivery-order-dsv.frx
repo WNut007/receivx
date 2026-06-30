@@ -29,6 +29,9 @@
       <Column Name="SignatureSvg" DataType="System.String"/>
       <Column Name="WarehouseLogoBytes" DataType="System.Byte[]" BindableControl="Picture"/>
       <Column Name="SignatureBytes" DataType="System.Byte[]" BindableControl="Picture"/>
+      <Column Name="CustomerSigBytes" DataType="System.Byte[]" BindableControl="Picture"/>
+      <Column Name="WarehouseSigBytes" DataType="System.Byte[]" BindableControl="Picture"/>
+      <Column Name="ProductionSigBytes" DataType="System.Byte[]" BindableControl="Picture"/>
     </TableDataSource>
     <TableDataSource Name="Lines" ReferenceName="DoReport.Lines" DataType="System.Int32" Enabled="true">
       <Column Name="DeliveryNoteNo" DataType="System.String"/>
@@ -98,13 +101,16 @@
         <TextObject Name="TotalValue" Left="158.76" Top="11.34" Width="75.6" Height="22.68" CanGrow="true" Text="[Orders.TotalQty]" HorzAlign="Right" Font="Arial, 12pt, style=Bold"/>
         <LineObject Name="FootRule0" Top="49.14" Width="680.4" Border.Width="0.5"/>
         <TextObject Name="SigCustLabel" Top="56.7" Width="218.4" Height="15.12" Text="CUSTOMER" Font="Arial, 8pt, style=Bold"/>
-        <TextObject Name="SigCustBox" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.CustomerSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+        <TextObject Name="SigCustBox" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.CustomerSig]" HorzAlign="Center" VertAlign="Bottom" Font="Arial, 9pt"/>
+        <PictureObject Name="SigCustImg" Left="4" Top="75.71" Width="210.4" Height="40" DataColumn="Orders.CustomerSigBytes" SizeMode="Zoom"/>
         <TextObject Name="SigCustCap" Top="143.64" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
         <TextObject Name="SigWhLabel" Left="231" Top="56.7" Width="218.4" Height="15.12" Text="WAREHOUSE" Font="Arial, 8pt, style=Bold"/>
-        <TextObject Name="SigWhBox" Left="231" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.WarehouseSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+        <TextObject Name="SigWhBox" Left="231" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.WarehouseSig]" HorzAlign="Center" VertAlign="Bottom" Font="Arial, 9pt"/>
+        <PictureObject Name="SigWhImg" Left="235" Top="75.71" Width="210.4" Height="40" DataColumn="Orders.WarehouseSigBytes" SizeMode="Zoom"/>
         <TextObject Name="SigWhCap" Left="231" Top="143.64" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
         <TextObject Name="SigProdLabel" Left="462" Top="56.7" Width="218.4" Height="15.12" Text="PRODUCTION" Font="Arial, 8pt, style=Bold"/>
-        <TextObject Name="SigProdBox" Left="462" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.ProductionSig]" HorzAlign="Center" VertAlign="Center" Font="Arial, 9pt"/>
+        <TextObject Name="SigProdBox" Left="462" Top="73.71" Width="218.4" Height="68.04" Border.Lines="All" Border.Color="Gray" Border.Width="0.5" Text="[Orders.ProductionSig]" HorzAlign="Center" VertAlign="Bottom" Font="Arial, 9pt"/>
+        <PictureObject Name="SigProdImg" Left="466" Top="75.71" Width="210.4" Height="40" DataColumn="Orders.ProductionSigBytes" SizeMode="Zoom"/>
         <TextObject Name="SigProdCap" Left="462" Top="143.64" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
       </DataFooterBand>
     </DataBand>
