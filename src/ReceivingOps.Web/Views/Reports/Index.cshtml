@@ -70,13 +70,16 @@
                 <div class="list-header">CLOSED PULLS</div>
                 @if (canBatch)
                 {
-                    <div class="batch-bar" id="batch-bar" hidden>
-                        <span class="batch-count" id="batch-count">0 selected</span>
+                    @* Not hidden by default: the role combobox must stay reachable
+                       even with nothing selected (syncBatchBar keeps the bar visible
+                       and gates only the action controls). *@
+                    <div class="batch-bar" id="batch-bar">
+                        <span class="batch-count" id="batch-count">Select pulls to sign</span>
                         <label class="batch-party-wrap">Sign as
                             <select class="form-select form-select-sm batch-party" id="batch-party"></select>
                         </label>
-                        <button type="button" class="btn btn-sm btn-primary" id="batch-sign-btn">Sign</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="batch-clear-btn">Clear</button>
+                        <button type="button" class="btn btn-sm btn-primary" id="batch-sign-btn" disabled>Sign</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="batch-clear-btn" disabled>Clear</button>
                         <span class="batch-result" id="batch-result" aria-live="polite"></span>
                     </div>
                 }

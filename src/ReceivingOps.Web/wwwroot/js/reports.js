@@ -470,9 +470,21 @@
     function syncBatchBar() {
         if (!batchBar) return;
         const n = selectedIds().length;
-        batchBar.hidden = n === 0;
-        if (batchCount) batchCount.textContent = `${n} selected`;
-        if (batchSign)  batchSign.textContent  = `Sign ${n} as ${currentParty()}`;
+        // Keep the bar — and its role combobox — reachable whenever batch signing
+        // is available, even with nothing selected (e.g. right after a batch sign
+        // auto-clears the selection). Otherwise a pull already signed for the
+        // current party has its checkbox disabled AND the combobox hidden, so the
+        // operator can't switch role to sign its remaining open slots. Only the
+        // action controls are gated by the selection count.
+        const party = currentParty();
+        batchBar.hidden = false;
+        if (batchCount) batchCount.textContent =
+            n === 0 ? `Select pulls to sign as ${party}` : `${n} selected`;
+        if (batchSign) {
+            batchSign.textContent = n === 0 ? `Sign as ${party}` : `Sign ${n} as ${party}`;
+            batchSign.disabled = n === 0;
+        }
+        if (batchClear) batchClear.disabled = n === 0;
     }
 
     // Flip a pull's list row to "party signed" in place — bumps the N/3 badge
