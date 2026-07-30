@@ -3,6 +3,23 @@ using ReceivingOps.Web.Models;
 namespace ReceivingOps.Web.Models.Dtos;
 
 /// <summary>
+/// Shared literals for the Delivery Order / Delivery Note report layer.
+/// </summary>
+public static class DoReportConstants
+{
+    /// <summary>
+    /// PurchaseOrderLines.Note sentinel marking a line as delivery-note
+    /// eligible (transferred from WDT). A Delivery Note is issued ONLY for
+    /// lines carrying exactly this value — every other line, including NULL or
+    /// empty Note, is excluded. See
+    /// PullRepository.GetDoReportRowsAsync(wdtTransferLinesOnly). Matched by
+    /// exact equality (SQL Server default CI collation makes it case- and
+    /// trailing-space-insensitive, which is acceptable — no LIKE/prefix match).
+    /// </summary>
+    public const string WdtTransferNote = "Transferred from WDT";
+}
+
+/// <summary>
 /// Aggregated Delivery Order report data — what both the HTML preview
 /// partial and the PDF builder consume.
 ///

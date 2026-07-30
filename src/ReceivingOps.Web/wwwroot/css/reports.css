@@ -266,6 +266,19 @@
     background: var(--error-bg); color: var(--error);
     border-radius: 8px; font-size: 13px;
   }
+  /* Empty Delivery Note — no line on the pull is marked "Transferred from WDT".
+     Muted-surface card reusing the same theme tokens as the rest of the pane. */
+  .dn-empty-state {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    gap: 8px; padding: 40px 24px;
+  }
+  .dn-empty-headline {
+    color: var(--text); font-size: 16px; font-weight: 600;
+  }
+  .dn-empty-sub {
+    color: var(--text-muted); font-size: 13px; max-width: 420px;
+  }
 
   /* ============ DO document (paper-like card) ============ */
   .do-document {

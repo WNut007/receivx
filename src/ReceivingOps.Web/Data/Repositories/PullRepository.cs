@@ -313,7 +313,8 @@ public class PullRepository : IPullRepository
     //   rows (which carry the negative qty per the §6 CHECK constraint). The
     //   reversal negatives cancel the originals at SUM time, and HAVING
     //   SUM > 0 drops (PO × Line × Item) tuples that net to zero.
-    public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(
+        Guid pullId, bool wdtTransferLinesOnly = false, CancellationToken ct = default)
     {
         // The remaining ERP-sourced extended fields below are invariant per
         // (PoId, LineNumber). MAX() lets us surface them without extending
@@ -323,7 +324,15 @@ public class PullRepository : IPullRepository
         // Invoice was promoted from a MAX'd line attribute to a first-class
         // grouping key so two distinct invoices under the same vendor / sub /
         // to-loc triple split into separate DOs (one page each in the PDF).
-        const string sql = @"
+        // DN opt-in whitelist: keep ONLY lines whose Note is exactly the WDT
+        // sentinel; every other line — including NULL/empty Note — is excluded
+        // (NULL falls out of `=` naturally; no ISNULL/COALESCE wrapper). Exact
+        // equality only — no LIKE/prefix — so 'Transferred from WDT2' is excluded.
+        var wdtFilter = wdtTransferLinesOnly
+            ? "\n              AND   pol.Note = @WdtTransferNote"
+            : "";
+
+        var sql = @"
             SELECT  pol.VendorCode,
                     pol.VendorName,
                     pol.SubInventory,
@@ -349,7 +358,7 @@ public class PullRepository : IPullRepository
             INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId
             INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
             WHERE   pi.PullId = @PullId
-              AND   r.ReversedById IS NULL
+              AND   r.ReversedById IS NULL" + wdtFilter + @"
             GROUP BY pol.VendorCode, pol.VendorName,
                      pol.SubInventory, pol.ToLocation, pol.InvoiceNo,
                      pol.OrderId, pol.DeliveryDate,
@@ -361,7 +370,10 @@ public class PullRepository : IPullRepository
 
         using var conn = _factory.Create();
         var rows = await conn.QueryAsync<DoReportRow>(
-            new CommandDefinition(sql, new { PullId = pullId }, cancellationToken: ct));
+            new CommandDefinition(
+                sql,
+                new { PullId = pullId, WdtTransferNote = DoReportConstants.WdtTransferNote },
+                cancellationToken: ct));
         return rows.AsList();
     }
 

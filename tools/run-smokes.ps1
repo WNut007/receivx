@@ -58,6 +58,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-pull-reference.ps1'
         'smoke-fastreport-bootstrap.ps1'
         'smoke-do-report.ps1'
+        'smoke-dn-wdt-transfer-only.ps1'
         'smoke-pos-date-filter.ps1'
         'smoke-phase-8.1-pagination.ps1'
         'smoke-phase-8.2-pagination-component.ps1'

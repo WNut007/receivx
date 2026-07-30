@@ -68,13 +68,34 @@ public class ReportsApiController : Controller
         try
         {
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
-            using var report = await _doService.BuildAsync(id, ParseReportType(type), ct);
+            var reportType = ParseReportType(type);
+            var data = await _doService.GetReportDataAsync(id, reportType, ct);
+
+            // An empty Delivery Note (every line was a WDT transfer) must refuse
+            // rather than emit a blank PDF. 409 — the pull exists (not 404) and
+            // there is simply nothing to deliver.
+            if (data.Orders.Count == 0)
+                return Problem(
+                    detail: "There is no vendor records for this pull.",
+                    statusCode: StatusCodes.Status409Conflict);
+
+            using var report = _doService.Build(data, reportType);
             using var ms = new MemoryStream();
             using var pdf = new PDFSimpleExport();
             report.Export(pdf, ms);
 
+            // Filename after the active toggle + pull + a timestamp, e.g.
+            // "Delivery_Note_0000018871_20260716154230.pdf". The timestamp is
+            // LOCAL Bangkok wall time (UTC+7, no DST) — deliberately NOT
+            // DateTime.UtcNow; a fixed offset dodges the Windows/IANA tz-id split.
+            // Build with spaces, then a single Replace(' ', '_') guarantees no
+            // space survives (incl. any inside PullNumber) — and sidesteps any
+            // Content-Disposition %20/+ encoding concern.
             var detail = await _pulls.GetByIdAsync(id, ct);
-            var filename = $"{(detail?.PullNumber ?? id.ToString())}-DO.pdf";
+            var title = reportType == ReportType.DeliveryOrder ? "Delivery Order" : "Delivery Note";
+            var pull  = detail?.PullNumber ?? id.ToString();
+            var stamp = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).ToString("yyyyMMddHHmmss");
+            var filename = $"{title} {pull} {stamp}.pdf".Replace(' ', '_');
             Response.Headers["Content-Disposition"] = $"attachment; filename=\"{filename}\"";
             return File(ms.ToArray(), "application/pdf");
         }

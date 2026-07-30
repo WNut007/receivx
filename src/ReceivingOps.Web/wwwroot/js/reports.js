@@ -62,8 +62,8 @@
         if (!selectedPullId) return;
         titleEl.textContent = `${selectedPullNumber} · loading…`;
         bodyEl.innerHTML = `<div class="preview-loading">Loading ${docNoun()}s…</div>`;
-        btnPdf.disabled = true;
-        btnPrint.disabled = true;
+        btnPdf.disabled = true;  btnPdf.title = '';
+        btnPrint.disabled = true; btnPrint.title = '';
 
         try {
             const url = `/api/reports/do/${encodeURIComponent(selectedPullId)}/preview?type=${reportType}`;
@@ -89,10 +89,19 @@
             const doCount = bodyEl.querySelectorAll('article').length;
             titleEl.textContent =
                 `${selectedPullNumber} · ${doCount} ${docNoun()}${doCount === 1 ? '' : 's'}`;
+            // Empty Delivery Note (no line marked as a WDT transfer): the
+            // partial renders [data-dn-empty] instead of any <article>. Gate the
+            // actions with `disabled` + a reason title — never hide the toolbar
+            // or the tab toggle, so the operator can still switch to Delivery
+            // Order. The 409 the export endpoint returns carries the same reason.
+            const emptyReason = bodyEl.querySelector('[data-dn-empty]')
+                ? 'There is no vendor records for this pull.'
+                : '';
             // PDF export works for both report types (each loads its own .frx).
-            btnPdf.disabled = false;
-            btnPdf.title = '';
-            btnPrint.disabled = false;
+            btnPdf.disabled = !!emptyReason;
+            btnPdf.title = emptyReason;
+            btnPrint.disabled = !!emptyReason;
+            btnPrint.title = emptyReason;
         } catch (err) {
             bodyEl.innerHTML =
                 `<div class="preview-error">Network error: ${escapeHtml(err.message || String(err))}</div>`;

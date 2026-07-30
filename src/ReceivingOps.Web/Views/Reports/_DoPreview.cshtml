@@ -26,6 +26,17 @@
 @{
     string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
 }
+@if (Model.Orders.Count == 0)
+{
+    @* No line on this pull is marked "Transferred from WDT", so it has no
+       delivery-note-eligible lines (the common case). reports.js keys off
+       [data-dn-empty] to keep Print + Export PDF disabled while the toggle
+       stays enabled (the operator can still switch to the Delivery Order tab). *@
+    <div class="dn-empty-state" data-dn-empty>
+        <div class="dn-empty-headline">There is no vendor records</div>
+        <div class="dn-empty-sub">No lines on this pull are marked &quot;Transferred from WDT&quot;, so no Delivery Note is issued.</div>
+    </div>
+}
 @foreach (var order in Model.Orders)
 {
     var dateOfDelivery = Model.Pull.ClosedAt?.ToString("dd MMM yyyy") ?? "—";

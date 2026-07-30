@@ -81,8 +81,17 @@ public class DeliveryOrderService : IDeliveryOrderService
                 "Delivery Order can only be rendered for closed pulls. " +
                 "Close the pull first (it must be fully received and signed off).");
 
-        var rows = await _pulls.GetDoReportRowsAsync(pullId, ct);
-        if (rows.Count == 0)
+        // The Delivery Note tab shows ONLY WDT-transfer lines (Note = the WDT
+        // sentinel); the Delivery Order tab keeps every line. Phase 15.4 DN
+        // auto-generation inherits this whitelist for free — it just needs to
+        // call the DN build path (ReportType.DeliveryNote) so wdtOnly stays true.
+        var wdtOnly = reportType == ReportType.DeliveryNote;
+        var rows = await _pulls.GetDoReportRowsAsync(pullId, wdtOnly, ct);
+
+        // A DN with no WDT-eligible lines is the common, valid empty case — never
+        // an error, no warning/throw (most pulls have zero eligible lines). Only
+        // the DO path treats "no delivered receipts" as an error.
+        if (rows.Count == 0 && !wdtOnly)
             throw new BusinessException(
                 "This pull has no delivered receipts. A Delivery Order requires at least one " +
                 "non-cancelled receipt to render.");
@@ -199,6 +208,11 @@ public class DeliveryOrderService : IDeliveryOrderService
                     TotalQty       = lines.Sum(l => l.TotalQty),
                 };
             })
+            // Prune any group left with zero lines (only WDT-eligible lines
+            // survive the repo whitelist, so a vendor group with no eligible
+            // lines never renders as an empty page). TotalQty above is already
+            // summed from surviving lines only — no pre-filter carry.
+            .Where(o => o.Lines.Count > 0)
             .OrderBy(o => o.DeliveryNoteNo, StringComparer.Ordinal)
             .ToList();
 
@@ -292,7 +306,7 @@ public class DeliveryOrderService : IDeliveryOrderService
         return Build(data, reportType);
     }
 
-    private Report Build(DoReportData data, ReportType reportType)
+    public Report Build(DoReportData data, ReportType reportType = ReportType.DeliveryNote)
     {
         EnsureFrxExists(reportType);
 

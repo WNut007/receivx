@@ -30,7 +30,13 @@ public interface IPullRepository
     // negatives included so a fully-reversed line nets to zero and is
     // dropped by HAVING). Ordered by (PoNumber, PoLineNumber, ItemCode) so
     // the service can group sequentially.
-    Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default);
+    //
+    // wdtTransferLinesOnly (default false → every existing caller unchanged):
+    // when true, ONLY PurchaseOrderLines carrying Note = DoReportConstants.WdtTransferNote
+    // are returned — a Delivery Note is issued only for those lines; every other
+    // line (including NULL/empty Note) is excluded. Only the DN build path opts in.
+    Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(
+        Guid pullId, bool wdtTransferLinesOnly = false, CancellationToken ct = default);
 
     // Phase 9.1 — bulk overwrite of the 7 ERP-sourced PullItem fields. Used by
     // the service-layer UpdateExtendedFieldsAsync; raw row count returned so
