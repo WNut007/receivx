@@ -1,7 +1,7 @@
 # Brief: Accept Variance on Goods Receipt
 
 **System:** ReceivingOps, post-v3.5 on `feat/digital-signature` (.NET 8, Dapper, SQL Server)
-**Revision:** rev 4 — grain decided, Stage 2 findings folded in. Where this document contradicts itself, section 2c wins.
+**Revision:** rev 6 — zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
 **Screen:** "Receive Goods" modal (quantity entry against a scheduled pull slot)
 **Type:** Schema change + service layer + API + UI
 
@@ -92,6 +92,10 @@ Rationale: 99.97% of items hold exactly one window, and all 13 multi-window item
 
 Removing the clamp is therefore not "relaxing a limit" — it is repairing silent data loss. Every over-entry must either be recorded at the entered figure or refused with a visible error. Nothing may be silently rewritten. This applies equally to the quick-fill buttons at `:735-743`, which currently clamp to `activeMax` by the same route.
 
+Reproduced live 2026-08-06: entering 1,500 against 1,000 outstanding with `LockHourCap = false` and 10,000 PO headroom returned `200`, wrote `QtyReceived = 1000`, and rendered the line as 100% complete. The server would have accepted 1,500 — nothing server-side rejected it. The client invented the limit.
+
+**Preview and confirm must agree.** `GET /api/receipts/preview` returned `200` and the panel promised "Will allocate: 1,500" one screen before confirm silently wrote 1,000. After this change, any quantity preview accepts must be the quantity confirm writes, and any quantity confirm would refuse must be refused by preview with the same reason. A preview that promises more than confirm delivers is the same defect wearing a different hat. Add a test asserting preview and confirm agree at: below outstanding, exactly outstanding, and above outstanding both with and without the variance flag.
+
 ### The five outstanding calculations
 
 These are parallel copies, not one helper. All five need the `IsClosed = 0` filter, and **each gets its own named regression test** — a filter added to four of five is a bug that surfaces weeks later:
@@ -130,6 +134,29 @@ The asymmetry is deliberate. Re-opening a line that did not strictly need re-ope
 
 ---
 
+## 2d. Zero-quantity close: DECIDED — no receipt row
+
+`CK_Receipts_QtyNonZero` (`QtyReceived <> 0`) and `CK_Receipts_ReversalIntegrity` forbid zero-quantity receipts. **Do not relax either one.** `Receipts` is an append-only ledger where a row means goods moved; a zero row means nothing moved, and weakening that invariant for the whole table to serve one UI affordance is the wrong trade.
+
+Earlier revisions of this brief called the zero-quantity receipt row "the audit record of who closed the line and why". That was written before `PullItemWindows` gained `ClosedBy` / `ClosedAt` / `ClosedReason`. The audit record now lives there. The zero receipt row adds nothing.
+
+**Close-only path.** A confirm with `Qty = 0` and `VarianceAccepted = true` writes **no** `Receipts` row. It sets `IsClosed = 1`, `ClosedAt`, `ClosedBy`, `ClosedReason` on the window, via the same conditional `WHERE IsClosed = 0` update and the same mandatory note, and writes an audit entry. Nothing else changes. `PullItemWindows.ReceivedQty` is not touched.
+
+Note what this removes: the `-0` reversal problem disappears entirely. `CancelAsync` would have inserted `NegQty = -0 = 0` against a branch requiring `QtyReceived < 0`. That edge case was manufactured by the design choice, not inherent to the requirement — which is the clearest sign the choice was wrong.
+
+**Reopen action.** Because a zero-close leaves no receipt to reverse, add an explicit reopen:
+
+- Clears `IsClosed`, `ClosedAt`, `ClosedBy`, `ClosedReason` on the window.
+- Same permission as receiving (`CanReceive`), same warehouse check as `CancelAsync`.
+- Requires a reason, written to audit. Reopening is a correction and must be attributable.
+- Same conditional-update discipline: `WHERE PullItemId = @p AND HourOfDay = @h AND IsClosed = 1`, rowcount 0 → `409`.
+- Available for **any** closed window, not only zero-closed ones. A line closed by a short receipt can also be reopened this way; reversing the receipt remains the other route and must stay working.
+- Follows the canonical lock order from section 2c.
+
+Keep it minimal: one endpoint, one confirm dialog with a reason box. No bulk reopen, no reopen from list views, no separate admin screen.
+
+---
+
 ## 3. Discovery — do not guess names
 
 Before implementing, locate and report back:
@@ -161,13 +188,15 @@ New migration. Two concerns: recording that a given receipt accepted variance, a
 | --- | --- | --- |
 | `IsClosed` | `BIT NOT NULL` | `DEFAULT 0` |
 | `ClosedAt` | `DATETIME2 NULL` | |
-| `ClosedBy` | `NVARCHAR(100) NULL` | User identifier, same convention as the existing audit columns on that table |
-| `ClosedReason` | `NVARCHAR(500) NULL` | Copy of the operator's note at close time |
+| `ClosedBy` | `UNIQUEIDENTIFIER NULL` | Matches `Pulls.ClosedBy` / `Receipts.ReceivedBy`, and is exactly what `ReceiptService.CurrentUserId()` returns. `PullItemWindows` has no audit columns of its own — an earlier revision of this brief claimed otherwise and was wrong |
+| `ClosedReason` | `NVARCHAR(1000) NULL` | Copied from `Receipts.Note`, which is `NVARCHAR(1000)`. At 500 a 1,000-character note either throws on close or silently truncates the one thing this column exists to preserve |
 
 `IsClosed` is required — it cannot be derived. An under-receipt leaves `Expected - Received > 0`, so arithmetic alone will keep showing the line as pending forever. That is precisely the bug this change exists to fix.
 
 Add a filtered index if the pending-lines query is hot:
-`CREATE INDEX IX_<Line>_Open ON <LineTable>(<PullId>) WHERE IsClosed = 0`
+`CREATE NONCLUSTERED INDEX IX_PIW_Open ON dbo.PullItemWindows (PullItemId) INCLUDE (ExpectedQty, ReceivedQty) WHERE IsClosed = 0`
+
+`PullItemWindows` has no `PullId` — it reaches the pull via `PullItemId → PullItems.PullId`. The conditional close needs no new index: `UQ_PIW_Hour (PullItemId, HourOfDay)` already makes it a unique seek.
 
 Use `WITH (ONLINE = ON)`. Verified on production 2026-08-06: Enterprise Edition (64-bit), EngineEdition 3, ProductVersion 16.0.1000.6.
 
@@ -193,7 +222,7 @@ WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay AND IsClosed = 0;
 
 If the affected row count is 0, another user already closed it — roll back the whole transaction including the receipt insert, and return `409`. A `WHERE IsClosed = 0` guard is the only thing that makes "check once per SKU" actually true rather than merely likely.
 
-**Already-closed lines are read-only.** Attempting to receive against a line where `IsClosed = 1` returns `409 Conflict`. Re-opening a closed line is **out of scope** for this phase; do not build an unclose path, but do not make the flag hard to reverse later either.
+**Already-closed lines are read-only.** Attempting to receive against a line where `IsClosed = 1` returns `409 Conflict`. Re-opening is handled by the explicit reopen action in section 2d, not by receiving.
 
 ---
 
@@ -217,11 +246,12 @@ The note field already exists — reuse it.
 | `Qty > Outstanding` and `VarianceAccepted == false` | `400`, error code `OVER_RECEIPT_NOT_ACCEPTED`, message naming outstanding and entered figures |
 | `VarianceAccepted == true` and note is null/whitespace | `400`, error code `VARIANCE_REASON_REQUIRED` |
 | `VarianceAccepted == true` and `Qty == Outstanding` | Accept, but ignore the flag — persist `VarianceAccepted = 0`. The line closes through the existing full-receipt path, not the variance path |
-| `Qty == 0` and `VarianceAccepted == false` | `400` — a zero-quantity partial records nothing. Zero is only meaningful as a short close |
+| `Qty == 0` and `VarianceAccepted == false` | `400` — a zero-quantity partial records nothing |
+| `Qty == 0` and `VarianceAccepted == true` | Close-only path — see section 2d. **No `Receipts` row is written.** |
 
 The asymmetry is deliberate: **under is ambiguous, over is not.** An under-entry could mean "the rest arrives Thursday" or "this is all we're getting" — the checkbox is what disambiguates, so it must stay optional there. An over-entry has only one meaning, so the tick is mandatory.
 
-`Qty = 0` with the box ticked is valid and is what the existing MARK ZERO button now feeds into: nothing arrived, close the line short by the full outstanding amount.
+`Qty = 0` with the box ticked closes the line without writing a receipt. See section 2d.
 
 **No upper bound on over-receipt** — per decision, any quantity is permitted. Do not introduce a percentage cap or a config key for one.
 
@@ -252,7 +282,7 @@ Compare the last row of each table. In the over case the system can tell the rec
 
 **Invariant worth asserting in a test:** every preceding partial reduces outstanding exactly, so `VarianceQty` on the closing receipt equals `TotalReceived − Expected` for the line — `+500` and `−1,000` in the two tables above.
 
-**Recovery path.** If the operator forgets to tick on the final short receipt, the line sits open at 1,000 outstanding. To close it afterwards they reopen the modal, enter 0, tick, and give a note — this is what MARK ZERO now feeds. The resulting zero-quantity receipt row is intentional: it is the audit record of who closed the line and why. Do not suppress it.
+**Recovery path.** If the operator forgets to tick on the final short receipt, the line sits open at 1,000 outstanding. To close it afterwards they reopen the modal, enter 0, tick, and give a note. This takes the close-only path in section 2d — no receipt row is written; the audit record lives in the window's `ClosedBy` / `ClosedAt` / `ClosedReason`.
 
 ---
 
@@ -292,7 +322,9 @@ Rules:
 
 **Note field.** Label flips from `NOTE (OPTIONAL)` to `NOTE · REQUIRED` when the checkbox is ticked. Red border and inline message if submitted empty. Reverts to optional if the box is unticked.
 
-**Quick buttons.** FILL OUTSTANDING / ½ OUTSTANDING / MARK ZERO stay. ½ OUTSTANDING produces a normal partial and must **not** force the checkbox. MARK ZERO produces qty 0, which now requires the tick plus a note.
+**Quick buttons.** FILL OUTSTANDING / ½ OUTSTANDING / MARK ZERO stay. ½ OUTSTANDING produces a normal partial and must **not** force the checkbox. MARK ZERO produces qty 0, which requires the tick plus a note and routes to the close-only path.
+
+**First, find out what MARK ZERO does today.** Zero of 240 existing receipts have `QtyReceived = 0`, and `CK_Receipts_QtyNonZero` forbids it — so the button has never successfully recorded anything. Establish its current behaviour (silent failure? disabled Confirm? a 500?) and report it before redesigning around it.
 
 **Keyboard.** ⌘+Enter must obey the same gating as the button. It must not bypass validation.
 
@@ -307,11 +339,13 @@ Cover each of these:
 3. Two sequential partials that together equal expected → line completes normally, `IsClosed` untouched by the variance path.
 4. **Full sequence 3,000 → 1,000 → 1,500 against expected 5,000.** First two save unticked as partials; the third has Confirm disabled until ticked, then closes the line with `VarianceQty = +500` and total received 5,500.
 5. **Full sequence 3,000 → 1,000 against expected 5,000, second receipt ticked** → line closed, `VarianceQty = −1,000`, total received 4,000, line gone from the pending queue. Re-run with the second receipt unticked → line stays open at 1,000 outstanding.
-6. **Recovery:** on that open 1,000, submit qty 0 ticked with a note → line closes, zero-quantity receipt row persists with `VarianceQty = −1,000`.
+6. **Recovery:** on that open 1,000, submit qty 0 ticked with a note → line closes via the close-only path, **no `Receipts` row is created**, and the window carries `ClosedBy` / `ClosedAt` / `ClosedReason`.
 7. Qty < outstanding, ticked, note filled → saves, line `IsClosed = 1`, disappears from the pending queue, remaining quantity written off.
 8. Qty > outstanding, unticked → Confirm disabled; API returns `400 OVER_RECEIPT_NOT_ACCEPTED` when called directly.
 9. Qty > outstanding, ticked, note filled → saves, outstanding reads 0 (never negative), line closed.
-10. Qty = 0, ticked, note filled → saves, line closed, `VarianceQty` = negative full outstanding.
+10. Qty = 0, ticked, note filled → line closed with no receipt row. Assert `SELECT COUNT(*) FROM Receipts WHERE QtyReceived = 0` is still zero afterwards.
+10b. **Reopen:** a zero-closed line is reopened via the section 2d action → `IsClosed` and all three `Closed*` columns cleared, outstanding restored, line back in the pending queue, audit row written.
+10c. **Ledger constraints untouched:** `CK_Receipts_QtyNonZero` and `CK_Receipts_ReversalIntegrity` have the same definitions after db/047 as before it.
 11. Qty = 0, unticked → `400`.
 12. Ticked but note blank → `400 VARIANCE_REASON_REQUIRED`.
 13. Qty typed over, then corrected back to an exact match → checkbox hides and unticks, note reverts to optional, save proceeds.
@@ -332,7 +366,7 @@ Reproduce the current blocking behaviour live before changing it, so the before/
 
 ## 9. Out of scope
 
-- Re-opening a closed line.
+- Bulk reopen, or reopening from any surface other than the modal.
 - Over-receipt caps or tolerance percentages.
 - Restricting who may accept variance (see open question below).
 - Any change to the signature/close flow or the DN tab filter rule.
