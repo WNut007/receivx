@@ -249,7 +249,7 @@ public class ReceiptService : IReceiptService
     {
         var hints = withLock ? "WITH (UPDLOCK, ROWLOCK)" : "";
         var sql = $@"
-            SELECT Id, ExpectedQty, ReceivedQty, IsClosed
+            SELECT Id, ExpectedQty, ReceivedQty, IsClosed, ClosedReason
             FROM   dbo.PullItemWindows {hints}
             WHERE  PullItemId = @PullItemId AND HourOfDay = @HourOfDay;";
 
@@ -714,6 +714,111 @@ public class ReceiptService : IReceiptService
     }
 
     // ============================================================================
+    // db/047 §2d — reopen a closed window
+    //
+    // A zero-quantity close writes no Receipts row, so there is nothing to reverse and
+    // without this the line would be closed permanently with no route back. Kept
+    // deliberately minimal: one endpoint, one reason box, no bulk reopen, no reopen from
+    // list views. Re-closing is just an ordinary variance receipt.
+    //
+    // LOCK ORDER (canonical, see the class summary): Pulls → PullItemWindows. It touches
+    // neither Receipts nor PurchaseOrderLines — the quantities are untouched, only the
+    // close flags — so it takes steps 2 and 3 and stops.
+    // ============================================================================
+    public async Task<ReopenWindowResult> ReopenWindowAsync(ReopenWindowRequest req, CancellationToken ct = default)
+    {
+        var reason = (req.Reason ?? "").Trim();
+        if (reason.Length == 0)
+            throw new ValidationException(
+                "A reason is required to reopen a line — reopening is a correction and must be attributable.",
+                "REOPEN_REASON_REQUIRED");
+        if (req.HourOfDay > 23) throw new ValidationException("HourOfDay must be 0–23");
+
+        var actorId   = CurrentUserId();
+        var sessionWh = SessionWarehouseId();
+        var isAdmin   = SessionIsAdmin();
+
+        using var conn = _factory.Create();
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            // ----- 1. Lock the parent pull (canonical step 2) -----
+            var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
+                SELECT pi.Id AS PullItemId, pi.ItemCode,
+                       p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
+                       p.LockPoByPull, p.LockHourCap
+                FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
+                INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
+                WHERE  pi.Id = @PullItemId;",
+                new { req.PullItemId }, transaction: tx, cancellationToken: ct))
+                ?? throw new NotFoundException("Pull item not found");
+
+            // §7.12 — a closed pull is read-only. Reopening a window inside one would put
+            // the pull back into a state its close gate has already signed off on.
+            if (string.Equals(pullCtx.PullStatus, "closed", StringComparison.Ordinal))
+                throw new BusinessException(
+                    "Pull is closed. Reopen the pull before reopening a line within it.",
+                    "PULL_CLOSED");
+
+            // Same warehouse rule as CancelAsync.
+            if (!isAdmin && sessionWh != pullCtx.WarehouseId)
+                throw new ForbiddenException("You do not have access to this pull");
+
+            // ----- 2. Window (canonical step 3). Read first so a missing window is a clean
+            // 404 rather than an ambiguous 409 from the conditional update below. -----
+            var window = await ReadWindowStateAsync(conn, transaction: tx, withLock: true,
+                                                    pullCtx, req.HourOfDay, ct);
+
+            // Conditional on IsClosed = 1, mirroring the close side's WHERE IsClosed = 0.
+            // Rowcount 0 means it was not closed, or another operator reopened it between
+            // the read above and here.
+            var reopened = await conn.ExecuteAsync(new CommandDefinition(@"
+                UPDATE dbo.PullItemWindows
+                   SET IsClosed     = 0,
+                       ClosedAt     = NULL,
+                       ClosedBy     = NULL,
+                       ClosedReason = NULL
+                 WHERE PullItemId = @PullItemId
+                   AND HourOfDay  = @HourOfDay
+                   AND IsClosed   = 1;",
+                new { req.PullItemId, req.HourOfDay },
+                transaction: tx, cancellationToken: ct));
+
+            if (reopened == 0)
+                throw new BusinessException(
+                    $"Hour {req.HourOfDay:D2}:00 on item {pullCtx.ItemCode} is not closed, so there is nothing to reopen.",
+                    "LINE_NOT_CLOSED");
+
+            // Carry the prior close reason into the audit line so the trail reads as a pair:
+            // what it was closed for, and what it was reopened for.
+            var priorReason = string.IsNullOrWhiteSpace(window.ClosedReason)
+                ? "(no reason recorded)"
+                : window.ClosedReason;
+
+            await _audit.WriteAsync(conn, tx, "window-reopen", "PullItemWindow",
+                $"pi={req.PullItemId};hour={req.HourOfDay}",
+                $"Reopened hour {req.HourOfDay:D2}:00 on {pullCtx.ItemCode} (pull {pullCtx.PullNumber}). " +
+                $"Reason: {reason}. Prior close reason: {priorReason}", ct);
+
+            tx.Commit();
+
+            return new ReopenWindowResult
+            {
+                PullItemId     = req.PullItemId,
+                HourOfDay      = req.HourOfDay,
+                IsClosed       = false,
+                NewOutstanding = window.Outstanding,
+            };
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
+    // ============================================================================
     // §7.3 reverse-entry cancel
     //
     // LOCK ORDER (canonical, see the class summary): Receipts → Pulls →
@@ -995,6 +1100,7 @@ public class ReceiptService : IReceiptService
         public int ExpectedQty { get; set; }
         public int ReceivedQty { get; set; }
         public bool IsClosed { get; set; }
+        public string? ClosedReason { get; set; }
 
         /// <summary>MAX(0, Expected - Received) — never negative (§5).</summary>
         public int Outstanding => Math.Max(0, ExpectedQty - ReceivedQty);

@@ -90,6 +90,35 @@ public class ReceivePreviewResult
     public string Scope { get; set; } = "warehouse-wide";  // "warehouse-wide" | "pull-locked"
 }
 
+/// <summary>
+/// db/047 §2d — POST /api/receipts/reopen body. Clears the close flags on one window.
+///
+/// Exists because a zero-quantity close writes no <c>Receipts</c> row, so there is nothing
+/// to reverse: without this the line would be permanently closed with no route back. It is
+/// deliberately available for ANY closed window, not only zero-closed ones — a line closed
+/// by a short receipt can be reopened this way too, and reversing that receipt remains the
+/// other route.
+///
+/// The window is identified by (PullItemId, HourOfDay) because <c>Receipts</c> carries no
+/// PullItemWindowId and the rest of the receive path keys on the same pair.
+/// </summary>
+public class ReopenWindowRequest
+{
+    public Guid PullItemId { get; set; }
+    public byte HourOfDay { get; set; }
+
+    /// <summary>Required. Reopening is a correction and must be attributable (§2d).</summary>
+    public string Reason { get; set; } = "";
+}
+
+public class ReopenWindowResult
+{
+    public Guid PullItemId { get; set; }
+    public byte HourOfDay { get; set; }
+    public bool IsClosed { get; set; }        // always false on success
+    public int NewOutstanding { get; set; }   // MAX(0, Expected - Received)
+}
+
 /// <summary>POST /api/receipts/{id}/cancel body. Reason is required (§7.3).</summary>
 public class CancelRequest
 {

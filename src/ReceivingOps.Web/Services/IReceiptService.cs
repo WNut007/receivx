@@ -35,6 +35,13 @@ public interface IReceiptService
     Task<ReceiveResult> ReceiveAsync(ReceiveRequest req, CancellationToken ct = default);
 
     /// <summary>
+    /// db/047 §2d — clears IsClosed / ClosedAt / ClosedBy / ClosedReason on one window.
+    /// Conditional on the window currently being closed; a rowcount of 0 raises 409.
+    /// Requires a reason, which is written to the audit log.
+    /// </summary>
+    Task<ReopenWindowResult> ReopenWindowAsync(ReopenWindowRequest req, CancellationToken ct = default);
+
+    /// <summary>
     /// §7.3 reverse-entry cancel. Locks the original receipt + the same PO line it
     /// consumed, inserts a negative-qty Receipt with ReversesReceiptId set, restores
     /// qty to the original's PO line (no FIFO logic on the way back), auto-reopens

@@ -15,15 +15,36 @@
 # capacity in WH-01) with a tight 200-pcs window at hour 14, then exercise
 # the cap edges.
 #
-# 8 cases:
-#   1. Strict pull, receive 100 on 200-cap → 200 OK
-#   2. Strict pull at 100/200, receive 300 → 409 "Insufficient hour capacity"
-#   3. Strict pull, receive remaining 100 → 200 OK (window now exactly full)
-#   4. Strict pull, receive 1 on full window → 409 (zero remaining)
-#   5. Preview WITH ?hour= on full window → 409 (Preview matches Receive)
-#   6. Preview WITHOUT ?hour= on full window → 200 (back-compat, skip check)
-#   7. Loose pull (LockHourCap=false), receive 500 on 200-cap → 200 OK
-#   8. Legacy over-state — SQL poke ReceivedQty=300 on strict pull, receive 1 → 409
+# 9 cases:
+#   1.  Strict pull, receive 100 on 200-cap → 200 OK
+#   2.  Strict pull at 100/200, receive 300 → 409 "Insufficient hour capacity"
+#   3.  Strict pull, receive remaining 100 → 200 OK (window now exactly full)
+#   4.  Strict pull, receive 1 on full window → 409 (zero remaining)
+#   5.  Preview WITH ?hour= on full window → 409 (Preview matches Receive)
+#   6.  Preview WITHOUT ?hour= on full window → 200 (back-compat, skip check)
+#   7a. Loose pull, over-receipt UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED
+#   7b. Loose pull, over-receipt TICKED + note → 200, line closed, +VarianceQty
+#   8.  Legacy over-state — SQL poke ReceivedQty=300 on strict pull, receive 1 → 409
+#
+# WHY CASE 7 CHANGED (db/047, brief §2f — "the lock stays a lock")
+# ----------------------------------------------------------------
+# Case 7 used to assert "Loose pull, receive 500 on a 200-cap window → 200 OK
+# (cap not enforced)". db/047 replaced that: on a pull with LockHourCap=false an
+# over-receipt is now permitted ONLY with an explicit accept-variance tick, and
+# ticking also closes the line. Unticked it returns 400 OVER_RECEIPT_NOT_ACCEPTED.
+#
+# The old assertion was testing a path no operator could reach. `receiving.js:752`
+# did `Math.min(inputVal, activeMax)`, silently clamping every quantity to
+# outstanding regardless of the lock — so the loose-pull over-receipt only ever
+# happened via a direct API call. db/047 removes that clamp (it was silent data
+# loss: type 1,500, get 1,000 recorded, no error) and replaces the unreachable
+# implicit path with an explicit, audited one.
+#
+# What did NOT change, and is still asserted by cases 1-6 and 8: with
+# LockHourCap=true the cap is absolute. VarianceAccepted does not override it —
+# see smoke-variance-preview-confirm-agreement.ps1, which asserts that a LOCKED
+# pull refuses an over-receipt even when the tick is set. A short close remains
+# available on both settings: a cap constrains how much may arrive, not how little.
 #
 # Assumes ReceivingOps.Web is running on http://localhost:5213.
 
@@ -115,13 +136,15 @@ function NewSmokePullWithItem($lockHourCap, $kind, $windowQty = 200, $hour = 14)
     }
 }
 
-function Receive($pullItemId, $hour, $qty, $session = $sv) {
+# db/047 added varianceAccepted + note. Both default to the pre-db/047 values, so
+# the cases above that call Receive with three arguments are unchanged.
+function Receive($pullItemId, $hour, $qty, $variance = $false, $note = $null) {
     $body = @{
         pullItemId = $pullItemId; hourOfDay = $hour; qty = $qty;
         lotBatch = $null; palletId = $null; binLocation = $null;
-        qcStatus = 'pending'; note = $null
+        qcStatus = 'pending'; note = $note; varianceAccepted = $variance
     } | ConvertTo-Json
-    return Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session
+    return Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $sv
 }
 
 # ----------------------------------------------------------------------------
@@ -204,13 +227,32 @@ if (-not $preview.allocations) { Fail "Preview returned no allocations" }
 OK "Preview returns allocations when hour omitted (skip cap check)"
 
 # ----------------------------------------------------------------------------
-# 7. Loose pull (LockHourCap=false) — over-cap receive → 200 OK
+# 7a. Loose pull (LockHourCap=false) — over-receipt UNTICKED → 400
 # ----------------------------------------------------------------------------
-Step "Loose pull, receive 500 on 200-cap window → 200 OK (cap not enforced)"
+Step "Loose pull, receive 500 on 200-cap window UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED"
 $loose = NewSmokePullWithItem $false 'LOOSE-A'
-$r = Receive $loose.ItemId $loose.Hour 500
-if ($r.newReceivedQty -ne 500) { Fail "Loose expected newReceivedQty=500, got $($r.newReceivedQty)" }
-OK "Loose pull receive 500 over 200-cap allowed (§7.1 legacy behavior preserved)"
+$body = @{
+    pullItemId = $loose.ItemId; hourOfDay = $loose.Hour; qty = 500;
+    lotBatch = $null; palletId = $null; binLocation = $null;
+    qcStatus = 'pending'; note = $null; varianceAccepted = $false
+} | ConvertTo-Json
+$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 400
+if (-not $r -or $r.Wrong) { Fail "Expected 400 on unticked loose over-receipt, got $($r.Status)" }
+if ($r.Title -notmatch 'exceeds the 200 pcs outstanding') { Fail "Title wrong: $($r.Title)" }
+OK "400 — an over-receipt needs the tick even when the hour cap is off"
+
+# ----------------------------------------------------------------------------
+# 7b. Loose pull — over-receipt TICKED + note → 200, line closed, +VarianceQty
+# ----------------------------------------------------------------------------
+Step "Loose pull, receive 500 on 200-cap window TICKED → 200, line closed, VarianceQty=+300"
+$r = Receive $loose.ItemId $loose.Hour 500 $true 'over-delivery accepted by smoke'
+if ($r.newReceivedQty -ne 500) { Fail "Expected newReceivedQty=500, got $($r.newReceivedQty)" }
+if ($r.varianceQty -ne 300)    { Fail "Expected varianceQty=+300 (500 entered vs 200 outstanding), got $($r.varianceQty)" }
+if ($r.isClosed -ne $true)     { Fail "Expected isClosed=true after an accepted over-receipt, got $($r.isClosed)" }
+if ($r.newOutstanding -ne 0)   { Fail "Expected newOutstanding=0 (never negative), got $($r.newOutstanding)" }
+$dbClosed = (sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q "SET NOCOUNT ON; SELECT CAST(IsClosed AS int) FROM dbo.PullItemWindows WHERE PullItemId='$($loose.ItemId)' AND HourOfDay=$($loose.Hour);" 2>&1).Trim()
+if ($dbClosed -ne '1') { Fail "PullItemWindows.IsClosed is '$dbClosed', expected 1" }
+OK "Over-receipt recorded at the entered figure, line closed, outstanding floored at 0"
 
 # ----------------------------------------------------------------------------
 # 8. Legacy over-state on strict pull — SQL poke ReceivedQty=300, receive 1 → 409

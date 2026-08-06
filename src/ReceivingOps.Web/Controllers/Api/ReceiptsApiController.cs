@@ -73,6 +73,25 @@ public class ReceiptsApiController : ControllerBase
         catch (BusinessException ex)    { return ProblemWithCode(ex.Message, 409, ex.Code); }
     }
 
+    // db/047 §2d POST /api/receipts/reopen — clear the close flags on one window.
+    //
+    // Same [Authorize(Policy = "CanReceive")] as the rest of this controller: reopening is
+    // part of doing the receiving, not an administrative override. Warehouse scoping and
+    // the closed-pull rule are enforced in the service, as they are for cancel.
+    [HttpPost("reopen")]
+    public async Task<ActionResult<ReopenWindowResult>> ReopenWindow([FromBody] ReopenWindowRequest req, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _receipts.ReopenWindowAsync(req, ct);
+            return Ok(result);
+        }
+        catch (ValidationException ex)  { return ProblemWithCode(ex.Message, 400, ex.Code); }
+        catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
+        catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)    { return ProblemWithCode(ex.Message, 409, ex.Code); }
+    }
+
     // §7.3 POST /api/receipts/{id}/cancel
     [HttpPost("{id:guid}/cancel")]
     public async Task<ActionResult<CancelResult>> Cancel(Guid id, [FromBody] CancelRequest req, CancellationToken ct)

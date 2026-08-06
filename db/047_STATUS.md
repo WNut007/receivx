@@ -46,21 +46,58 @@ is built from this branch plus what is now baselined in `def8f2e`).
   absent, both ledger CHECKs intact. Re-run is a clean no-op.
   **NOT applied to production.**
 
+- **Service layer done** (`4c3b7f5`, `e4cd1b1`) — variance write path, FIFO-slice
+  rule, `MAX(0, …)`, `IsClosed = 0` on all five queries, conditional close,
+  zero-close with no `Receipts` row, multi-window guard, `CancelAsync` reopen +
+  canonical lock order, error codes in `ProblemDetails.Extensions["code"]`.
+- **§2f the lock stays a lock** — `LockHourCap=true` refuses over-receipt always
+  (409, tick does NOT override); `LockHourCap=false` needs the tick (400
+  otherwise). Short close unaffected on both. `PreviewAsync` applies the
+  identical rule and returns the identical code.
+- **Reopen action done** (§2d) — `POST /api/receipts/reopen`, `CanReceive`,
+  reason required + audited, conditional on `IsClosed = 1`, works for any
+  closed window.
+- **Verified: the receive path has exactly one caller.** `ReceiveAsync` ←
+  `ReceiptsApiController.cs:47` only; `IReceiptService` injected only there;
+  `dbo.Receipts` written only by `ReceiptService`. No job/import/WDT/service
+  writes receipts, so the §2f rule change reaches nothing but the UI.
+
 ## Not done
 
-1. Service layer → API → UI → tests (§8, 23 cases). Not started.
-2. `db/047` has not been run on production. Deploy order: migration first,
+1. **UI** — clamp removal (`receiving.js:752`), checkbox, live variance
+   readout, quick-fill `input` events (§2e), note-required styling,
+   ⌘+Enter gating, reopen dialog.
+2. Remaining §8 cases (23 total; the five-query, agreement, reopen and
+   hour-cap suites cover a good part already).
+3. `db/047` has not been run on production. Deploy order: migration first,
    then DLL, then app-pool restart. `deploy.ps1` does NOT run migrations.
 
 ## Exact next step
 
-Service layer. In order: the five outstanding queries each get
-`AND IsClosed = 0`; the close path (conditional `UPDATE … WHERE IsClosed = 0`,
-rowcount 0 → 409); the zero-close branch that writes no `Receipts` row and
-needs the `qty <= 0` guard at `ReceiptService.cs:220` carved out; the reopen
-action; the `IsClosed` reset in `CancelAsync` after step 8 (`:559`); and the
-canonical lock-order comment on both `CancelAsync` and `EnforceHourCapAsync`
-before either is touched.
+UI pass. Start with the clamp at `receiving.js:752` — it is the live data-loss
+defect, not merely a limit.
+
+## Smoke suite for this change
+
+| Smoke | State |
+|---|---|
+| `smoke-variance-outstanding-queries` | 8 assertions, PASS |
+| `smoke-variance-preview-confirm-agreement` | 20 pairs, PASS |
+| `smoke-variance-reopen` | 11 assertions, PASS |
+| `smoke-hourcap-6.2` (case 7 → 7a/7b) | 9 cases, PASS |
+
+**Known pre-existing red, NOT caused by this change:** `smoke-close-reopen`
+fails at its fixture-reset step because `PL-2843` does not exist — `db/035`'s
+Phase-14 wipe removed the `db/006` seed pulls (only `PL-2847` survives) and
+they were never re-seeded. Same family as the SUMMARY PO gap below. It is one
+of the ~13 seed-gap smokes CLAUDE.md already tracks.
+
+**Dev fixture note:** `db/014`'s seeded SUMMARY PO coverage in WH-01 was also
+wiped by `db/035`. `smoke-hourcap-6.2` documents a dependency on it, so dev now
+carries `PO-SEED-SUMMARY-WH01` (50,000) to restore it. These smokes never
+restore `PurchaseOrderLines.ReceivedQty` on cleanup, so shared PO capacity is
+consumed a little on every run — the newer variance smokes seed their own PO
+per case to avoid that.
 
 ## Decisions locked (do not relitigate)
 
