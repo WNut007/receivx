@@ -12,6 +12,24 @@ public class ReceiveRequest
     public string? BinLocation { get; set; }
     public string? QcStatus { get; set; }   // null → defaults to 'pending'
     public string? Note { get; set; }
+
+    /// <summary>
+    /// db/047 — operator ticked "this is the final receipt; close the line at this quantity".
+    /// Defaults false, so existing callers that never send it keep today's behaviour exactly.
+    ///
+    /// Semantics (brief §6, and deliberately asymmetric):
+    ///   • Qty &lt; outstanding, false → ordinary partial, line stays open. Unchanged.
+    ///   • Qty &lt; outstanding, true  → short close: line closed at the actual figure.
+    ///   • Qty &gt; outstanding, false → refused 400 OVER_RECEIPT_NOT_ACCEPTED.
+    ///   • Qty &gt; outstanding, true  → over-receipt recorded, line closed.
+    ///   • Qty = 0, true             → close-only. Writes NO Receipts row (§2d).
+    ///
+    /// Under is ambiguous ("the rest arrives Thursday" vs "that's all we're getting"), so the
+    /// flag stays optional there and must never be inferred. Over has one reading, so the
+    /// flag is mandatory. <see cref="Note"/> is required whenever this is true — it is the
+    /// audit reason and is copied to PullItemWindows.ClosedReason.
+    /// </summary>
+    public bool VarianceAccepted { get; set; }
 }
 
 /// <summary>One slice of a FIFO-allocated receive — exactly one PO line consumed.</summary>
@@ -35,6 +53,23 @@ public class ReceiveResult
     public int TotalQty { get; set; }            // SUM of Allocations[].Qty
     public int NewReceivedQty { get; set; }      // post-tx PullItemWindows.ReceivedQty for the target hour
     public bool FullyReceived { get; set; }      // whether the pull is now fully received
+
+    /// <summary>
+    /// db/047 — recomputed outstanding for the target window AFTER this receive, as
+    /// MAX(0, Expected - Received). Never negative, even on an over-receipt (§5).
+    /// Returned so the caller can update without a refetch (§6).
+    /// </summary>
+    public int NewOutstanding { get; set; }
+
+    /// <summary>db/047 — the window's IsClosed state after this receive.</summary>
+    public bool IsClosed { get; set; }
+
+    /// <summary>
+    /// db/047 — signed variance actually persisted: positive = over, negative = short,
+    /// null when this was an ordinary partial or an exact completion. Set on exactly one
+    /// Receipts row per confirm even when the FIFO walk splits across PO lines (§2c).
+    /// </summary>
+    public int? VarianceQty { get; set; }
 }
 
 /// <summary>

@@ -5,6 +5,24 @@ using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Services;
 
+/// <summary>
+/// §7.2 receive / §7.3 cancel.
+///
+/// CANONICAL LOCK ACQUISITION ORDER — db/047. Every write path in this class MUST
+/// take locks in this order, and must not take a later lock before an earlier one:
+///
+///     1. dbo.Receipts             (UPDLOCK, ROWLOCK)  — cancel only; receive inserts
+///     2. dbo.Pulls                (UPDLOCK, ROWLOCK)
+///     3. dbo.PullItemWindows      (UPDLOCK, ROWLOCK)
+///     4. dbo.PurchaseOrderLines   (UPDLOCK, HOLDLOCK, ROWLOCK)
+///
+/// Why it matters: before db/047, ReceiveAsync took PullItemWindows (via the hour-cap
+/// check) BEFORE PurchaseOrderLines, while CancelAsync took PurchaseOrderLines first and
+/// then blind-UPDATEd the window with no lock at all. That inversion was latent only
+/// because cancel never locked the window. db/047 makes cancel lock the window — to clear
+/// IsClosed — so without a single order the two paths would deadlock under concurrent
+/// receive+cancel on the same SKU (brief §2c, regression test 15).
+/// </summary>
 public class ReceiptService : IReceiptService
 {
     private static readonly HashSet<string> AllowedQcStatus =
@@ -16,12 +34,18 @@ public class ReceiptService : IReceiptService
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
     private readonly IHttpContextAccessor _httpContext;
+    private readonly ILogger<ReceiptService> _logger;
 
-    public ReceiptService(IDbConnectionFactory factory, IAuditService audit, IHttpContextAccessor httpContext)
+    public ReceiptService(
+        IDbConnectionFactory factory,
+        IAuditService audit,
+        IHttpContextAccessor httpContext,
+        ILogger<ReceiptService> logger)
     {
         _factory = factory;
         _audit = audit;
         _httpContext = httpContext;
+        _logger = logger;
     }
 
     // ============================================================================
@@ -136,13 +160,39 @@ public class ReceiptService : IReceiptService
         int requestedQty,
         CancellationToken ct)
     {
+        var window = await ReadWindowStateAsync(conn, transaction, withLock, pullCtx, hourOfDay, ct);
+
+        if (requestedQty > window.Outstanding)
+            throw new BusinessException(
+                $"Insufficient hour capacity. Hour {hourOfDay:D2}:00 expected {window.ExpectedQty} pcs, " +
+                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.");
+
+        return window.Outstanding;
+    }
+
+    // db/047 — single reader for the (PullItemId, HourOfDay) window. Lock step 3 of the
+    // canonical order; pass withLock:true only from inside a transaction that has already
+    // taken the Pulls lock.
+    //
+    // Outstanding is MAX(0, Expected - Received) per §5: an over-received window must never
+    // surface a negative outstanding anywhere in the UI or in exports. Note the raw
+    // subtraction CAN be negative — db/010 dropped CK_PIW_Caps, so the schema permits
+    // ReceivedQty > ExpectedQty and has done since v2.
+    private static async Task<WindowState> ReadWindowStateAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        bool withLock,
+        PullItemContext pullCtx,
+        byte hourOfDay,
+        CancellationToken ct)
+    {
         var hints = withLock ? "WITH (UPDLOCK, ROWLOCK)" : "";
         var sql = $@"
-            SELECT ExpectedQty, ReceivedQty
+            SELECT Id, ExpectedQty, ReceivedQty, IsClosed
             FROM   dbo.PullItemWindows {hints}
             WHERE  PullItemId = @PullItemId AND HourOfDay = @HourOfDay;";
 
-        var window = await conn.QuerySingleOrDefaultAsync<WindowCapRow>(new CommandDefinition(
+        var window = await conn.QuerySingleOrDefaultAsync<WindowState>(new CommandDefinition(
             sql, new { pullCtx.PullItemId, HourOfDay = hourOfDay },
             transaction: transaction, cancellationToken: ct));
 
@@ -151,13 +201,7 @@ public class ReceiptService : IReceiptService
                 $"Hour {hourOfDay:D2}:00 has no planned window on item {pullCtx.ItemCode}. " +
                 $"Add the window first (or pick a different hour).");
 
-        var remaining = window.ExpectedQty - window.ReceivedQty;
-        if (requestedQty > remaining)
-            throw new BusinessException(
-                $"Insufficient hour capacity. Hour {hourOfDay:D2}:00 expected {window.ExpectedQty} pcs, " +
-                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.");
-
-        return remaining;
+        return window;
     }
 
     // Builds the FIFO read query. SQL is fixed strings; the only branch is appended
@@ -216,9 +260,28 @@ public class ReceiptService : IReceiptService
     // ============================================================================
     public async Task<ReceiveResult> ReceiveAsync(ReceiveRequest req, CancellationToken ct = default)
     {
-        // ----- 0. Validation -----
-        if (req.Qty <= 0)        throw new ValidationException("Quantity must be positive");
+        // ----- 0. Validation (shape only; anything needing the DB happens under lock) -----
+        //
+        // db/047 — the qty guard is now conditioned on VarianceAccepted, not on qty alone.
+        // Qty = 0 with the flag set is the close-only path (§2d): it records that nothing
+        // more is coming and closes the window. Without the flag, zero still means nothing
+        // and is still refused — a zero-quantity partial records literally nothing.
+        // Negative is always refused.
+        if (req.Qty < 0)
+            throw new ValidationException("Quantity cannot be negative");
+        if (req.Qty == 0 && !req.VarianceAccepted)
+            throw new ValidationException(
+                "A zero quantity records nothing. Tick 'accept variance' to close the line short.",
+                "ZERO_QTY_WITHOUT_VARIANCE");
+
         if (req.HourOfDay > 23)  throw new ValidationException("HourOfDay must be 0–23");
+
+        // The note is the audit reason and is copied to PullItemWindows.ClosedReason, so it
+        // is mandatory whenever variance is accepted (§6).
+        if (req.VarianceAccepted && string.IsNullOrWhiteSpace(req.Note))
+            throw new ValidationException(
+                "A note is required when accepting variance — it is the audit reason.",
+                "VARIANCE_REASON_REQUIRED");
 
         var qcStatus = req.QcStatus ?? "pending";
         if (!AllowedQcStatus.Contains(qcStatus))
@@ -252,58 +315,139 @@ public class ReceiptService : IReceiptService
             if (!isAdmin && sessionWh != pullCtx.WarehouseId)
                 throw new ForbiddenException("You do not have access to this pull");
 
-            // v2.1 Phase 6 — hour-cap check BEFORE the PO walk (per spec order):
-            //   1. Pull-closed (above)
-            //   2. Hour cap (here)            ← new in 6.2
-            //   3. PO availability (below)
-            // Localized error first, and skipping the PO line locks when the window
-            // will reject avoids unnecessary contention. Holds UPDLOCK on the window
-            // row so a concurrent receive can't race past the cap.
-            if (pullCtx.LockHourCap)
-                await EnforceHourCapAsync(conn, transaction: tx, withLock: true,
-                                          pullCtx, req.HourOfDay, req.Qty, ct);
+            // ----- 1b. Window state — lock step 3 of the canonical order. -----
+            // Taken BEFORE the PO lines (step 4) and before any quantity decision, so a
+            // concurrent receive cannot race past the outstanding figure we are about to
+            // validate against.
+            var window = await ReadWindowStateAsync(conn, transaction: tx, withLock: true,
+                                                    pullCtx, req.HourOfDay, ct);
+
+            // db/047 §5 — a closed window is read-only. Checked before anything else that
+            // could mutate, so a late arrival against a line someone already closed is
+            // refused rather than silently appended.
+            if (window.IsClosed)
+                throw new BusinessException(
+                    $"This line was already closed at hour {req.HourOfDay:D2}:00 and cannot accept further receipts.",
+                    "LINE_ALREADY_CLOSED");
+
+            // db/047 §2c — the accept-variance guard. Closing one hour slot does not close
+            // the SKU, so variance is offered only when the item has exactly one window.
+            // Enforced here as well as in the UI: the UI hides the checkbox, but a crafted
+            // request must still be refused. Logged at warning because on real ERP data this
+            // has never fired — 2,049 upstream items across 20 hours were all single-window —
+            // so if it ever does, we want to learn it from a log rather than a wrong number.
+            if (req.VarianceAccepted)
+            {
+                var windowCount = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                    "SELECT COUNT(*) FROM dbo.PullItemWindows WHERE PullItemId = @PullItemId;",
+                    new { req.PullItemId }, transaction: tx, cancellationToken: ct));
+
+                if (windowCount > 1)
+                {
+                    _logger.LogWarning(
+                        "Accept-variance refused: PullItem {PullItemId} ({ItemCode}) on pull {PullNumber} has {WindowCount} windows. " +
+                        "Multi-window variance is not supported (db/047 §2c guard).",
+                        req.PullItemId, pullCtx.ItemCode, pullCtx.PullNumber, windowCount);
+
+                    throw new ValidationException(
+                        $"This SKU is scheduled across {windowCount} hour windows. Accepting variance would close only " +
+                        $"the {req.HourOfDay:D2}:00 slot, not the SKU, so it is not supported.",
+                        "MULTI_WINDOW_NOT_SUPPORTED");
+                }
+            }
+
+            var outstanding = window.Outstanding;   // MAX(0, Expected - Received) — never negative
+
+            // §6 — the flag is IGNORED on an exact completion: the line closes through the
+            // existing full-receipt path and VarianceAccepted persists as 0. There is no
+            // variance to record when the quantity lands exactly on outstanding.
+            var variance = req.VarianceAccepted && req.Qty != outstanding;
+
+            // §6 — over-receipt is terminal and has only one reading, so the tick is
+            // mandatory. Under-receipt is ambiguous and stays optional, which is why there
+            // is deliberately no matching guard below outstanding.
+            if (req.Qty > outstanding && !variance)
+                throw new ValidationException(
+                    $"Receiving {req.Qty} pcs exceeds the {outstanding} pcs outstanding at hour {req.HourOfDay:D2}:00. " +
+                    $"Tick 'accept variance' to record the over-delivery and close the line.",
+                    "OVER_RECEIPT_NOT_ACCEPTED");
+
+            // Signed variance measured against outstanding AT THIS MOMENT, never against
+            // Expected (§6 worked examples). Because every preceding partial reduced
+            // outstanding exactly, this equals TotalReceived - Expected for the line.
+            int? varianceQty = variance ? req.Qty - outstanding : null;
+
+            // §2d — a zero-quantity close writes NO Receipts row: the ledger's "a row means
+            // goods moved" invariant is not weakened, and CK_Receipts_QtyNonZero stays intact.
+            // The audit record is the window's ClosedBy/ClosedAt/ClosedReason.
+            var closeOnly = req.Qty == 0;
 
             // ----- 2. Lock all candidate PO lines — FIFO order (lock-aware via pullCtx.LockPoByPull) -----
             // UPDLOCK + HOLDLOCK gives serializable range protection for the FIFO query.
-            var openLines = (await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true,
-                                                       pullCtx, ct)).AsList();
-
-            // §3.5 strict mode: pull is locked but no PO is linked → procurement must act
-            if (pullCtx.LockPoByPull && openLines.Count == 0)
-                throw new BusinessException(
-                    "No PO linked to this pull. Procurement must link a PO before receiving.");
-
-            var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
-            if (totalAvailable < req.Qty)
-                throw new BusinessException(
-                    $"Insufficient PO capacity. Need {req.Qty}, have {totalAvailable} pcs.");
-
-            // ----- 3. Build the allocation plan (FIFO walk) -----
+            // db/047 §2d — the close-only path moves no goods, so it consumes no PO capacity
+            // and takes no PO-line locks. Skipping the walk entirely also means a short close
+            // still works when the PO is exhausted or absent, which is exactly when an
+            // operator needs it.
             var plan = new List<(PoLineAvailability Line, int Take)>();
-            var remaining = req.Qty;
-            foreach (var line in openLines)
+
+            if (!closeOnly)
             {
-                var lineRemaining = line.OrderedQty - line.ReceivedQty;
-                var take = Math.Min(lineRemaining, remaining);
-                if (take > 0)
+                var openLines = (await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true,
+                                                           pullCtx, ct)).AsList();
+
+                // §3.5 strict mode: pull is locked but no PO is linked → procurement must act
+                if (pullCtx.LockPoByPull && openLines.Count == 0)
+                    throw new BusinessException(
+                        "No PO linked to this pull. Procurement must link a PO before receiving.");
+
+                var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
+                if (totalAvailable < req.Qty)
+                    throw new BusinessException(
+                        $"Insufficient PO capacity. Need {req.Qty}, have {totalAvailable} pcs.");
+
+                // ----- 3. Build the allocation plan (FIFO walk) -----
+                var remaining = req.Qty;
+                foreach (var line in openLines)
                 {
-                    plan.Add((line, take));
-                    remaining -= take;
+                    var lineRemaining = line.OrderedQty - line.ReceivedQty;
+                    var take = Math.Min(lineRemaining, remaining);
+                    if (take > 0)
+                    {
+                        plan.Add((line, take));
+                        remaining -= take;
+                    }
+                    if (remaining == 0) break;
                 }
-                if (remaining == 0) break;
             }
 
             // ----- 4. Insert one Receipts row per allocation slice + update PO line cache -----
+            //
+            // db/047 §2c — VarianceAccepted goes on EVERY row this confirm writes, but
+            // VarianceQty on EXACTLY ONE (the first slice). A single confirm can split
+            // across several PO lines; stamping the variance on each would multiply it by
+            // the slice count and make SUM(VarianceQty) over the line wrong. Reversing ANY
+            // of these rows clears IsClosed, which is why the flag — not the quantity — is
+            // what every row carries.
             var allocations = new List<AllocationResult>(plan.Count);
+            var varianceStamped = false;
             foreach (var (line, take) in plan)
             {
+                int? sliceVarianceQty = null;
+                if (variance && !varianceStamped)
+                {
+                    sliceVarianceQty = varianceQty;
+                    varianceStamped  = true;
+                }
+
                 var receiptId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                     INSERT INTO dbo.Receipts
                         (PullItemId, PurchaseOrderId, PurchaseOrderLineId, HourOfDay, QtyReceived,
-                         LotBatch, PalletId, BinLocation, QcStatus, Note, ReceivedBy)
+                         LotBatch, PalletId, BinLocation, QcStatus, Note, ReceivedBy,
+                         VarianceAccepted, VarianceQty)
                     OUTPUT INSERTED.Id
                     VALUES (@PullItemId, @PoId, @PoLineId, @HourOfDay, @Qty,
-                            @LotBatch, @PalletId, @BinLocation, @QcStatus, @Note, @ReceivedBy);",
+                            @LotBatch, @PalletId, @BinLocation, @QcStatus, @Note, @ReceivedBy,
+                            @VarianceAccepted, @VarianceQty);",
                     new
                     {
                         req.PullItemId,
@@ -315,6 +459,8 @@ public class ReceiptService : IReceiptService
                         QcStatus   = qcStatus,
                         req.Note,
                         ReceivedBy = actorId,
+                        VarianceAccepted = variance,
+                        VarianceQty      = sliceVarianceQty,
                     }, transaction: tx, cancellationToken: ct));
 
                 await conn.ExecuteAsync(new CommandDefinition(@"
@@ -354,12 +500,50 @@ public class ReceiptService : IReceiptService
             }
 
             // ----- 6. Update PullItemWindows cache (single +Qty for the hour) -----
-            await conn.ExecuteAsync(new CommandDefinition(@"
-                UPDATE dbo.PullItemWindows
-                   SET ReceivedQty = ReceivedQty + @Qty
-                 WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
-                new { Qty = req.Qty, req.PullItemId, req.HourOfDay },
-                transaction: tx, cancellationToken: ct));
+            // §2d — the close-only path moves no goods, so ReceivedQty is not touched.
+            if (!closeOnly)
+            {
+                await conn.ExecuteAsync(new CommandDefinition(@"
+                    UPDATE dbo.PullItemWindows
+                       SET ReceivedQty = ReceivedQty + @Qty
+                     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
+                    new { Qty = req.Qty, req.PullItemId, req.HourOfDay },
+                    transaction: tx, cancellationToken: ct));
+            }
+
+            // ----- 6b. Close the window when variance was accepted (db/047 §5) -----
+            //
+            // Conditional update, never read-then-write: two operators can have the modal
+            // open on the same SKU at once, and `AND IsClosed = 0` is the only thing that
+            // makes "once per line" actually true rather than merely likely. A rowcount of
+            // 0 means somebody closed it between our read at step 1b and here, so the whole
+            // transaction — including the receipt rows inserted above — rolls back and the
+            // caller gets 409. One without the other is meaningless.
+            if (variance)
+            {
+                var closed = await conn.ExecuteAsync(new CommandDefinition(@"
+                    UPDATE dbo.PullItemWindows
+                       SET IsClosed     = 1,
+                           ClosedAt     = SYSUTCDATETIME(),
+                           ClosedBy     = @ClosedBy,
+                           ClosedReason = @ClosedReason
+                     WHERE PullItemId = @PullItemId
+                       AND HourOfDay  = @HourOfDay
+                       AND IsClosed   = 0;",
+                    new
+                    {
+                        req.PullItemId,
+                        req.HourOfDay,
+                        ClosedBy     = actorId,
+                        ClosedReason = req.Note,
+                    }, transaction: tx, cancellationToken: ct));
+
+                if (closed == 0)
+                    throw new BusinessException(
+                        "This line was closed by another user while you were entering the receipt. " +
+                        "Reload to see the current state.",
+                        "LINE_ALREADY_CLOSED");
+            }
 
             // ----- 7. Update Pulls timing + forward status transitions -----
             // CASE order: NOT EXISTS (no outstanding windows) wins first, so a
@@ -384,6 +568,7 @@ public class ReceiptService : IReceiptService
                                             ON piw.PullItemId = pi.Id
                                     WHERE  pi.PullId = @PullId
                                       AND  pi.Status <> 'canceled'
+                                      AND  piw.IsClosed = 0   -- db/047 §2c query 2
                                       AND  piw.ExpectedQty > piw.ReceivedQty
                                 )
                                 THEN 'fully_received'
@@ -400,16 +585,21 @@ public class ReceiptService : IReceiptService
                 $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}", ct);
 
             // ----- 9. Compute response fields before commit -----
-            var newWindowQty = await conn.QuerySingleAsync<int>(new CommandDefinition(@"
-                SELECT ReceivedQty FROM dbo.PullItemWindows
+            // db/047 §6 — the caller gets the recomputed outstanding and the window's
+            // IsClosed state so it can update without a refetch.
+            var post = await conn.QuerySingleAsync<WindowState>(new CommandDefinition(@"
+                SELECT Id, ExpectedQty, ReceivedQty, IsClosed FROM dbo.PullItemWindows
                 WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
                 new { req.PullItemId, req.HourOfDay }, transaction: tx, cancellationToken: ct));
+
+            var newWindowQty = post.ReceivedQty;
 
             var outstandingWindows = await conn.QuerySingleAsync<int>(new CommandDefinition(@"
                 SELECT COUNT(*) FROM dbo.PullItems pi
                 INNER JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
                 WHERE pi.PullId = @PullId
                   AND pi.Status <> 'canceled'
+                  AND piw.IsClosed = 0   -- db/047 §2c query 3
                   AND piw.ExpectedQty > piw.ReceivedQty;",
                 new { pullCtx.PullId }, transaction: tx, cancellationToken: ct));
 
@@ -436,6 +626,9 @@ public class ReceiptService : IReceiptService
                 TotalQty       = req.Qty,
                 NewReceivedQty = newWindowQty,
                 FullyReceived  = outstandingWindows == 0,
+                NewOutstanding = post.Outstanding,   // MAX(0, …) — never negative even on over-receipt
+                IsClosed       = post.IsClosed,
+                VarianceQty    = varianceQty,
             };
         }
         catch
@@ -447,6 +640,13 @@ public class ReceiptService : IReceiptService
 
     // ============================================================================
     // §7.3 reverse-entry cancel
+    //
+    // LOCK ORDER (canonical, see the class summary): Receipts → Pulls →
+    // PullItemWindows → PurchaseOrderLines. db/047 moved the window lock ahead of the
+    // PO-line lock; before that, cancel never locked the window at all and simply
+    // blind-UPDATEd it, so the inversion against ReceiveAsync was invisible. Now that
+    // cancel must also clear IsClosed, taking the window lock in the wrong order would
+    // deadlock against a concurrent receive on the same SKU (regression test 15).
     // ============================================================================
     public async Task<CancelResult> CancelAsync(Guid receiptId, CancelRequest req, CancellationToken ct = default)
     {
@@ -467,7 +667,7 @@ public class ReceiptService : IReceiptService
             var orig = await conn.QuerySingleOrDefaultAsync<ReceiptLockRow>(new CommandDefinition(@"
                 SELECT Id, PullItemId, PurchaseOrderId, PurchaseOrderLineId,
                        HourOfDay, QtyReceived, LotBatch, PalletId, BinLocation,
-                       QcStatus, ReversedById
+                       QcStatus, ReversedById, VarianceAccepted
                 FROM   dbo.Receipts WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = receiptId }, transaction: tx, cancellationToken: ct))
@@ -491,6 +691,14 @@ public class ReceiptService : IReceiptService
 
             if (!isAdmin && sessionWh != pullCtx.WarehouseId)
                 throw new ForbiddenException("You do not have access to this pull");
+
+            // ----- 2b. Lock the window — step 3 of the canonical order, BEFORE the PO line.
+            // Cancel decrements this row at step 8 and (db/047) may clear IsClosed at 8b,
+            // so it must hold the lock rather than blind-updating as it used to.
+            await ReadWindowStateAsync(
+                conn, transaction: tx, withLock: true,
+                new PullItemContext { PullItemId = orig.PullItemId, ItemCode = pullCtx.ItemCode },
+                orig.HourOfDay, ct);
 
             // ----- 3. Lock the PO line the original consumed; capture PoNumber + state for audit + response -----
             var poLine = await conn.QuerySingleAsync<PoLineLockRow>(new CommandDefinition(@"
@@ -557,6 +765,32 @@ public class ReceiptService : IReceiptService
                  WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
                 new { Qty = orig.QtyReceived, orig.PullItemId, orig.HourOfDay },
                 transaction: tx, cancellationToken: ct));
+
+            // ----- 8b. db/047 §2b — reversing a variance receipt reopens the window.
+            //
+            // If the receipt being reversed carried VarianceAccepted, the line was closed by
+            // it. Undoing the quantity while leaving IsClosed set would strand the line:
+            // permanently closed, with its closing quantity gone and no route back. This is
+            // not "unclose as a feature" — it is the existing reversal path continuing to be
+            // correct.
+            //
+            // Deliberately unconditional on which slice this is: one confirm can write
+            // several rows and only one carries VarianceQty, so reversing ANY row with the
+            // flag reopens. Reopening a line that did not strictly need reopening is
+            // recoverable — the operator closes it again. Leaving it closed after part of
+            // the closing quantity was reversed is not.
+            if (orig.VarianceAccepted)
+            {
+                await conn.ExecuteAsync(new CommandDefinition(@"
+                    UPDATE dbo.PullItemWindows
+                       SET IsClosed     = 0,
+                           ClosedAt     = NULL,
+                           ClosedBy     = NULL,
+                           ClosedReason = NULL
+                     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
+                    new { orig.PullItemId, orig.HourOfDay },
+                    transaction: tx, cancellationToken: ct));
+            }
 
             // ----- 9. Update Pulls timing + demote fully_received → in_progress -----
             await conn.ExecuteAsync(new CommandDefinition(@"
@@ -672,12 +906,23 @@ public class ReceiptService : IReceiptService
         public string? BinLocation { get; set; }
         public string QcStatus { get; set; } = "pending";
         public Guid? ReversedById { get; set; }
+
+        /// <summary>db/047 — when true, reversing this row must reopen the parent window.</summary>
+        public bool VarianceAccepted { get; set; }
     }
 
-    private sealed class WindowCapRow
+    // db/047 — supersedes the old WindowCapRow (Expected/Received only). Carries IsClosed
+    // so the receive path can refuse a closed window, and exposes Outstanding as the single
+    // MAX(0, ...) definition rather than letting each caller subtract for itself.
+    private sealed class WindowState
     {
+        public Guid Id { get; set; }
         public int ExpectedQty { get; set; }
         public int ReceivedQty { get; set; }
+        public bool IsClosed { get; set; }
+
+        /// <summary>MAX(0, Expected - Received) — never negative (§5).</summary>
+        public int Outstanding => Math.Max(0, ExpectedQty - ReceivedQty);
     }
 
     private sealed class PoLineLockRow

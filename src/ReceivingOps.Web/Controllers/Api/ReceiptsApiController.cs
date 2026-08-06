@@ -25,6 +25,19 @@ public class ReceiptsApiController : ControllerBase
         _logger = logger;
     }
 
+    // db/047 — carry the machine-readable error code in ProblemDetails.Extensions["code"].
+    // Purely additive: status codes, titles and the RFC `type`/`traceId` fields are
+    // untouched, so existing callers that only read `title` keep working. Built on top of
+    // ControllerBase.Problem(...) rather than a hand-rolled ProblemDetails so the response
+    // shape stays identical to every other endpoint in the app.
+    private ObjectResult ProblemWithCode(string title, int statusCode, string? code)
+    {
+        var result = Problem(title: title, statusCode: statusCode);
+        if (code is not null && result.Value is ProblemDetails pd)
+            pd.Extensions["code"] = code;
+        return result;
+    }
+
     // §7.2 / §3.5 POST /api/receipts — lock-aware FIFO allocator; may emit multiple receipt rows
     [HttpPost]
     public async Task<ActionResult<ReceiveResult>> Receive([FromBody] ReceiveRequest req, CancellationToken ct)
@@ -34,10 +47,10 @@ public class ReceiptsApiController : ControllerBase
             var result = await _receipts.ReceiveAsync(req, ct);
             return Ok(result);
         }
-        catch (ValidationException ex)  { return Problem(title: ex.Message, statusCode: 400); }
+        catch (ValidationException ex)  { return ProblemWithCode(ex.Message, 400, ex.Code); }
         catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
-        catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }
+        catch (BusinessException ex)    { return ProblemWithCode(ex.Message, 409, ex.Code); }
     }
 
     // §7.2 / §3.5 GET /api/receipts/preview?pullItemId=&qty=&hour=

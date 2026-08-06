@@ -69,6 +69,7 @@ public class CloseService : ICloseService
                 INNER JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
                 WHERE pi.PullId = @PullId
                   AND pi.Status <> 'canceled'
+                  AND piw.IsClosed = 0   -- db/047 §2c query 5
                   AND piw.ExpectedQty > piw.ReceivedQty;",
                 new { PullId = pullId }, transaction: tx, cancellationToken: ct));
             if (outstanding > 0)

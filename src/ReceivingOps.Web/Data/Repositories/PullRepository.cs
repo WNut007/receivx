@@ -39,9 +39,13 @@ public class PullRepository : IPullRepository
                 (SELECT COUNT(*) FROM dbo.PullItemWindows piw
                  INNER JOIN dbo.PullItems pi ON pi.Id = piw.PullItemId
                  WHERE pi.PullId = p.Id AND pi.Status <> 'canceled') AS WindowsTotal,
+                -- db/047 §2c query 4 — the dashboard / pull-list badge. Without the
+                -- IsClosed filter a variance-closed line keeps reappearing in the
+                -- operator's worklist forever, which is the bug this change exists to fix.
                 (SELECT COUNT(*) FROM dbo.PullItemWindows piw
                  INNER JOIN dbo.PullItems pi ON pi.Id = piw.PullItemId
                  WHERE pi.PullId = p.Id AND pi.Status <> 'canceled'
+                   AND piw.IsClosed = 0
                    AND piw.ExpectedQty > piw.ReceivedQty) AS WindowsPending,
                 -- Phase 7c: digital-signature progress. One grouped join to the
                 -- tiny PullSignatures table (UQ_PullSig_Party caps it at 3 rows/
