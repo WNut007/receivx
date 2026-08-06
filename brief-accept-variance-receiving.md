@@ -1,7 +1,7 @@
 # Brief: Accept Variance on Goods Receipt
 
 **System:** ReceivingOps, post-v3.5 on `feat/digital-signature` (.NET 8, Dapper, SQL Server)
-**Revision:** rev 2 — corrections from CC's Stage 1 applied (quantity type, index edition, deploy.ps1 scope, migration reconciliation, version)
+**Revision:** rev 4 — grain decided, Stage 2 findings folded in. Where this document contradicts itself, section 2c wins.
 **Screen:** "Receive Goods" modal (quantity entry against a scheduled pull slot)
 **Type:** Schema change + service layer + API + UI
 
@@ -74,6 +74,62 @@ Section 5 says re-opening a closed line is out of scope. That was written withou
 
 ---
 
+## 2c. Decisions from Stage 2 — these override anything earlier in this brief
+
+### Grain: DECIDED — window level, with a guard
+
+`IsClosed` goes on **`dbo.PullItemWindows`**, not `PullItems`.
+
+`Receipts` has no `PullItemWindowId`; it stores `PullItemId + HourOfDay` and resolves the window by that pair. So the conditional close keys on `(PullItemId, HourOfDay)`, not on a single line id.
+
+**The guard:** the accept-variance checkbox is offered **only when the parent `PullItem` has exactly one window.** If a SKU has more than one window, the checkbox is not rendered and the line cannot be variance-closed — behaviour there is unchanged from today. Enforce this **server-side as well as in the UI**: a request carrying `VarianceAccepted = true` for a multi-window `PullItem` returns `400`, code `MULTI_WINDOW_NOT_SUPPORTED`.
+
+Rationale: 99.97% of items hold exactly one window, and all 13 multi-window items are demo or smoke fixtures — every ERP-synced item is 1:1. Option A would have required rewriting the outstanding arithmetic the modal gates on (`ReceiptService.cs:154`), the highest-risk code in this change, to serve a case that does not exist in real data. `BpiPrsSource.cs:155-162` can still produce multi-window items from upstream, so the guard is what keeps that case honest instead of silently mis-closing it. Log a warning when the guard fires — if it ever appears in real ERP data, we want to find out from a log, not from a wrong number.
+
+### The silent clamp is a live defect — fixing it is part of this change
+
+`receiving.js:752` does `const qty = Math.min(inputVal, activeMax)`. Entering 1,500 against 1,000 outstanding POSTs 1,000, with no alert, no error, and the "cannot receive over expected" hint already replaced at `:719` by copy stating over is allowed. **The operator believes they recorded 1,500.**
+
+Removing the clamp is therefore not "relaxing a limit" — it is repairing silent data loss. Every over-entry must either be recorded at the entered figure or refused with a visible error. Nothing may be silently rewritten. This applies equally to the quick-fill buttons at `:735-743`, which currently clamp to `activeMax` by the same route.
+
+### The five outstanding calculations
+
+These are parallel copies, not one helper. All five need the `IsClosed = 0` filter, and **each gets its own named regression test** — a filter added to four of five is a bug that surfaces weeks later:
+
+1. `ReceiptService.cs:154` — the authoritative gate that raises 409. `MAX(0, …)` lands here.
+2. `ReceiptService.cs:387` — `NOT EXISTS` flipping the pull to `fully_received`. Without the filter a short-closed line pins the pull off `fully_received` forever.
+3. `ReceiptService.cs:413` — `outstandingWindows` count feeding `ReceiveResult.FullyReceived`.
+4. `PullRepository.cs:42-45` — `WindowsPending`, the dashboard badge. This is the "reappears in someone's worklist" query.
+5. `CloseService.cs:67-72` — the close gate. Without the filter a short-closed pull can never be closed at all.
+
+Do **not** consolidate these into a shared helper as part of this change. That is a separate refactor on a separate deploy; doing it here widens the blast radius of a deploy that already touches the receipt write path.
+
+PO-side `OrderedQty - ReceivedQty` is a different concept — leave it alone.
+
+Client-side derived outstanding (`receiving.js:56-60, 79-87, 290, 310-312, 428-429, 844, 1064-1068, 1096-1101, 1655-1667`; `dashboard.js:485, 1413`) is display-only but will render a stale outstanding against a closed line. Update it.
+
+### FIFO slices — one confirm writes several Receipt rows
+
+`ReceiptService.cs:301-318` inserts one row per FIFO allocation slice, so a single Confirm can produce several `Receipts` rows, and reversal (`POST /api/receipts/{id}/cancel`) acts on **one row at a time**.
+
+Rule:
+
+- `VarianceAccepted = 1` on **every** row written by that confirm.
+- `VarianceQty` on **exactly one** of them, null on the rest, so `SUM(VarianceQty)` stays correct. Document this in the migration comment.
+- Reversing **any** row with `VarianceAccepted = 1` clears `IsClosed` on the window.
+
+The asymmetry is deliberate. Re-opening a line that did not strictly need re-opening is recoverable — the operator closes it again. Leaving it closed after part of the closing quantity was reversed is not.
+
+### Approved without further discussion
+
+- **Error codes:** carry them in `ProblemDetails.Extensions["code"]`. Additive, leaves existing status codes and messages intact, does not break current callers.
+- **`CK_PIW_Caps`:** read the predicate first. If it asserts `ReceivedQty <= ExpectedQty`, over-receipt violates it and it must be relaxed in `db/047`. Relaxing a CHECK is backward-compatible with the currently deployed DLL, so it is safe against a rollback.
+- **Lock ordering:** `CancelAsync` locks pull then PO line and blind-updates the window at `:554`; `EnforceHourCapAsync` locks the window at `:139` first. Adding a window update to cancel creates a lock-order inversion and a deadlock under test 15. Define one canonical acquisition order, write it as a comment at the top of both methods, and make both paths follow it.
+- **Reversal wiring:** the `IsClosed` reset goes immediately after step 8 at `ReceiptService.cs:559`, conditional on the original receipt's `VarianceAccepted`. That means adding `VarianceAccepted` to the `SELECT` at `:467-470` and to `ReceiptLockRow`. Step 9's `fully_received → in_progress` demotion is not sufficient on its own.
+- **Composite ItemCode:** the 506 unmigrated rows cannot be received at all today (`ReceiptService.cs:187` joins on `ItemCode` and matches zero PO lines). Do not use them as test fixtures. Do not run 041a.
+
+---
+
 ## 3. Discovery — do not guess names
 
 Before implementing, locate and report back:
@@ -99,7 +155,7 @@ New migration. Two concerns: recording that a given receipt accepted variance, a
 | `VarianceAccepted` | `BIT NOT NULL` | `DEFAULT 0`, backfills existing rows as 0 |
 | `VarianceQty` | `INT NULL` | Signed. Positive = over, negative = short. Null when no variance. **INT, not decimal** — every quantity column in this schema is `INT` and `CLAUDE.md` carries whole-unit arithmetic as an invariant. A fractional variance column would be the only one in the system |
 
-**On the pull line table:**
+**On `dbo.PullItemWindows`:**
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -130,9 +186,9 @@ Reuse the existing note column on the receipt transaction as the variance reason
 **Once per line, enforced in SQL.** Two operators can have the modal open on the same SKU at the same time. Do not read-then-write. Close the line with a conditional update:
 
 ```sql
-UPDATE <LineTable>
+UPDATE dbo.PullItemWindows
 SET IsClosed = 1, ClosedAt = SYSUTCDATETIME(), ClosedBy = @User, ClosedReason = @Note
-WHERE <LineId> = @LineId AND IsClosed = 0;
+WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay AND IsClosed = 0;
 ```
 
 If the affected row count is 0, another user already closed it — roll back the whole transaction including the receipt insert, and return `409`. A `WHERE IsClosed = 0` guard is the only thing that makes "check once per SKU" actually true rather than merely likely.
@@ -263,7 +319,12 @@ Cover each of these:
 15. **Concurrency:** two sessions open on the same SKU, both tick and submit. One succeeds, the other gets `409`, and exactly one receipt row exists for the second attempt — i.e. the losing request's insert rolled back with it.
 16. A line closed with variance still appears correctly on the Delivery Note / Delivery Order exports and on the Production Receiving review screen, with a non-zero DIFF.
 17. **Reversal:** close a line via accepted variance, then reverse that receipt through the existing reversal path → `IsClosed`, `ClosedAt`, `ClosedBy`, `ClosedReason` all cleared, line returns to the pending queue with the correct outstanding restored.
-18. Existing rows before the migration: `VarianceAccepted = 0`, `IsClosed = 0`, no behaviour change.
+18. **Multi-window SKU:** checkbox is not rendered; a hand-crafted request with `VarianceAccepted = true` returns `400 MULTI_WINDOW_NOT_SUPPORTED`. Run this against PL-2847 (LCD-3.5-IPS, 16 windows).
+19. **Test 2 against a multi-window item.** PL-2847 is the existing regression fixture — confirm under-receipt partials still behave there with the checkbox absent.
+20. **Silent clamp is gone:** enter 1,500 against 1,000 outstanding. The request carries 1,500, not a silently rewritten 1,000. Same for the quick-fill buttons.
+21. **FIFO slices:** a variance confirm that allocates across two PO lines writes two `Receipts` rows, both `VarianceAccepted = 1`, exactly one carrying `VarianceQty`. Reversing *either* row clears `IsClosed`.
+22. One named test per outstanding query (2c list, items 1-5) proving each honours `IsClosed = 0`.
+23. Existing rows before the migration: `VarianceAccepted = 0`, `IsClosed = 0`, no behaviour change.
 
 Reproduce the current blocking behaviour live before changing it, so the before/after is confirmed on real data rather than assumed.
 
