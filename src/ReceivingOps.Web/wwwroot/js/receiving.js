@@ -439,8 +439,11 @@
     if (capMaxEl) capMaxEl.textContent = outstanding.toLocaleString();
 
     const input = document.getElementById('m-input');
-    input.max = outstanding;
-    input.value = outstanding;
+    // db/047 §7 — no `max` attribute. The operator may enter any quantity; over-receipt
+    // is governed by the accept-variance checkbox and the server, not by the input
+    // silently refusing to hold the number. `min="0"` stays (in the markup).
+    input.removeAttribute('max');
+    input.value = outstanding;   // sensible starting figure, not a ceiling
     input.classList.remove('is-error');
     document.getElementById('cap-hint').classList.remove('error');
 
@@ -748,8 +751,18 @@
   // local schedule. Optional fields (lot, pallet, bin, qc, note) — collect from the
   // modal if present so existing markup keeps wiring; default qcStatus = 'pending'.
   async function confirmReceipt() {
-    const inputVal = parseInt(document.getElementById('m-input').value) || 0;
-    const qty = Math.min(inputVal, activeMax);
+    // db/047 §2c — NEVER silently rewrite an entered quantity.
+    //
+    // This used to be `Math.min(inputVal, activeMax)`. Typing 1,500 against 1,000
+    // outstanding POSTed 1,000: no alert, no error, and the modal had already
+    // promised "Will allocate: 1,500" one screen earlier. The operator believed
+    // they had recorded 1,500 and the line showed 100% complete. That is silent
+    // data loss, not a limit — and the server would have accepted 1,500 anyway.
+    //
+    // The quantity the operator typed is the quantity that goes on the wire. It is
+    // either recorded at that figure or refused with a visible error; nothing in
+    // between.
+    const qty = parseInt(document.getElementById('m-input').value) || 0;
     if (qty <= 0) {
       showToast('Enter a quantity', 'Must be greater than zero', 'error');
       return;
@@ -1661,7 +1674,7 @@ document.getElementById('tx-cancel-confirm').addEventListener('click', async () 
             if (capMax) capMax.textContent = outstanding.toLocaleString();
             const input = document.getElementById('m-input');
             if (input && !pullClosed) {
-              input.max = outstanding;
+              input.removeAttribute('max');   // db/047 §7 — see openModal
               input.value = outstanding;
             }
             if (typeof activeMax !== 'undefined') window.activeMax = outstanding;

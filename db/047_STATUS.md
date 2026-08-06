@@ -92,12 +92,37 @@ Phase-14 wipe removed the `db/006` seed pulls (only `PL-2847` survives) and
 they were never re-seeded. Same family as the SUMMARY PO gap below. It is one
 of the ~13 seed-gap smokes CLAUDE.md already tracks.
 
-**Dev fixture note:** `db/014`'s seeded SUMMARY PO coverage in WH-01 was also
-wiped by `db/035`. `smoke-hourcap-6.2` documents a dependency on it, so dev now
-carries `PO-SEED-SUMMARY-WH01` (50,000) to restore it. These smokes never
-restore `PurchaseOrderLines.ReceivedQty` on cleanup, so shared PO capacity is
-consumed a little on every run — the newer variance smokes seed their own PO
-per case to avoid that.
+### Dev fixture: SUMMARY PO capacity
+
+`db/014_seed_smoke_po_lines.sql` seeded SUMMARY purchase-order coverage in WH-01
+at 50,000. `db/035_wipe_for_phase_14.sql` wiped it and db/014 was never re-run,
+so the assumption stated in `smoke-hourcap-6.2.ps1`'s own header — *"db/014
+already seeded SUMMARY PO coverage at 50k capacity in WH-01"* — has been false
+on any database that has had db/035 applied. The symptom is misleading: a
+receive that should obviously work returns *"Insufficient PO capacity. Need 100,
+have 0 pcs."*, which points suspicion at the receive code rather than the
+fixture.
+
+**Fix: run `tools/seed-summary-po-capacity.ps1`.** Idempotent, tops capacity back
+up to 50,000, refuses to run against anything but a local dev server. It
+restores what db/014 intended and db/035 removed.
+
+### Capacity drain — the suite has a finite number of runs
+
+The older smokes delete their pulls and receipts on cleanup but **never restore
+`PurchaseOrderLines.ReceivedQty`**. That column is a denormalised cache the
+receive path increments, and deleting the receipt rows does not decrement it. So
+every run permanently consumes a slice of the shared SUMMARY capacity, and after
+enough runs the suite starts failing for reasons that have nothing to do with
+the code under test.
+
+Measured, not theoretical: capacity fell from 50,000 to **47,050** across this
+change's smoke runs alone.
+
+Re-run `tools/seed-summary-po-capacity.ps1` when it bites. The newer
+`smoke-variance-*.ps1` smokes seed their own PO per case and drain nothing —
+that is the pattern to use for new smokes. Retrofitting it to the older smokes
+is deliberately **out of scope** here.
 
 ## Decisions locked (do not relitigate)
 

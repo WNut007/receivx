@@ -257,7 +257,14 @@
 
       <div class="cap-hint" id="cap-hint">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span id="cap-hint-text">Maximum allowed: <b id="cap-hint-max">1,000</b> pcs. Cannot receive over expected.</span>
+        @* db/047 §7 — "Maximum allowed: N pcs. Cannot receive over expected." was false on
+           two counts: over-receipt is permitted (with an explicit acknowledgement), and the
+           JS overwrote this text on the first keystroke anyway, so the operator only ever
+           saw it before typing. Replaced with a neutral starting line; receiving.js swaps in
+           the live variance readout as the quantity changes. The <b id="cap-hint-max">
+           wrapper is retained because openModal and the cancel-refresh path both grab it by
+           id to update the outstanding figure. *@
+        <span id="cap-hint-text">Outstanding for this slot: <b id="cap-hint-max">1,000</b> pcs.</span>
       </div>
 
       <!-- v2 §7.2 — FIFO allocation preview (populated by receiving.js) -->
