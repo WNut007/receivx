@@ -472,6 +472,18 @@
     if (vbox) vbox.checked = false;
     const vnote = document.getElementById('m-note');
     if (vnote) { vnote.value = ''; vnote.classList.remove('is-error'); }
+
+    // db/047 §2g — the mockup's hardcoded LOT-2403-118 / PLT-00482 / A-12-03 are gone
+    // from the markup; clear any carry-over from the previously opened slot so one
+    // pallet id cannot silently attach itself to the next receipt.
+    for (const id of ['m-lot', 'm-pallet', 'm-bin']) {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    }
+    const qcEl = document.getElementById('m-qc');
+    if (qcEl) qcEl.value = 'pending';
+
+    renderClosedState(currentSlotMeta());   // db/047 §2d
     refreshVarianceUi();
 
     // ---- Read-only gate when pull is closed ----
@@ -765,6 +777,75 @@
     };
   }
 
+  // ==========================================================================
+  // db/047 §2d — closed-state modal.
+  //
+  // Clicking a closed window opens THIS modal in a closed state rather than a
+  // separate surface or a dead quantity box. Everything to do with entering a
+  // receipt is hidden; what replaces it is the record of the close — who, when,
+  // the reason in full, and the final figures — plus a single Reopen line button.
+  // ==========================================================================
+  function renderClosedState(meta) {
+    const closed  = !!meta.closed;
+    const banner  = document.getElementById('m-closed-banner');
+    const confirm = document.getElementById('m-reopen-confirm');
+
+    // Everything that belongs to entering a quantity.
+    const receiveOnly = [
+      document.getElementById('m-receive-block'),
+      document.getElementById('cap-hint'),
+      document.getElementById('m-variance-block'),
+      document.querySelector('.quick-fill'),
+      document.querySelector('.fields-grid'),
+      document.getElementById('m-alloc-list'),
+      document.getElementById('m-alloc-warning'),
+    ];
+    for (const el of receiveOnly) if (el) el.hidden = closed;
+
+    // The quick-fill buttons are disabled as well as hidden: hiding alone would
+    // still leave them clickable via the keyboard if the modal is ever restyled.
+    document.querySelectorAll('.quick-fill button').forEach(b => { b.disabled = closed; });
+
+    const confirmBtn = document.getElementById('m-confirm');
+    if (confirmBtn) confirmBtn.hidden = closed;
+
+    if (banner)  banner.hidden  = !closed;
+    if (confirm) confirm.hidden = true;          // always collapsed on (re)open
+
+    if (!closed) return;
+
+    // ---- populate the banner ----
+    const item = meta.item || {};
+    const slot = (item.schedule || {})[meta.hour] || {};
+    const expected = slot.e | 0, received = slot.r | 0;
+    const variance = received - expected;        // negative = short, positive = over
+
+    const when = meta.closedAt ? new Date(meta.closedAt) : null;
+    const whenTxt = when && !isNaN(when)
+      ? when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+      : 'date unknown';
+    const who = document.getElementById('m-closed-who');
+    if (who) who.textContent = `Closed ${whenTxt}`;
+
+    const figures = document.getElementById('m-closed-figures');
+    if (figures) {
+      const label = variance < 0 ? 'short' : variance > 0 ? 'over' : 'exact';
+      figures.innerHTML = `
+        <span><b>${expected.toLocaleString()}</b> expected</span>
+        <span><b>${received.toLocaleString()}</b> received</span>
+        <span class="slotclose-variance ${variance < 0 ? 'short' : variance > 0 ? 'over' : ''}">
+          <b>${variance > 0 ? '+' : ''}${variance.toLocaleString()}</b> ${label}
+        </span>`;
+    }
+
+    const reason = document.getElementById('m-closed-reason');
+    if (reason) {
+      // In full, never truncated — the reason is the whole point of storing it.
+      reason.textContent = meta.closedReason || '(no reason recorded)';
+      reason.classList.toggle('is-empty', !meta.closedReason);
+    }
+  }
+
   function refreshVarianceUi() {
     const input = document.getElementById('m-input');
     const box   = document.getElementById('m-variance');
@@ -867,6 +948,74 @@
   });
 
   document.getElementById('m-note').addEventListener('input', refreshVarianceUi);
+
+  // ---- db/047 §2d — reopen ------------------------------------------------
+  document.getElementById('m-reopen-btn').addEventListener('click', () => {
+    const panel  = document.getElementById('m-reopen-confirm');
+    const reason = document.getElementById('m-reopen-reason');
+    const meta   = currentSlotMeta();
+    const slot   = (meta.item.schedule || {})[meta.hour] || {};
+    const outstanding = Math.max(0, (slot.e | 0) - (slot.r | 0));
+    const sub = document.getElementById('m-reopen-sub');
+    if (sub) sub.textContent =
+      `The line returns to the pending queue with ${outstanding.toLocaleString()} pcs outstanding.`;
+    if (reason) { reason.value = ''; }
+    document.getElementById('m-reopen-go').disabled = true;
+    if (panel) panel.hidden = false;
+    reason?.focus();
+  });
+
+  document.getElementById('m-reopen-cancel').addEventListener('click', () => {
+    document.getElementById('m-reopen-confirm').hidden = true;
+  });
+
+  // Reason is required client-side too; the server refuses independently with
+  // 400 REOPEN_REASON_REQUIRED, so this is a convenience, not the enforcement.
+  document.getElementById('m-reopen-reason').addEventListener('input', (e) => {
+    document.getElementById('m-reopen-go').disabled = (e.target.value || '').trim().length === 0;
+  });
+
+  document.getElementById('m-reopen-go').addEventListener('click', async () => {
+    const btn    = document.getElementById('m-reopen-go');
+    const reason = (document.getElementById('m-reopen-reason').value || '').trim();
+    const meta   = currentSlotMeta();
+    if (!reason || !meta.item?.pullItemId) return;
+
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/receipts/reopen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pullItemId: meta.item.pullItemId, hourOfDay: meta.hour, reason }),
+      });
+      if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+      if (!resp.ok) {
+        let title = `Reopen rejected (${resp.status})`;
+        try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+        showToast('Cannot reopen line', title, 'error');
+        btn.disabled = false;
+        return;
+      }
+
+      // Update local state in place and return the modal to its receive state —
+      // §2d requires no page reload.
+      const slot = (meta.item.schedule || {})[meta.hour];
+      if (slot) { slot.c = false; slot.ca = null; slot.cr = null; }
+      document.getElementById('m-reopen-confirm').hidden = true;
+      renderClosedState(currentSlotMeta());
+      activeMax = Math.max(0, (slot?.e | 0) - (slot?.r | 0));
+      const inp = document.getElementById('m-input');
+      if (inp) { inp.removeAttribute('max'); inp.value = activeMax; }
+      const capMax = document.getElementById('cap-hint-max');
+      if (capMax) capMax.textContent = activeMax.toLocaleString();
+      refreshVarianceUi();
+      renderTable();            // repaint the grid so the CLOSED pill clears
+      showToast('Line reopened', `${activeMax.toLocaleString()} pcs outstanding again`, 'success');
+    } catch (err) {
+      showToast('Cannot reopen line', 'Network error — try again', 'error');
+      btn.disabled = false;
+    }
+  });
 
   document.getElementById('m-close').addEventListener('click', closeModal);
   document.getElementById('m-cancel').addEventListener('click', closeModal);

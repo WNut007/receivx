@@ -244,7 +244,38 @@
         </div>
       </div>
 
-      <div class="receive-input-host">
+      @* db/047 §2d — CLOSED STATE. Clicking a closed window already opens this modal;
+         it opens in this state instead of showing a quantity field that cannot be used.
+         Replaces the quantity block entirely: no quantity controls, no checkbox, no note.
+         The close reason is shown in full — truncating to a tooltip would waste the one
+         thing the column exists to preserve. *@
+      <div class="slotclose-banner" id="m-closed-banner" hidden>
+        <div class="slotclose-head">
+          <span class="slotclose-pill">Line closed</span>
+          <span class="slotclose-who" id="m-closed-who"></span>
+        </div>
+        <div class="slotclose-figures" id="m-closed-figures"></div>
+        <div class="slotclose-reason-label">Close reason</div>
+        <div class="slotclose-reason" id="m-closed-reason"></div>
+        <button class="btn-slot-reopen" id="m-reopen-btn" type="button">Reopen line</button>
+      </div>
+
+      @* Reopen confirm. Reason required — the button stays disabled while it is empty,
+         and the server independently refuses with 400 REOPEN_REASON_REQUIRED. *@
+      <div class="reopen-confirm" id="m-reopen-confirm" hidden>
+        <div class="reopen-confirm-title">Reopen this line?</div>
+        <div class="reopen-confirm-sub" id="m-reopen-sub">
+          The line returns to the pending queue at its previous outstanding.
+        </div>
+        <label class="reopen-reason-label" for="m-reopen-reason">Reason · Required</label>
+        <textarea id="m-reopen-reason" placeholder="Why is this line being reopened?"></textarea>
+        <div class="reopen-confirm-actions">
+          <button class="btn-ghost" id="m-reopen-cancel" type="button">Cancel</button>
+          <button class="btn-slot-reopen" id="m-reopen-go" type="button" disabled>Reopen line</button>
+        </div>
+      </div>
+
+      <div class="receive-input-host" id="m-receive-block">
         <div class="receive-input-label">
           <div class="small">Receive Now</div>
           <div class="big">How many units?</div>
@@ -296,25 +327,47 @@
         <button data-fill="0">Mark zero</button>
       </div>
 
+      @* db/047 §2g — these four had NO id attributes, so confirmReceipt's fieldVal()
+         never matched them and every value posted as null. 243 of 243 receipts carry
+         NULL LotBatch / PalletId / BinLocation and QcStatus='pending', while the
+         operator saw all four filled in and reasonably believed they were recorded.
+         For a warehouse that is heavier than a quantity discrepancy: there is no lot
+         traceability in the receipt history at all, so a recall has nothing to trace.
+
+         The hardcoded mockup values are gone with the ids. A pre-filled lot number
+         that the operator did not type is a fabricated traceability record — worse
+         than an empty box, because it looks deliberate. Placeholders stay as hints. *@
       <div class="fields-grid">
         <div class="field">
           <label>Lot / Batch</label>
-          <input type="text" placeholder="e.g. LOT-2403-A" value="LOT-2403-118">
+          <input type="text" id="m-lot" placeholder="e.g. LOT-2403-A" maxlength="64">
         </div>
         <div class="field">
           <label>Pallet ID</label>
-          <input type="text" placeholder="e.g. PLT-00482" value="PLT-00482">
+          <input type="text" id="m-pallet" placeholder="e.g. PLT-00482" maxlength="64">
         </div>
         <div class="field">
           <label>Bin / Location</label>
-          <input type="text" placeholder="e.g. A-12-03" value="A-12-03">
+          <input type="text" id="m-bin" placeholder="e.g. A-12-03" maxlength="64">
         </div>
         <div class="field">
           <label>QC Status</label>
-          <select class="select" style="width:100%; padding-left:12px;">
-            <option>Passed inspection</option>
-            <option>Pending QC</option>
-            <option>Flagged · Hold</option>
+          @* Option VALUES must be the server's tokens — AllowedQcStatus is
+             {pending, passed, hold, rejected} and ReceiptService rejects anything else
+             with 400. Wiring the labels as-is would have posted "Passed inspection".
+
+             'Pending QC' is the default rather than 'Passed inspection', which was
+             first in the mockup. Every one of the 243 historical rows is 'pending', so
+             this preserves the stored default — and asserting that goods passed
+             inspection because a dropdown happened to list it first is precisely the
+             kind of unearned record this section exists to stop. QC status should be
+             set deliberately. 'Rejected' is added: the whitelist, the Transactions
+             qc-badge CSS and the export all already handle it. *@
+          <select class="select" id="m-qc" style="width:100%; padding-left:12px;">
+            <option value="pending" selected>Pending QC</option>
+            <option value="passed">Passed inspection</option>
+            <option value="hold">Flagged · Hold</option>
+            <option value="rejected">Rejected</option>
           </select>
         </div>
         <div class="field full">

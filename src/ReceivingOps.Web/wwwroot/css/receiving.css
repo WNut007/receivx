@@ -1540,6 +1540,129 @@
   }
 
   /* ======================================================================== */
+  /* db/047 §2d — closed-state banner. Replaces the quantity block entirely.  */
+  /* Muted like the grid's closed cell, for the same reason: the line is      */
+  /* finished but finished short, and neither success-green nor error-red is  */
+  /* the truth. The reason is shown in full, never truncated.                 */
+  /* ======================================================================== */
+  .slotclose-banner {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .slotclose-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .slotclose-pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+  .slotclose-who {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .slotclose-figures {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .slotclose-figures b { color: var(--text); font-size: 14px; }
+  .slotclose-variance.short b { color: var(--over); }
+  .slotclose-variance.over  b { color: var(--warn); }
+  .slotclose-reason-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .slotclose-reason {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;      /* full text, wrapped — never truncated */
+    margin-bottom: 14px;
+  }
+  .slotclose-reason.is-empty { color: var(--text-muted); font-style: italic; }
+
+  .btn-slot-reopen {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-slot-reopen:hover:not(:disabled) { background: var(--surface-2); }
+  .btn-slot-reopen:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .reopen-confirm {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+  }
+  .reopen-confirm-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .reopen-confirm-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .reopen-reason-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .reopen-confirm textarea {
+    width: 100%;
+    min-height: 62px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    resize: vertical;
+  }
+  .reopen-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .btn-ghost {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* ======================================================================== */
   /* db/047 §7 — accept-variance checkbox. Sits inside the green "How many    */
   /* units?" band, below the input.                                           */
   /* ======================================================================== */
