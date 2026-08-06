@@ -1,7 +1,7 @@
 # Brief: Accept Variance on Goods Receipt
 
 **System:** ReceivingOps, post-v3.5 on `feat/digital-signature` (.NET 8, Dapper, SQL Server)
-**Revision:** rev 7 — filtered index dropped from db/047, quick-fill event bug added (section 2e). Zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
+**Revision:** rev 8 — LockHourCap interaction decided (section 2f). Filtered index dropped from db/047, quick-fill event bug added (section 2e). Zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
 **Screen:** "Receive Goods" modal (quantity entry against a scheduled pull slot)
 **Type:** Schema change + service layer + API + UI
 
@@ -16,7 +16,7 @@ Change it so that:
 1. The operator may enter **any** quantity, including above outstanding.
 2. **Partial receipts behave exactly as they do today.** Entering less than outstanding without ticking anything records a partial and leaves the line open for the next delivery — no alert, no checkbox involvement. This is normal daily use and must not regress.
 3. When the operator is on the **final** receipt for a SKU and the total will not reach expected, an **Accept variance** checkbox lets them close the line at the actual figure instead of leaving a permanent remainder.
-4. Over-receipt is only possible with the checkbox ticked. There is no coherent "more coming later" reading of an over-delivery, so over is always terminal. Unticked over-receipt is blocked with the alert.
+4. Over-receipt is only possible with the checkbox ticked, **and only on pulls where `LockHourCap = false`** — see section 2f. There is no coherent "more coming later" reading of an over-delivery, so over is always terminal. Unticked over-receipt is blocked with the alert.
 5. Ticking is a **once-per-SKU-line** action — it closes the line, and any later attempt to receive against that line is rejected.
 6. A **note is mandatory** whenever variance is accepted — it is the audit reason.
 
@@ -170,6 +170,30 @@ This is the same defect class as the silent clamp: the screen states one thing a
 
 ---
 
+## 2f. LockHourCap: DECIDED — the lock stays a lock
+
+`Pulls.LockHourCap` is a shipped v2.1 feature this brief never mentioned. Implementing section 6's over-receipt rule unconditionally replaced the hour-cap gate entirely, which would have made the lock bypassable by anyone holding `CanReceive` — tick a box and the cap is gone. That is not a change of error code; it retires the feature.
+
+**The rule:**
+
+| Pull | Over-receipt |
+| --- | --- |
+| `LockHourCap = true` | **Refused, always.** `409`, the existing hour-cap message from `ReceiptService.cs:156-158`. `VarianceAccepted` does not change this. The checkbox is not offered for an over-quantity, and a crafted request carrying it is still refused |
+| `LockHourCap = false` | Permitted **only** with the tick. Unticked → `400 OVER_RECEIPT_NOT_ACCEPTED`. Ticked → recorded at the entered figure and the line closes |
+
+**Short close is unaffected by the lock, on both.** An hour cap constrains how much may arrive, not how little. A short close on a locked pull stays available.
+
+Two things make this the right call rather than merely the cautious one:
+
+1. **The existing smoke should stay green without being edited.** `smoke-hourcap-6.2.ps1` case 2 asserts `409` for a locked over-receipt, which this rule preserves exactly; cases 4, 7 and 8 should follow. Run it unmodified and report. If a test has to be rewritten to accommodate a change, that is usually the change bending the product to fit rather than fitting the product — a rule that makes the old assertions pass unchanged is the one that belongs.
+2. **Nothing in use is being removed.** The loose-pull over-receipt path has never been reachable from the product: `receiving.js:752` clamped every pull to outstanding regardless of the lock. We are opening a path that was never open, not closing one people rely on.
+
+**Preview must apply the identical rule** — this is the fix for the disagreement introduced when `PreviewAsync` kept calling `EnforceHourCapAsync` and `ReceiveAsync` stopped. Whatever confirm refuses, preview refuses, with the same code and the same message.
+
+**Amend the `CLAUDE.md` invariant.** It currently reads that with `LockHourCap = false` the per-hour `ExpectedQty` is a planning hint only. That is no longer quite true: exceeding it now requires an explicit acknowledgement and closes the line. Update the wording to say so.
+
+---
+
 ## 3. Discovery — do not guess names
 
 Before implementing, locate and report back:
@@ -260,7 +284,8 @@ The note field already exists — reuse it.
 | `Qty < 0` | `400` — quantity cannot be negative |
 | Line already `IsClosed = 1` | `409`, error code `LINE_ALREADY_CLOSED` |
 | `Qty < Outstanding` and `VarianceAccepted == false` | **Valid partial.** Save, line stays open. Existing behaviour — must not regress |
-| `Qty > Outstanding` and `VarianceAccepted == false` | `400`, error code `OVER_RECEIPT_NOT_ACCEPTED`, message naming outstanding and entered figures |
+| `Qty > Outstanding` and pull has `LockHourCap = true` | `409`, existing hour-cap message, **regardless of `VarianceAccepted`**. See section 2f |
+| `Qty > Outstanding`, `LockHourCap = false`, `VarianceAccepted == false` | `400`, error code `OVER_RECEIPT_NOT_ACCEPTED`, message naming outstanding and entered figures |
 | `VarianceAccepted == true` and note is null/whitespace | `400`, error code `VARIANCE_REASON_REQUIRED` |
 | `VarianceAccepted == true` and `Qty == Outstanding` | Accept, but ignore the flag — persist `VarianceAccepted = 0`. The line closes through the existing full-receipt path, not the variance path |
 | `Qty == 0` and `VarianceAccepted == false` | `400` — a zero-quantity partial records nothing |
