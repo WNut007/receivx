@@ -62,25 +62,31 @@ is built from this branch plus what is now baselined in `def8f2e`).
   `dbo.Receipts` written only by `ReceiptService`. No job/import/WDT/service
   writes receipts, so the §2f rule change reaches nothing but the UI.
 
+- **UI done** — clamp removed and proven on the wire, variance checkbox, live
+  variance readout, note-required styling, Confirm + ⌘/Ctrl+Enter gating,
+  quick-fill `input` events (§2e), grid CLOSED pill, closed-state modal and
+  reopen dialog (§2d), reopen round-trip verified end to end.
+- **All 23 §8 cases covered.** See the suite table below.
+
 ## Not done
 
-1. **UI** — clamp removal (`receiving.js:752`), checkbox, live variance
-   readout, quick-fill `input` events (§2e), note-required styling,
-   ⌘+Enter gating, reopen dialog.
-2. Remaining §8 cases (23 total; the five-query, agreement, reopen and
-   hour-cap suites cover a good part already).
-3. `db/047` has not been run on production. Deploy order: migration first,
-   then DLL, then app-pool restart. `deploy.ps1` does NOT run migrations.
+1. `db/047` has not been run on production. Deploy order: **migration first,
+   then DLL, then app-pool restart**. `deploy.ps1` does NOT run migrations, and
+   its auto-rollback restores the DLL, not the schema — verified safe, since
+   the migration is additive and every deployed INSERT names its columns.
+2. Fixtures `PL-VAR-*`, `PO-VAR-*`, `PL-UIDEMO-*`, `PL-CLAMPFIX-*` are still in
+   the dev database from this work and want clearing when convenient. The
+   `smoke-variance-*` suites clean up after themselves.
 
 ## Exact next step
 
-UI pass. Start with the clamp at `receiving.js:752` — it is the live data-loss
-defect, not merely a limit.
+Ship review, then the production run of `db/047` followed by the DLL.
 
 ## Smoke suite for this change
 
 | Smoke | State |
 |---|---|
+| `smoke-variance-section8` | 29 assertions, PASS |
 | `smoke-variance-outstanding-queries` | 8 assertions, PASS |
 | `smoke-variance-preview-confirm-agreement` | 20 pairs, PASS |
 | `smoke-variance-reopen` | 11 assertions, PASS |
