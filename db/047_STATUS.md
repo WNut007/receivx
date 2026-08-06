@@ -86,6 +86,40 @@ is built from this branch plus what is now baselined in `def8f2e`).
    read-only and answers whether any machine other than the prod web host is
    registered as a Hangfire worker there.
 
+## db/048 — LockHourCap default, and why it changes nothing on its own
+
+`db/048_lockhourcap_default_unlocked.sql` re-points `DF_Pulls_LockHourCap` from
+`((1))` to `((0))`. **Applied to dev only. No existing row was touched** — the
+split is identical before and after: **11,621 locked / 40 unlocked / 11,661
+total**.
+
+**The default was never what produced locked pulls.** Every insert path writes
+the column explicitly, so the default never fired. Demonstrated rather than
+inferred, after applying db/048:
+
+| Path | Result |
+|---|---|
+| Raw `INSERT` omitting the column | `LockHourCap = 0` ← the new default works |
+| `POST /api/pulls` omitting `lockHourCap` | **`LockHourCap = 1`** ← still locked |
+
+The three sites that actually decide it:
+
+1. `Services/ErpSync/ErpUpsertService.cs:189` — hardcoded literal `1, 1` for
+   `LockPoByPull, LockHourCap`. Nearly every pull in the system comes from here.
+2. `Services/PullAdminService.cs:49,54` — writes `req.LockHourCap`, and
+   `Models/Dtos/PullDtos.cs:229` declares `= true`, so omitting the field still
+   yields a locked pull.
+3. `wwwroot/js/dashboard.js:123` — `s.lockHourCap === undefined ? true : …`,
+   the same true-by-default a third time.
+
+So db/048 is necessary but not sufficient. Changing what NEW pulls get means
+changing those three sites, which is an application decision, not a schema one.
+
+**How much the hour cap currently expresses:** 11,588 of the 11,594 open pulls
+with outstanding work are locked. Six are not, and those six are fixtures this
+work created. Existing locked pulls are left locked — unlocking them is the
+operator's call and has not been made.
+
 ## Hangfire: this machine is not a production worker
 
 Hangfire storage is `ConnectionStrings:Default` (`Program.cs:322-332`) — the
