@@ -127,11 +127,8 @@ public class ReceiptService : IReceiptService
             var outstanding = window.Outstanding;
             var variance    = varianceAccepted && qty != outstanding;
 
-            // §2f — the lock stays a lock, in preview too.
-            if (pullCtx.LockHourCap)
-                await EnforceHourCapAsync(conn, transaction: null, withLock: false,
-                                          pullCtx, hr, qty, ct);
-
+            // §2f (rev 11) — no lock check here either. Preview and confirm apply the
+            // same rule, and that rule no longer consults LockHourCap.
             if (qty > outstanding && !variance)
                 throw new ValidationException(
                     $"Receiving {qty} pcs exceeds the {outstanding} pcs outstanding at hour {hr:D2}:00. " +
@@ -209,27 +206,15 @@ public class ReceiptService : IReceiptService
     // BusinessException → 409 if the requested qty would push the window
     // over its ExpectedQty. Message format is the user-facing contract
     // — UI parses ProblemDetails.title to surface in the alloc panel.
-    private static async Task<int> EnforceHourCapAsync(
-        System.Data.IDbConnection conn,
-        System.Data.IDbTransaction? transaction,
-        bool withLock,
-        PullItemContext pullCtx,
-        byte hourOfDay,
-        int requestedQty,
-        CancellationToken ct)
-    {
-        var window = await ReadWindowStateAsync(conn, transaction, withLock, pullCtx, hourOfDay, ct);
-
-        // §2f — message wording is the user-facing contract and is asserted verbatim by
-        // smoke-hourcap-6.2. The code is additive (db/047); the title is unchanged.
-        if (requestedQty > window.Outstanding)
-            throw new BusinessException(
-                $"Insufficient hour capacity. Hour {hourOfDay:D2}:00 expected {window.ExpectedQty} pcs, " +
-                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.",
-                "HOUR_CAP_EXCEEDED");
-
-        return window.Outstanding;
-    }
+    // db/047 §2f (rev 11) — EnforceHourCapAsync is GONE, not merely unused.
+    //
+    // It raised "Insufficient hour capacity … " (409, HOUR_CAP_EXCEEDED) whenever a
+    // receive exceeded the window on a pull with LockHourCap = true. Over-receipt is now
+    // governed solely by the accept-variance tick, on every pull, so there is nothing
+    // left for it to decide. Leaving it in place as dead code would suggest the cap
+    // still had teeth. `PullItemContext.LockHourCap` is still hydrated because the
+    // column is part of the pull row the receive path already reads, but nothing on
+    // this path consults it any more.
 
     // db/047 — single reader for the (PullItemId, HourOfDay) window. Lock step 3 of the
     // canonical order; pass withLock:true only from inside a transaction that has already
@@ -424,23 +409,25 @@ public class ReceiptService : IReceiptService
             // variance to record when the quantity lands exactly on outstanding.
             var variance = req.VarianceAccepted && req.Qty != outstanding;
 
-            // §2f — THE LOCK STAYS A LOCK. On a pull with LockHourCap = true an
-            // over-receipt is refused outright, and VarianceAccepted does NOT override it.
-            // Ticking a box must not let anyone holding CanReceive walk through a cap that
-            // was deliberately set; that would retire the v2.1 Phase 6 feature rather than
-            // change its error code. Runs before the variance rule so the locked pull gets
-            // the localized hour-cap message it has always given.
+            // §2f (rev 11) — THE TICK IS THE ESCAPE, ON EVERY PULL. LockHourCap no longer
+            // changes the outcome of a receive; the hour-cap refusal that used to sit here
+            // is gone.
             //
-            // Note this fires only when qty EXCEEDS outstanding — a short close on a locked
-            // pull stays available, because a cap constrains how much may arrive, not how
-            // little.
-            if (pullCtx.LockHourCap)
-                await EnforceHourCapAsync(conn, transaction: tx, withLock: true,
-                                          pullCtx, req.HourOfDay, req.Qty, ct);
+            // The rule it replaces treated the lock as absolute, on the reasoning that a
+            // tick must not bypass a deliberately-set cap. That rested on an assumption
+            // that was never true: 11,588 of the 11,594 open pulls with outstanding work
+            // are locked, ErpUpsertService.cs:189 writes a hardcoded 1, and nobody has ever
+            // chosen the value per pull. A flag true on every row is a constant, not a
+            // control, and honouring it made the over-receipt path unreachable on live
+            // data — correct in theory and never once in practice.
+            //
+            // Unlocking everything instead would let over-receipt happen silently, which is
+            // the clamp defect inverted. Requiring the tick keeps every over-receipt
+            // deliberate and attributable, which is worth more than the cap was.
 
-            // §6 — on an unlocked pull, over-receipt is terminal and has only one reading,
-            // so the tick is mandatory. Under-receipt is ambiguous and stays optional, which
-            // is why there is deliberately no matching guard below outstanding.
+            // §6 — over-receipt is terminal and has only one reading, so the tick is
+            // mandatory. Under-receipt is ambiguous and stays optional, which is why there
+            // is deliberately no matching guard below outstanding.
             if (req.Qty > outstanding && !variance)
                 throw new ValidationException(
                     $"Receiving {req.Qty} pcs exceeds the {outstanding} pcs outstanding at hour {req.HourOfDay:D2}:00. " +

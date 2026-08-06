@@ -35,11 +35,12 @@
   let currentWhName = null;
   let serverPullStatus = null;   // pending|in_progress|fully_received|closed
   let currentPullLocked = false; // §3.5 — Pulls.LockPoByPull mirrored from PullDetail
-  // db/047 §2f — Pulls.LockHourCap mirrored from PullDetail. Already on the wire via
-  // PullSummary; the page simply never read it. Drives whether the accept-variance
-  // checkbox may be offered for an OVER quantity: on a locked pull an over-receipt is
-  // refused outright and the tick does not open it, so offering the box there would be
-  // the same lie as the old "cannot receive over expected" copy, inverted.
+  // Pulls.LockHourCap mirrored from PullDetail.
+  //
+  // §2f (rev 11) — this no longer gates anything on the receive path: over-receipt is
+  // permitted on every pull with the final-receipt tick. Kept because the dashboard
+  // still displays the flag (Strict/Loose pill, drawer) and it remains immutable after
+  // create, so the value is still meaningful — it just no longer decides a receive.
   let currentPullHourCapLocked = false;
 
   // db/047 — did the server's preview refuse this quantity? The allocation preview
@@ -773,10 +774,17 @@
     const text = document.getElementById('m-cap-lock-text');
     if (!box || !text) return;
 
-    box.classList.toggle('is-locked', currentPullHourCapLocked);
-    text.textContent = currentPullHourCapLocked
-      ? `Hour cap locked · cannot receive over ${(outstanding | 0).toLocaleString()}`
-      : `Over ${(outstanding | 0).toLocaleString()} is possible — tick the final-receipt box to record it`;
+    // §2f (rev 11) — the copy no longer varies by LockHourCap, because the outcome no
+    // longer does. "HOUR CAP LOCKED · CANNOT RECEIVE OVER 1,000" described the old rule
+    // and became false the moment the tick was made the escape on every pull; a marker
+    // that states a limit the system does not enforce is the same defect as the clamp
+    // hint that said over was allowed when it was not.
+    //
+    // The hour figure stays as context — it is still what the plan says to expect, and
+    // it is the number the variance is measured against.
+    box.classList.remove('is-locked');
+    text.textContent =
+      `Planned for this hour: ${(outstanding | 0).toLocaleString()} · over is possible with the final-receipt box`;
     box.hidden = false;
   }
 
@@ -885,14 +893,13 @@
     const exact = qty === outstanding;
     const under = qty < outstanding;
 
-    // §2f — on a LockHourCap pull an over-receipt is refused outright and the tick
-    // does NOT open it. Offering the checkbox there would promise something confirm
-    // will not honour, which is the same class of lie as the old clamp.
-    const overRefusedByLock = over && currentPullHourCapLocked;
-
+    // §2f (rev 11) — LockHourCap no longer affects whether the box is offered. The
+    // tick is the escape on every pull, so withholding it on a locked pull would now
+    // hide the only route to a legitimate over-receipt.
+    //
     // Hidden when the quantity exactly matches outstanding (§7): there is no variance
     // to accept, and the server ignores the flag in that case anyway.
-    const canOffer = !exact && !meta.multiWindow && !overRefusedByLock;
+    const canOffer = !exact && !meta.multiWindow;
 
     if (!canOffer && box.checked) box.checked = false;   // never leave a stale tick
     block.hidden = !canOffer;
@@ -910,14 +917,6 @@
     if (meta.closed) {
       cls = 'error';
       msg = `LINE CLOSED · ${pcs(outstanding)} PCS WERE WRITTEN OFF`;
-    } else if (overRefusedByLock) {
-      // db/047 §2f — state the arithmetic only. The refusal itself is said twice
-      // otherwise: the permanent lock marker above already gives the ceiling, and the
-      // preview surfaces the server's own "Insufficient hour capacity…" line, which
-      // names the hour, the expected and the already-received and is the authoritative
-      // wording. A third red banner here was just the screen repeating itself.
-      cls = 'neutral';
-      msg = `OVER BY ${pcs(qty - outstanding)} PCS`;
     } else if (over) {
       cls = 'warn';   // amber
       msg = `OVER BY ${pcs(qty - outstanding)} PCS · REQUIRES ACCEPT VARIANCE`;
@@ -950,7 +949,6 @@
     btn.disabled =
          meta.closed                       // already closed — nothing to add
       || _previewBlocked                   // the server's preview refused this quantity
-      || overRefusedByLock                 // §2f, server refuses regardless
       || (over && !ticked)                 // over needs the tick
       || (ticked && noteVal.length === 0)  // ticked needs a reason
       || (qty === 0 && !ticked)            // zero records nothing unless it closes

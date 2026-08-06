@@ -5,28 +5,64 @@
 # smoke-hourcap-6.2 + ...). The hourcap- prefix avoids file collisions
 # while keeping the phase numbering aligned with the spec docs.
 #
-# Scope: ReceiptService.PreviewAsync + ReceiveAsync read pull.LockHourCap and,
-# when true, reject receives that would push the (PullItem, Hour) window past
-# its ExpectedQty BEFORE walking PO lines. When false, the legacy §7.1 v2
-# behavior holds — PO is the only hard cap.
+# Scope (as of db/047 rev 11): ReceiptService.PreviewAsync + ReceiveAsync no
+# longer consult pull.LockHourCap at all. An over-receipt is refused on EVERY
+# pull unless the accept-variance box is ticked with a note, and permitted on
+# every pull when it is. The per-hour WINDOW is unchanged — a receive still
+# targets a (PullItemId, HourOfDay) and outstanding is still computed per window
+# as MAX(0, Expected - Received). What went away is the cap's power to refuse.
 #
 # Setup per case: create a fresh PL-SMOKE-HC-{tick}-{kind} pull via the API,
 # attach a SUMMARY item (db/014 already seeded SUMMARY PO coverage at 50k
 # capacity in WH-01) with a tight 200-pcs window at hour 14, then exercise
 # the cap edges.
 #
-# 9 cases:
+# 10 cases:
 #   1.  Strict pull, receive 100 on 200-cap → 200 OK
-#   2.  Strict pull at 100/200, receive 300 → 409 "Insufficient hour capacity"
+#   2.  Strict pull at 100/200, receive 300 UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED
+#   2b. Strict pull, over-receipt TICKED + note → 200, line closed, +VarianceQty
 #   3.  Strict pull, receive remaining 100 → 200 OK (window now exactly full)
-#   4.  Strict pull, receive 1 on full window → 409 (zero remaining)
-#   5.  Preview WITH ?hour= on full window → 409 (Preview matches Receive)
+#   4.  Strict pull, receive 1 on full window UNTICKED → 400 (outstanding is 0)
+#   5.  Preview WITH ?hour= on full window → 400, same status AND code as Receive
 #   6.  Preview WITHOUT ?hour= on full window → 200 (back-compat, skip check)
 #   7a. Loose pull, over-receipt UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED
 #   7b. Loose pull, over-receipt TICKED + note → 200, line closed, +VarianceQty
-#   8.  Legacy over-state — SQL poke ReceivedQty=300 on strict pull, receive 1 → 409
+#   8.  Legacy over-state — SQL poke ReceivedQty=300, receive 1 UNTICKED → 400
 #
-# WHY CASE 7 CHANGED (db/047, brief §2f — "the lock stays a lock")
+# 2b and 7a/7b are the pair that matters: the SAME over-receipt is refused
+# unticked and accepted ticked on BOTH a strict and a loose pull. That is the
+# rev 11 rule stated as a test rather than as a comment.
+#
+# WHY CASES 2, 4 AND 8 CHANGED (db/047, brief rev 11 §2f — REVERSED)
+# -------------------------------------------------------------------
+# These three asserted 409 "Insufficient hour capacity" for an over-receipt on a
+# strict (LockHourCap = true) pull. That refusal no longer exists: over-receipt
+# is now permitted on EVERY pull, locked or not, and only with the
+# final-receipt checkbox ticked plus a note. LockHourCap does not change the
+# outcome of a receive at all. Unticked over-receipt returns
+# 400 OVER_RECEIPT_NOT_ACCEPTED regardless of the flag.
+#
+# Rewriting a test to fit a change is usually a warning sign — it normally means
+# the product is being bent to fit the change rather than the reverse, and that
+# is exactly what an earlier revision of this file recorded when case 7 flipped.
+# The distinction here is that this is a deliberate rule change made with the
+# numbers in hand, not an unnoticed collision:
+#
+#   * 11,588 of the 11,594 open pulls with outstanding work carry
+#     LockHourCap = 1; the six that do not are fixtures created by this work.
+#   * ErpUpsertService.cs:189 writes a hardcoded 1 — not a parameter, not a
+#     default, not an upstream flag. PullAdminService and dashboard.js:123
+#     assert true a second and third time.
+#   * So nobody has ever chosen the value per pull. The flag was true
+#     everywhere, which makes it a constant rather than a control, and
+#     honouring it made the over-receipt path unreachable on live data.
+#
+# The assertions below are therefore what became stale, not the product.
+# The hour-cap ENFORCEMENT is gone; the hour WINDOW is untouched — a receive
+# still targets a specific (PullItemId, HourOfDay) and outstanding is still
+# computed per window. Cases 1, 3, 5, 6 and 7a/7b all still hold unchanged.
+#
+# WHY CASE 7 CHANGED EARLIER (db/047, brief §2f — "the lock stays a lock")
 # ----------------------------------------------------------------
 # Case 7 used to assert "Loose pull, receive 500 on a 200-cap window → 200 OK
 # (cap not enforced)". db/047 replaced that: on a pull with LockHourCap=false an
@@ -40,11 +76,9 @@
 # loss: type 1,500, get 1,000 recorded, no error) and replaces the unreachable
 # implicit path with an explicit, audited one.
 #
-# What did NOT change, and is still asserted by cases 1-6 and 8: with
-# LockHourCap=true the cap is absolute. VarianceAccepted does not override it —
-# see smoke-variance-preview-confirm-agreement.ps1, which asserts that a LOCKED
-# pull refuses an over-receipt even when the tick is set. A short close remains
-# available on both settings: a cap constrains how much may arrive, not how little.
+# (That paragraph's conclusion — "with LockHourCap=true the cap is absolute" —
+# was itself withdrawn by rev 11 above. Kept as the record of why case 7 moved,
+# not as a statement of current behaviour.)
 #
 # Assumes ReceivingOps.Web is running on http://localhost:5213.
 
@@ -97,16 +131,18 @@ function InvokeExpectFail($method, $uri, $body, $session, $expectedStatus) {
         if ($null -eq $resp) { throw }
         $status = [int]$resp.StatusCode
         $title  = $null
+        $code   = $null      # db/047 — ProblemDetails.Extensions["code"]
         if ($_.ErrorDetails.Message) {
             try {
                 $pd = $_.ErrorDetails.Message | ConvertFrom-Json
                 $title = $pd.title
+                $code  = $pd.code
             } catch { $title = $_.ErrorDetails.Message }
         }
         if ($status -ne $expectedStatus) {
-            return [pscustomobject]@{ Status=$status; Title=$title; Wrong=$true }
+            return [pscustomobject]@{ Status=$status; Title=$title; Code=$code; Wrong=$true }
         }
-        return [pscustomobject]@{ Status=$status; Title=$title; Wrong=$false }
+        return [pscustomobject]@{ Status=$status; Title=$title; Code=$code; Wrong=$false }
     }
 }
 
@@ -151,17 +187,29 @@ function Receive($pullItemId, $hour, $qty, $variance = $false, $note = $null) {
 $sv = Login 'sadmin' 'admin' $WH_01
 
 # Source check — service has the hour-cap branch
-Step "Source: ReceiptService has EnforceHourCapAsync + LockHourCap branch"
+Step "Source: hour-cap enforcement removed (rev 11); window read + tick rule intact"
 $svc = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\Services\ReceiptService.cs' -Raw
-foreach ($needle in @(
-    'EnforceHourCapAsync',
-    'pullCtx.LockHourCap',
-    'Insufficient hour capacity',
-    'p.LockHourCap'   # both Preview + Receive SELECTs should include the column
-)) {
+# rev 11 — EnforceHourCapAsync and the "Insufficient hour capacity" message are
+# GONE, deliberately: the hour cap no longer refuses a receive. Assert their
+# ABSENCE, so a future revert that quietly reinstates the gate is caught here
+# rather than by an operator who cannot record an over-delivery.
+#
+# Comments are stripped first. The file explains the removal by NAMING what was
+# removed, so matching raw source makes the assertion fail on the very comment
+# documenting the change — the same trap that caught the clamp assertion in
+# smoke-variance-section8.ps1. An absence check has to read code, not prose.
+$svcCode = [regex]::Replace($svc, '/\*[\s\S]*?\*/', '')
+$svcCode = ($svcCode -split "`n" | ForEach-Object { $_ -replace '(^|\s)//.*$', '' }) -join "`n"
+foreach ($gone in @('EnforceHourCapAsync', 'Insufficient hour capacity')) {
+    if ($svcCode -match [regex]::Escape($gone)) {
+        Fail "ReceiptService still carries '$gone' in live code — the rev 11 rule reversal has been undone"
+    }
+}
+# The window read and the over-receipt rule must still be there.
+foreach ($needle in @('ReadWindowStateAsync', 'OVER_RECEIPT_NOT_ACCEPTED', 'p.LockHourCap')) {
     if ($svc -notmatch [regex]::Escape($needle)) { Fail "ReceiptService missing $needle" }
 }
-OK "Service carries hour-cap enforcement branch"
+OK "Hour-cap enforcement removed; the window read and the tick rule remain"
 
 # ----------------------------------------------------------------------------
 # 1. Strict pull — receive 100 of 200 → OK
@@ -173,19 +221,32 @@ if ($r.newReceivedQty -ne 100) { Fail "Expected newReceivedQty=100, got $($r.new
 OK "Receive 100 → newReceivedQty=100"
 
 # ----------------------------------------------------------------------------
-# 2. Strict pull — receive 300 more would overflow → 409
+# 2. Strict pull — over-receipt UNTICKED → 400 (rev 11: the lock no longer refuses)
 # ----------------------------------------------------------------------------
-Step "Strict pull at 100/200, receive 300 → 409 'Insufficient hour capacity'"
+Step "Strict pull at 100/200, receive 300 UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED"
 $body = @{
     pullItemId = $strict.ItemId; hourOfDay = $strict.Hour; qty = 300;
     lotBatch = $null; palletId = $null; binLocation = $null;
-    qcStatus = 'pending'; note = $null
+    qcStatus = 'pending'; note = $null; varianceAccepted = $false
 } | ConvertTo-Json
-$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 409
-if (-not $r -or $r.Wrong) { Fail "Expected 409, got $($r.Status)" }
-if ($r.Title -notmatch 'Insufficient hour capacity') { Fail "Title missing 'Insufficient hour capacity': $($r.Title)" }
-if ($r.Title -notmatch 'Hour 14:00') { Fail "Title missing 'Hour 14:00': $($r.Title)" }
-OK "409 with the expected title"
+$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 400
+if (-not $r -or $r.Wrong) { Fail "Expected 400, got $($r.Status)" }
+if ($r.Title -notmatch 'exceeds the 100 pcs outstanding') { Fail "Title wrong: $($r.Title)" }
+OK "400 — the tick is required even on a strict pull; the lock no longer decides"
+
+# 2b. Strict pull — the SAME over-receipt, TICKED → accepted and the line closes.
+#     This is the case rev 11 exists for: on live data essentially every pull is
+#     strict, so if the tick did not work here it would not work anywhere.
+#
+#     Its OWN fixture on purpose — ticking closes the window, which would leave
+#     $strict unusable for cases 3, 4 and 5 below.
+Step "Strict pull, receive 300 TICKED + note → 200, line closed, VarianceQty=+100"
+$strictOver = NewSmokePullWithItem $true 'STRICT-OVER'
+$r = Receive $strictOver.ItemId $strictOver.Hour 300 $true 'over-delivery accepted on a strict pull'
+if ($r.varianceQty -ne 100)  { Fail "Expected varianceQty=+100 (300 entered vs 200 outstanding), got $($r.varianceQty)" }
+if ($r.isClosed -ne $true)   { Fail "Expected isClosed=true, got $($r.isClosed)" }
+if ($r.newOutstanding -ne 0) { Fail "Expected newOutstanding=0 (never negative), got $($r.newOutstanding)" }
+OK "Over-receipt recorded on a STRICT pull at the entered figure; line closed"
 
 # ----------------------------------------------------------------------------
 # 3. Strict pull — fill the remaining 100 exactly → OK, window full
@@ -196,27 +257,30 @@ if ($r.newReceivedQty -ne 200) { Fail "Expected newReceivedQty=200, got $($r.new
 OK "Receive 100 → newReceivedQty=200 (cap reached)"
 
 # ----------------------------------------------------------------------------
-# 4. Strict pull — receive 1 on full window → 409
+# 4. Strict pull — receive 1 on a full window, UNTICKED → 400 (rev 11)
+#    Outstanding is 0, so 1 is an over-receipt and needs the tick like any other.
 # ----------------------------------------------------------------------------
-Step "Strict pull at 200/200, receive 1 → 409 (zero remaining)"
+Step "Strict pull at 200/200, receive 1 UNTICKED → 400 OVER_RECEIPT_NOT_ACCEPTED"
 $body = @{
     pullItemId = $strict.ItemId; hourOfDay = $strict.Hour; qty = 1;
     lotBatch = $null; palletId = $null; binLocation = $null;
-    qcStatus = 'pending'; note = $null
+    qcStatus = 'pending'; note = $null; varianceAccepted = $false
 } | ConvertTo-Json
-$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 409
-if (-not $r -or $r.Wrong) { Fail "Expected 409 on full window, got $($r.Status)" }
-if ($r.Title -notmatch 'already received 200') { Fail "Title missing 'already received 200': $($r.Title)" }
-OK "409 — full window rejected"
+$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 400
+if (-not $r -or $r.Wrong) { Fail "Expected 400 on full window, got $($r.Status)" }
+if ($r.Title -notmatch 'exceeds the 0 pcs outstanding') { Fail "Title wrong: $($r.Title)" }
+OK "400 — a full window is just outstanding 0; the tick is what opens it"
 
 # ----------------------------------------------------------------------------
-# 5. Preview WITH ?hour= on the full window → 409
+# 5. Preview WITH ?hour= on the full window → 400, matching Receive exactly.
+#    The status changed with the rule (was 409); the point of the case has not:
+#    preview and confirm must give the same answer to the same question.
 # ----------------------------------------------------------------------------
-Step "GET /preview?pullItemId=&qty=50&hour=14 on full window → 409"
-$r = InvokeExpectFail 'GET' "$base/api/receipts/preview?pullItemId=$($strict.ItemId)&qty=50&hour=14" $null $sv 409
-if (-not $r -or $r.Wrong) { Fail "Preview expected 409, got $($r.Status)" }
-if ($r.Title -notmatch 'Insufficient hour capacity') { Fail "Preview title wrong: $($r.Title)" }
-OK "Preview also rejects when hour passed"
+Step "GET /preview?pullItemId=&qty=50&hour=14 on full window → 400 (same as Receive)"
+$r = InvokeExpectFail 'GET' "$base/api/receipts/preview?pullItemId=$($strict.ItemId)&qty=50&hour=14" $null $sv 400
+if (-not $r -or $r.Wrong) { Fail "Preview expected 400, got $($r.Status)" }
+if ($r.Code -ne 'OVER_RECEIPT_NOT_ACCEPTED') { Fail "Preview code wrong: $($r.Code)" }
+OK "Preview refuses with the same status and code Receive gives"
 
 # ----------------------------------------------------------------------------
 # 6. Preview WITHOUT ?hour= → 200 (back-compat path skips the check)
@@ -257,7 +321,7 @@ OK "Over-receipt recorded at the entered figure, line closed, outstanding floore
 # ----------------------------------------------------------------------------
 # 8. Legacy over-state on strict pull — SQL poke ReceivedQty=300, receive 1 → 409
 # ----------------------------------------------------------------------------
-Step "Strict pull with SQL-poked over-state (300/200), receive 1 → 409"
+Step "Strict pull with SQL-poked over-state (300/200), receive 1 UNTICKED → 400"
 $over = NewSmokePullWithItem $true 'OVER-A'
 $pokeSql = @"
 SET QUOTED_IDENTIFIER ON;
@@ -272,12 +336,14 @@ if ($LASTEXITCODE -ne 0) { Fail "SQL poke failed (exit $LASTEXITCODE)" }
 $body = @{
     pullItemId = $over.ItemId; hourOfDay = $over.Hour; qty = 1;
     lotBatch = $null; palletId = $null; binLocation = $null;
-    qcStatus = 'pending'; note = $null
+    qcStatus = 'pending'; note = $null; varianceAccepted = $false
 } | ConvertTo-Json
-$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 409
-if (-not $r -or $r.Wrong) { Fail "Legacy over-state expected 409, got $($r.Status)" }
-if ($r.Title -notmatch 'already received 300') { Fail "Title missing 'already received 300': $($r.Title)" }
-OK "Strict pull rejects future receives on legacy-over windows"
+$r = InvokeExpectFail 'POST' "$base/api/receipts" $body $sv 400
+if (-not $r -or $r.Wrong) { Fail "Legacy over-state expected 400, got $($r.Status)" }
+# MAX(0, 200-300) = 0 — an over-received window reports outstanding 0, never a
+# negative figure (§5). So 1 is an over-receipt and needs the tick.
+if ($r.Title -notmatch 'exceeds the 0 pcs outstanding') { Fail "Title wrong: $($r.Title)" }
+OK "Legacy-over window reports outstanding 0 and still requires the tick"
 
 SqlCleanup
 Write-Host ""

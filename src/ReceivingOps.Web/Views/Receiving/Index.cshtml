@@ -244,12 +244,13 @@
         </div>
       </div>
 
-      @* db/047 §2f — lock state, stated on open rather than discovered by refusal.
-         Before this, nothing told the operator the pull was hour-cap locked until they
-         had already typed an over-quantity and been rejected: the constraint arrived as
-         an error instead of as context. Deliberately NEUTRAL, not red — a locked cap is
-         a fact about the pull, and only becomes an error if it is exceeded. It stays
-         visible after a refusal, so the explanation does not vanish with the attempt. *@
+      @* db/047 §2f (rev 11) — the planned hour figure, stated on open as context.
+         Originally added because nothing told the operator a pull was hour-cap locked
+         until they had typed an over-quantity and been refused. The lock no longer
+         changes the outcome, so the copy no longer mentions it: what the operator needs
+         on open is the figure the variance will be measured against, and the fact that
+         going over is possible with the final-receipt box. Neutral — nothing here is
+         wrong yet, and it stays visible after a refusal. *@
       <div class="cap-lock" id="m-cap-lock" hidden>
         <svg class="cap-lock-ico" width="11" height="11" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -304,9 +305,10 @@
       @* db/047 §7 — accept-variance. Inside the green band, below the input. Hidden by
          default and shown by receiving.js only when the quantity differs from
          outstanding; never pre-ticked, in any state. Hidden entirely on a multi-window
-         SKU (§2c guard) and for an OVER quantity on a LockHourCap pull (§2f), because in
-         both cases the server refuses regardless and offering the box would promise
-         something confirm will not honour. *@
+         SKU (§2c guard), where the server refuses regardless and offering the box would
+         promise something confirm will not honour. §2f rev 11 removed the other
+         exclusion: a locked pull now offers the box like any other, because the tick is
+         the escape on every pull. *@
       <div class="variance-accept" id="m-variance-block" hidden>
         <label class="variance-accept-row">
           <input type="checkbox" id="m-variance">
