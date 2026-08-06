@@ -1,7 +1,7 @@
 # Brief: Accept Variance on Goods Receipt
 
 **System:** ReceivingOps, post-v3.5 on `feat/digital-signature` (.NET 8, Dapper, SQL Server)
-**Revision:** rev 8 — LockHourCap interaction decided (section 2f). Filtered index dropped from db/047, quick-fill event bug added (section 2e). Zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
+**Revision:** rev 10 — checkbox copy corrected, unwired modal fields recorded (section 2g). Reopen UI placement specified (section 2d). LockHourCap interaction decided (section 2f). Filtered index dropped from db/047, quick-fill event bug added (section 2e). Zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
 **Screen:** "Receive Goods" modal (quantity entry against a scheduled pull slot)
 **Type:** Schema change + service layer + API + UI
 
@@ -155,6 +155,22 @@ Note what this removes: the `-0` reversal problem disappears entirely. `CancelAs
 
 Keep it minimal: one endpoint, one confirm dialog with a reason box. No bulk reopen, no reopen from list views, no separate admin screen.
 
+### Reopen UI — placement
+
+**In the existing receive modal, not a new surface.** Clicking a closed window already opens that modal; it should open in a closed state rather than being blocked or showing a quantity field that cannot be used.
+
+Closed-state modal:
+
+- Replace the quantity entry block with a closed banner: who closed it, when, and the close reason verbatim. The reason is the whole point of having stored it — show it in full, do not truncate it to a tooltip.
+- Show the final figures plainly — expected, received, and the variance — so it is obvious the line closed short or over rather than complete.
+- A single **Reopen line** button. No quantity controls, no checkbox, no note field in this state.
+- Reopen opens a confirm dialog with a required reason box and a short line stating that the line returns to the pending queue at its previous outstanding. Empty reason → the button stays disabled; the server also refuses with `400 REOPEN_REASON_REQUIRED`.
+- On success the modal returns to its normal receive state with outstanding restored, without a page reload.
+
+**The list must show closed lines as closed.** A short-closed window reads `400 / 1,000` in the grid, which looks identical to a pending partial. Without a distinct closed pill an operator cannot tell a line that is finished from one still waiting for a truck — and that confusion is the thing this whole change exists to remove. Use a pill distinct from both the complete and pending states, and make a closed row's variance visible rather than styling it as an error.
+
+Same `CanReceive` permission as receiving; do not invent a new one.
+
 ---
 
 ## 2e. The quick-fill buttons don't tell the preview
@@ -191,6 +207,23 @@ Two things make this the right call rather than merely the cautious one:
 **Preview must apply the identical rule** — this is the fix for the disagreement introduced when `PreviewAsync` kept calling `EnforceHourCapAsync` and `ReceiveAsync` stopped. Whatever confirm refuses, preview refuses, with the same code and the same message.
 
 **Amend the `CLAUDE.md` invariant.** It currently reads that with `LockHourCap = false` the per-hour `ExpectedQty` is a planning hint only. That is no longer quite true: exceeding it now requires an explicit acknowledgement and closes the line. Update the wording to say so.
+
+---
+
+## 2g. Four more unwired fields — same defect class as the clamp
+
+`m-lot`, `m-pallet`, `m-bin` and `m-qc` carry no `id` attributes, so `fieldVal()` never matches them and every value posts as `null`. Evidence, not inference: **243 of 243 receipts** carry `NULL LotBatch`, `NULL PalletId`, `NULL BinLocation` and `QcStatus = 'pending'`.
+
+The operator sees `LOT-2403-118`, `PLT-00482`, `A-12-03` and `Passed inspection` sitting pre-filled in the modal and reasonably believes they were recorded. None ever were. For a warehouse this is heavier than a quantity discrepancy: there is no lot traceability anywhere in the receipt history, so a recall has nothing to trace.
+
+**In scope for this change**, because it is four `id` attributes in the same modal currently under test, and shipping a screen we know lies about four more fields is not defensible.
+
+Two conditions before wiring them:
+
+1. **Check the consumers first.** These columns have only ever held `NULL` and `'pending'`. Confirm that exports, the DN/DO path, the KTF export and any report handle real values — and specifically that nothing branches on `QcStatus = 'pending'` in a way that changes behaviour once other values appear.
+2. **Prove it on the wire**, the same way the clamp was proved: record the payload before and after, showing the four values actually reaching the server, and confirm they land in the columns rather than being accepted and dropped.
+
+The note field (`m-note`) was unwired by the same cause and is already fixed — variance requires it.
 
 ---
 
@@ -346,7 +379,9 @@ Use the same diff colour convention as the Production Receiving screen (match = 
 **Checkbox.** Inside the green "How many units?" band, below the input:
 
 > ☐ **This is the final receipt — close the line at this quantity**
-> The line will be closed at the quantity entered and will not appear as outstanding again. This cannot be undone.
+> The line closes at the quantity entered and leaves the pending queue. It can be reopened later with a reason.
+
+Earlier revisions ended that copy with "This cannot be undone." Section 2d's reopen action makes that false, and shipping a fresh lie on the screen while removing three others would be its own kind of failure. Do not restore the sentence.
 
 Rules:
 - Hidden when qty equals outstanding.
