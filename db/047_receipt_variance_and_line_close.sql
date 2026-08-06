@@ -1,8 +1,8 @@
 /* ============================================================================
    ReceivingOps — 047_receipt_variance_and_line_close.sql  (Accept Variance)
    ----------------------------------------------------------------------------
-   ADDITIVE, NON-BREAKING. Two nullable/defaulted columns on dbo.Receipts,
-   four on dbo.PullItemWindows, and one filtered index.
+   ADDITIVE, NON-BREAKING. Two columns on dbo.Receipts and four on
+   dbo.PullItemWindows. No index, no constraint change — columns only.
 
      dbo.Receipts
        VarianceAccepted  BIT NOT NULL DEFAULT 0
@@ -99,24 +99,31 @@
    ONLY thing enforcing it — treat that as load-bearing when touching the
    cancel path, which decrements the cache at ReceiptService.cs:554-559.
 
-   INDEX
-   -----
-   dbo.PullItemWindows has NO PullId column; it reaches the pull via
-   PullItemId -> PullItems.PullId. IX_PIW_Open is therefore keyed on
-   PullItemId with the Expected/Received pair INCLUDEd, which is the shape
-   the two pending-count subqueries need (ReceiptService.cs:408-413 and
-   PullRepository.cs:42-45).
+   NO INDEX — COLUMNS ONLY (brief rev 7 §4)
+   -----------------------------------------
+   An earlier revision called for a filtered IX_PIW_Open on
+   (PullItemId) INCLUDE (ExpectedQty, ReceivedQty) WHERE IsClosed = 0.
+   Dropped, for three reasons:
 
-   The conditional close itself needs no new index — the existing
+     - UQ_PIW_Hour (PullItemId, HourOfDay) already leads on PullItemId, so
+       the only thing gained is the INCLUDE and the filter.
+     - The table holds ~48,000 rows and nothing suggests any of the five
+       pending queries is slow. The brief's wording was "add a filtered
+       index IF the pending-lines query is hot" — it isn't.
+     - A filtered index imposes SET-option requirements on every subsequent
+       INSERT/UPDATE against the table. SqlClient satisfies them by default,
+       but the ERP sync also writes PullItemWindows
+       (ErpUpsertService.cs:221, :333, :388, :398), and a mismatch there
+       would break sync on production.
+
+   So this migration is columns only — the safest shape a migration takes.
+   Revisit the index when a query is measurably slow; it can be added
+   ONLINE at any time without touching the DLL.
+
+   The conditional close needs no new index regardless: the existing
    UQ_PIW_Hour (PullItemId, HourOfDay) already makes
        WHERE PullItemId = @p AND HourOfDay = @h AND IsClosed = 0
    a unique seek.
-
-   ONLINE = ON is used where the engine supports it. Production is
-   Enterprise Edition (64-bit), EngineEdition 3, ProductVersion 16.0.1000.6
-   (verified 2026-08-06). The EngineEdition test below keeps the same file
-   runnable on a Standard/Express developer box, where ONLINE would other-
-   wise be a hard error; on production it takes the ONLINE branch.
 
    ROLLBACK SAFETY (brief §2)
    --------------------------
@@ -131,7 +138,8 @@
         ErpUpsertService.cs:221, :333, :398).
      - No existing column is altered, dropped or re-typed.
      - No CHECK constraint is added, dropped or relaxed.
-     - The new index is additive and filtered.
+     - No index is created, so no new SET-option requirement is imposed on
+       any writer — including the ERP sync.
    Running this migration BEFORE the DLL is copied is therefore safe, which
    is the order §2 requires.
 
@@ -234,42 +242,7 @@ END
 GO
 
 ------------------------------------------------------------------------------
--- 3. Filtered index for the pending / open-window queries.
---    Rows graduate out of this index as soon as they are closed, so it stays
---    small — the same reasoning db/023 used for IX_ExportJobsLog_UserPending.
-------------------------------------------------------------------------------
-IF NOT EXISTS (SELECT 1 FROM sys.indexes
-               WHERE name = N'IX_PIW_Open'
-                 AND object_id = OBJECT_ID('dbo.PullItemWindows'))
-BEGIN
-    IF CAST(SERVERPROPERTY('EngineEdition') AS INT) IN (3, 5, 8)
-    BEGIN
-        PRINT 'Creating IX_PIW_Open WITH (ONLINE = ON)...';
-        EXEC sp_executesql N'
-            CREATE NONCLUSTERED INDEX IX_PIW_Open
-                ON dbo.PullItemWindows (PullItemId)
-                INCLUDE (ExpectedQty, ReceivedQty)
-                WHERE IsClosed = 0
-                WITH (ONLINE = ON);';
-    END
-    ELSE
-    BEGIN
-        PRINT 'Creating IX_PIW_Open (offline — engine does not support ONLINE)...';
-        EXEC sp_executesql N'
-            CREATE NONCLUSTERED INDEX IX_PIW_Open
-                ON dbo.PullItemWindows (PullItemId)
-                INCLUDE (ExpectedQty, ReceivedQty)
-                WHERE IsClosed = 0;';
-    END
-END
-ELSE
-BEGIN
-    PRINT 'IX_PIW_Open already exists — no change.';
-END
-GO
-
-------------------------------------------------------------------------------
--- 4. Post-conditions. All six columns present; both ledger CHECKs untouched.
+-- 3. Post-conditions. All six columns present; both ledger CHECKs untouched.
 ------------------------------------------------------------------------------
 DECLARE @missing INT =
       CASE WHEN COL_LENGTH('dbo.Receipts',         'VarianceAccepted') IS NULL THEN 1 ELSE 0 END

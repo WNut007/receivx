@@ -37,20 +37,30 @@ is built from this branch plus what is now baselined in `def8f2e`).
   `db/010:125-136`. Nothing to relax. The `ReceivedQty >= 0` floor went with
   it, so the service layer is the only thing preventing a negative.
 
+- **Brief rev 7 committed** (`c0d3df3`) — adds §2e (quick-fill event bug,
+  MARK ZERO characterisation) and drops the index from §4.
+- **`db/047_receipt_variance_and_line_close.sql` written and APPLIED TO DEV
+  ONLY.** Columns only — no index, no constraint change. Verified: all six
+  columns present, 240/240 receipts backfilled `VarianceAccepted=0` +
+  `VarianceQty NULL`, 50,388/50,388 windows `IsClosed=0`, `IX_PIW_Open`
+  absent, both ledger CHECKs intact. Re-run is a clean no-op.
+  **NOT applied to production.**
+
 ## Not done
 
-1. Commit brief **rev 7** (adds §2e: quick-fill event bug + MARK ZERO).
-2. **Revise `db/047`** — delete `IX_PIW_Open` and the whole `EngineEdition`
-   branch (rev 7 §4: not hot, and a filtered index imposes SET-option
-   requirements on every later write to a table the ERP sync also writes).
-   Keep the column post-conditions and the assertion that both ledger CHECKs
-   still exist. **Then run it on DEV ONLY.**
-3. Service → API → UI → tests (§8, 23 cases). Not started.
+1. Service layer → API → UI → tests (§8, 23 cases). Not started.
+2. `db/047` has not been run on production. Deploy order: migration first,
+   then DLL, then app-pool restart. `deploy.ps1` does NOT run migrations.
 
 ## Exact next step
 
-Read `brief-accept-variance-receiving_ver_7.md` §2e, commit rev 7, strip the
-index from `db/047`, run on dev, report the six columns.
+Service layer. In order: the five outstanding queries each get
+`AND IsClosed = 0`; the close path (conditional `UPDATE … WHERE IsClosed = 0`,
+rowcount 0 → 409); the zero-close branch that writes no `Receipts` row and
+needs the `qty <= 0` guard at `ReceiptService.cs:220` carved out; the reopen
+action; the `IsClosed` reset in `CancelAsync` after step 8 (`:559`); and the
+canonical lock-order comment on both `CancelAsync` and `EnforceHourCapAsync`
+before either is touched.
 
 ## Decisions locked (do not relitigate)
 
