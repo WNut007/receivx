@@ -85,6 +85,32 @@ defect, not merely a limit.
 | `smoke-variance-preview-confirm-agreement` | 20 pairs, PASS |
 | `smoke-variance-reopen` | 11 assertions, PASS |
 | `smoke-hourcap-6.2` (case 7 → 7a/7b) | 9 cases, PASS |
+| `smoke-receiving-page-stage-b` | PASS |
+| `smoke-pull-status-forward-transition` | PASS |
+| `smoke-pull-close-display` | PASS |
+| `smoke-pull-detail-refresh` | PASS |
+| `smoke-confirm-modal` | PASS |
+
+### Pre-existing reds, none caused by db/047
+
+Each of these fails *before* reaching any code this change touches. Diagnosed,
+not assumed:
+
+- **`smoke-do-report`** and **`smoke-phase-14-do-multi-do`** — the DN/DO query
+  gained an opt-in whitelist in **`c3c3afb`** (*"Delivery Note includes only
+  'Transferred from WDT' lines"*), the tip commit of the deployed baseline. It
+  keeps only receipts whose `Note` is exactly the WDT sentinel; both smokes
+  create receipts without it, so the report legitimately returns zero rows and
+  no `.dsv-do` element. Proof it is the fixture and not the code: the same
+  preview endpoint renders **36** `.dsv-do` articles for pull `0000012949`.
+  `PullRepository` is unchanged since `1d37ee6`, and `GetDoReportRowsAsync`
+  never references `PullItemWindows`.
+- **`smoke-pull-search`** — fails at a *login*: `swattana` is assigned to
+  `WH-BPI` as supervisor, while the smoke expects `swattana@WH-02` as an
+  operator. Assignment seed drift; it never reaches the search code.
+- **`smoke-close-reopen`** — fails at its fixture-reset step because `PL-2843`
+  does not exist. `db/035`'s Phase-14 wipe removed the `db/006` seed pulls
+  (only `PL-2847` survives).
 
 **Known pre-existing red, NOT caused by this change:** `smoke-close-reopen`
 fails at its fixture-reset step because `PL-2843` does not exist — `db/035`'s
