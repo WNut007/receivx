@@ -41,6 +41,13 @@
   // refused outright and the tick does not open it, so offering the box there would be
   // the same lie as the old "cannot receive over expected" copy, inverted.
   let currentPullHourCapLocked = false;
+
+  // db/047 — did the server's preview refuse this quantity? The allocation preview
+  // used to write btn.disabled directly, which meant two functions owned the Confirm
+  // button: the preview's success path re-enabled it ~200ms after typing and silently
+  // undid the variance gate, so an unticked over-receipt became clickable. The preview
+  // now records its verdict here and refreshVarianceUi is the single owner of the gate.
+  let _previewBlocked = false;
   let items = [];
 
   function loadPullWarehouse(pullId, whCode) {
@@ -473,6 +480,7 @@
     const vnote = document.getElementById('m-note');
     if (vnote) { vnote.value = ''; vnote.classList.remove('is-error'); }
 
+    renderCapLock(outstanding);             // db/047 §2f
     renderClosedState(currentSlotMeta());   // db/047 §2d
     refreshVarianceUi();
 
@@ -654,8 +662,8 @@
     const warn = document.getElementById('m-alloc-warning');
     if (list) { list.classList.remove('show'); list.innerHTML = ''; }
     if (warn) { warn.classList.remove('show'); warn.innerHTML = ''; }
-    const btn = document.getElementById('m-confirm');
-    if (btn) btn.disabled = false;
+    _previewBlocked = false;
+    refreshVarianceUi();   // single owner of the Confirm gate
   }
 
   function scopeBadgeHtml(scope) {
@@ -708,7 +716,8 @@
         list.innerHTML = '';
         warn.innerHTML = `${scopeBadgeHtml(item?.scopeHint || 'warehouse-wide')}<span>${escapeHtml(title)}</span>`;
         warn.classList.add('show');
-        btn.disabled = true;
+        _previewBlocked = true;
+        refreshVarianceUi();
         return;
       }
       if (!r.ok) {
@@ -732,7 +741,8 @@
         : `<span class="alloc-line"><b>Will allocate:</b></span>`;
       list.innerHTML = `${scopeBadgeHtml(p.scope)}${header}${lines}`;
       list.classList.add('show');
-      btn.disabled = false;
+      _previewBlocked = false;
+      refreshVarianceUi();
     } catch (e) {
       // Network/transport — hide preview rather than block the user.
       hideAllocPanel();
@@ -751,6 +761,24 @@
   // convenience, never the enforcement: the same request refused here is
   // refused by ReceiveAsync, with the same code.
   // ==========================================================================
+
+  // db/047 §2f — the lock marker, written once on open.
+  //
+  // Stated as context, not discovered through a rejection. On a locked pull it names
+  // the ceiling so the operator knows the limit before typing; on an unlocked pull it
+  // says quietly that over IS possible, which is the fact they otherwise have to
+  // establish by trial. Neutral in both cases: nothing here is wrong yet.
+  function renderCapLock(outstanding) {
+    const box  = document.getElementById('m-cap-lock');
+    const text = document.getElementById('m-cap-lock-text');
+    if (!box || !text) return;
+
+    box.classList.toggle('is-locked', currentPullHourCapLocked);
+    text.textContent = currentPullHourCapLocked
+      ? `Hour cap locked · cannot receive over ${(outstanding | 0).toLocaleString()}`
+      : `Over ${(outstanding | 0).toLocaleString()} is possible — tick the final-receipt box to record it`;
+    box.hidden = false;
+  }
 
   // The (item, hour) slot the modal is currently open on.
   function currentSlotMeta() {
@@ -783,6 +811,7 @@
     // Everything that belongs to entering a quantity.
     const receiveOnly = [
       document.getElementById('m-receive-block'),
+      document.getElementById('m-cap-lock'),   // db/047 §2f — a ceiling is moot once closed
       document.getElementById('cap-hint'),
       document.getElementById('m-variance-block'),
       document.querySelector('.quick-fill'),
@@ -882,8 +911,13 @@
       cls = 'error';
       msg = `LINE CLOSED · ${pcs(outstanding)} PCS WERE WRITTEN OFF`;
     } else if (overRefusedByLock) {
-      cls = 'error';
-      msg = `OVER BY ${pcs(qty - outstanding)} PCS · HOUR CAP IS LOCKED ON THIS PULL — NOT PERMITTED`;
+      // db/047 §2f — state the arithmetic only. The refusal itself is said twice
+      // otherwise: the permanent lock marker above already gives the ceiling, and the
+      // preview surfaces the server's own "Insufficient hour capacity…" line, which
+      // names the hour, the expected and the already-received and is the authoritative
+      // wording. A third red banner here was just the screen repeating itself.
+      cls = 'neutral';
+      msg = `OVER BY ${pcs(qty - outstanding)} PCS`;
     } else if (over) {
       cls = 'warn';   // amber
       msg = `OVER BY ${pcs(qty - outstanding)} PCS · REQUIRES ACCEPT VARIANCE`;
@@ -915,6 +949,7 @@
     // ---- Confirm gate (§7) -----------------------------------------------------
     btn.disabled =
          meta.closed                       // already closed — nothing to add
+      || _previewBlocked                   // the server's preview refused this quantity
       || overRefusedByLock                 // §2f, server refuses regardless
       || (over && !ticked)                 // over needs the tick
       || (ticked && noteVal.length === 0)  // ticked needs a reason

@@ -1540,6 +1540,37 @@
   }
 
   /* ======================================================================== */
+  /* db/047 §2f — hour-cap lock marker, sits under the qty cards.             */
+  /*                                                                          */
+  /* NEUTRAL in both states, deliberately. A locked cap is a fact about the    */
+  /* pull, not a fault; it becomes an error only when exceeded, and the        */
+  /* readout and the server message cover that. Red here would shout at the    */
+  /* operator for opening a modal.                                            */
+  /* ======================================================================== */
+  .cap-lock {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: -6px 0 12px;
+    padding: 6px 11px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-muted);
+  }
+  .cap-lock-ico { flex: 0 0 auto; opacity: 0.75; }
+  /* The locked variant earns a slightly firmer edge — still not a colour. */
+  .cap-lock.is-locked {
+    border-color: var(--border-bright);
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  /* ======================================================================== */
   /* db/047 §2d — closed-state banner. Replaces the quantity block entirely.  */
   /* Muted like the grid's closed cell, for the same reason: the line is      */
   /* finished but finished short, and neither success-green nor error-red is  */

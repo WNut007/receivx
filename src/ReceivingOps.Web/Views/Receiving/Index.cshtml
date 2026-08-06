@@ -244,6 +244,21 @@
         </div>
       </div>
 
+      @* db/047 §2f — lock state, stated on open rather than discovered by refusal.
+         Before this, nothing told the operator the pull was hour-cap locked until they
+         had already typed an over-quantity and been rejected: the constraint arrived as
+         an error instead of as context. Deliberately NEUTRAL, not red — a locked cap is
+         a fact about the pull, and only becomes an error if it is exceeded. It stays
+         visible after a refusal, so the explanation does not vanish with the attempt. *@
+      <div class="cap-lock" id="m-cap-lock" hidden>
+        <svg class="cap-lock-ico" width="11" height="11" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span id="m-cap-lock-text"></span>
+      </div>
+
       @* db/047 §2d — CLOSED STATE. Clicking a closed window already opens this modal;
          it opens in this state instead of showing a quantity field that cannot be used.
          Replaces the quantity block entirely: no quantity controls, no checkbox, no note.
