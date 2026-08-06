@@ -1,0 +1,111 @@
+/* ===== Shared pagination component (Phase 8.2) =====
+   Themed via the per-page CSS variables (--surface, --border, --text,
+   --accent, ...) so the same control reads correctly under light /
+   midnight / slate without per-page overrides.
+
+   DOM contract — JS module + Razor partial both emit:
+
+       <nav class="pagination" aria-label="...">
+         <span class="pagination-info">Page X of Y · N records</span>
+         <ul class="pagination-nav">
+           <li><button class="pagination-btn prev" data-page="N-1">‹ Prev</button></li>
+           <li><button class="pagination-btn"      data-page="1">1</button></li>
+           <li><span  class="pagination-ellipsis">…</span></li>
+           <li><button class="pagination-btn active" data-page="5">5</button></li>
+           ...
+           <li><button class="pagination-btn next" data-page="N+1">Next ›</button></li>
+         </ul>
+       </nav>
+
+   The Razor partial swaps <button data-page=...> for <a href="?page=...">
+   to enable full-reload navigation on server-rendered pages.
+
+   Visibility: parent CSS or JS hides the whole .pagination block when
+   totalPages <= 1 — no need to wire an empty control.
+*/
+
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+
+.pagination-info {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pagination-info b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pagination-nav {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+}
+
+/* The button + anchor share the exact same look — the Razor partial uses
+   <a class="pagination-btn"> for full-reload nav, JS module uses
+   <button class="pagination-btn"> for callback-driven nav. Theming + size
+   are identical so the user can't tell which is which. */
+.pagination-btn,
+.pagination-nav a.pagination-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 32px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.pagination-btn:hover,
+.pagination-nav a.pagination-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--border-bright);
+}
+.pagination-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pagination-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  cursor: default;
+}
+.pagination-btn.active:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pagination-btn:disabled,
+.pagination-nav a.pagination-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.pagination-ellipsis {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 32px;
+  color: var(--text-muted);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 14px;
+}
+
+/* When there's nothing to navigate (one page or empty), hide the whole
+   control by adding the .pagination[hidden] attribute from the host. */
+.pagination[hidden] { display: none; }
+
+@media (max-width: 720px) {
+  .pagination { flex-direction: column; align-items: stretch; }
+  .pagination-info { text-align: center; }
+  .pagination-nav { justify-content: center; }
+}

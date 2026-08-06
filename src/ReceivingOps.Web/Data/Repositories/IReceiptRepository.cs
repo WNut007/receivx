@@ -19,5 +19,10 @@ public interface IReceiptRepository
     /// AND match on `q` against PullNumber + WarehouseCode + ItemCode + ItemDescription
     /// + LotBatch + PalletId + BinLocation + ReceivedByName + Note. Paged.
     /// </summary>
-    Task<PagedTransactions> QueryAsync(TransactionsQuery filter, CancellationToken ct = default);
+    /// <param name="maxTake">
+    /// Ceiling applied to <c>filter.Take</c>. Defaults to the 500-row page cap
+    /// that protects the public /api/transactions surface; export callers that
+    /// legitimately need the whole filtered set pass their own bound.
+    /// </param>
+    Task<PagedTransactions> QueryAsync(TransactionsQuery filter, CancellationToken ct = default, int maxTake = ReceiptRepository.DefaultMaxTake);
 }

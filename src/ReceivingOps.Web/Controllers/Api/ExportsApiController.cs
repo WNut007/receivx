@@ -77,6 +77,34 @@ public class ExportsApiController : ControllerBase
         });
     }
 
+    // KTF form export. Same filter shape + same warehouse scoping as the
+    // transactions export above — the difference is the output format, so the
+    // permission surface matches deliberately (any authenticated user can
+    // export what they can already see on the page).
+    [HttpPost("ktf")]
+    [Authorize]
+    public async Task<IActionResult> QueueKtf([FromBody] TransactionsExportRequest req, CancellationToken ct)
+    {
+        if (!TryGetRequester(out var userId, out var email, out var name, out var err)) return err!;
+
+        var isAdmin = User.IsInRole("admin");
+        if (!isAdmin)
+        {
+            var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var wh) ? wh : (Guid?)null;
+            req.WarehouseId = sessionWh;
+            req.WarehouseCode = null;
+        }
+
+        var jobId = await _exports.EnqueueKtfExportAsync(req, userId, email, name, ct);
+        _log.LogInformation("Queued KTF export job {JobId} for {Email}", jobId, email);
+        return Accepted(new EnqueueResponse
+        {
+            JobId = jobId,
+            Email = email,
+            Message = $"KTF export queued. You'll receive an email at {email} when it's ready (usually under a minute).",
+        });
+    }
+
     [HttpPost("pos")]
     [Authorize(Roles = "admin,supervisor")]
     public async Task<IActionResult> QueuePos([FromBody] PosExportRequest req, CancellationToken ct)

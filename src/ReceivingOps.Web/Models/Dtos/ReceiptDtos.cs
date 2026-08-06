@@ -117,6 +117,15 @@ public class ReceiptJournalRow
     public Guid WarehouseId { get; set; }
     public string WarehouseCode { get; set; } = "";
     public string WarehouseName { get; set; } = "";
+
+    /// <summary>
+    /// db/041 — IANA id from dbo.Warehouses.Timezone (default 'Asia/Bangkok').
+    /// ReceivedAt is UTC; the KTF export renders Date/SHIFT/Time in this zone.
+    /// Nullable defensively: the column is NOT NULL, but an unrecognised id
+    /// falls back rather than throwing (see KtfExportJob.ResolveZone).
+    /// </summary>
+    public string? WarehouseTimezone { get; set; }
+
     public string ItemCode { get; set; } = "";
     public string ItemDescription { get; set; } = "";
 
@@ -125,6 +134,10 @@ public class ReceiptJournalRow
     public string PoNumber { get; set; } = "";
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
+
+    /// <summary>db/041 — PurchaseOrderLines.InvoiceNo (db/021). Feeds the KTF "INV." column.</summary>
+    public string? InvoiceNo { get; set; }
+
     public Guid PurchaseOrderLineId { get; set; }
     public int PoLineNumber { get; set; }
 

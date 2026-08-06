@@ -118,6 +118,108 @@ public class PullRepository : IPullRepository
         return rows.AsList();
     }
 
+    public async Task<(IReadOnlyList<PullSummary> Items, PullDashboardAggregates Aggregates)>
+        QueryDashboardAsync(PullQuery filter, CancellationToken ct = default)
+    {
+        // ---- Shared WHERE — identical predicate on the page slice AND the aggregate ----
+        var where = new StringBuilder("WHERE 1 = 1 ");
+        var p = new DynamicParameters();
+
+        // Warehouse: two mutually-exclusive, null-guarded clauses, BOTH keyed on
+        // p.WarehouseId (admin-resolved Guid vs non-admin session force). "All
+        // warehouses" arrives as both params NULL ⇒ no predicate. Keying on
+        // WarehouseId (not w.Code) hits IX_Pulls_Date's INCLUDE(WarehouseId).
+        where.Append("AND (@WarehouseId        IS NULL OR p.WarehouseId = @WarehouseId) ");
+        where.Append("AND (@SessionWarehouseId IS NULL OR p.WarehouseId = @SessionWarehouseId) ");
+        p.Add("WarehouseId", filter.WarehouseId);
+        p.Add("SessionWarehouseId", filter.SessionWarehouseId);
+
+        // Date range — SAME inclusive predicate the old QueryAsync used (PullDate is DATE).
+        where.Append("AND (@DateFrom IS NULL OR p.PullDate >= @DateFrom) ");
+        where.Append("AND (@DateTo   IS NULL OR p.PullDate <= @DateTo) ");
+        p.Add("DateFrom", filter.DateFrom?.ToDateTime(TimeOnly.MinValue));
+        p.Add("DateTo",   filter.DateTo?.ToDateTime(TimeOnly.MinValue));
+
+        // Status (inert for the dashboard — it never sends one — but honored if present).
+        if (!string.IsNullOrWhiteSpace(filter.Status))
+        {
+            where.Append("AND p.Status = @Status ");
+            p.Add("Status", filter.Status);
+        }
+
+        // §3.5 lock filter (client bit filter, promoted server-side).
+        where.Append("AND (@Lock IS NULL OR p.LockPoByPull = @Lock) ");
+        p.Add("Lock", filter.LockPoByPull);
+
+        // Search — preserve the EXACT current visible behavior (unchanged per sign-off):
+        //   (a) existing multi-token AND over PullNumber / w.Code / w.Name (server), plus
+        //   (b) the client substring over PullNumber + Code + Name + operator (u.Name).
+        // ANDing them reproduces today's intersection; operator search stays inert.
+        var searchActive = !string.IsNullOrWhiteSpace(filter.Q);
+        if (searchActive)
+        {
+            var raw = filter.Q!.Trim();
+            where.Append(
+                "AND LOWER(CONCAT(p.PullNumber, ' ', w.Code, ' ', w.Name, ' ', ISNULL(u.Name, ''))) LIKE @QSub ");
+            p.Add("QSub", "%" + raw.ToLowerInvariant() + "%");
+
+            var tokens = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                var name = $"Q{i}";
+                where.Append($"AND (p.PullNumber LIKE @{name} OR w.Code LIKE @{name} OR w.Name LIKE @{name}) ");
+                p.Add(name, "%" + tokens[i] + "%");
+            }
+        }
+
+        p.Add("Skip", Math.Max(0, (Math.Max(1, filter.Page) - 1) * Math.Clamp(filter.PageSize, 1, 500)));
+        p.Add("Take", Math.Clamp(filter.PageSize, 1, 500));
+
+        // ---- Result set 1: page of cards (UNCHANGED projection + UNCHANGED default sort) ----
+        var pageSql = SummarySelect + where + @"
+            ORDER BY p.PullDate DESC, p.PullNumber DESC
+            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;";
+
+        // ---- Result set 2: aggregates over the FULL filtered set (one row) ----
+        // vw_PullProgress is 1:1 with a pull (GROUP BY p.Id), so the LEFT JOIN does
+        // not change COUNT(*). ItemsTotal = Σ (all PullItems per pull, active +
+        // canceled) so it matches PullSummary.ItemCount exactly — NOT vp.ActiveItemCount
+        // (which would drop canceled items and undercount). PullItems is pre-aggregated
+        // in the `pic` derived table and LEFT JOINed 1:1, because SUM() cannot wrap a
+        // correlated subquery (SQL error 130). ReceivedTotal/ExpectedTotal SUM joined
+        // vw_PullProgress COLUMNS (vp), not subqueries, so they are already legal. The
+        // Warehouses/Users joins are added only when searching, so the default hot path
+        // stays Pulls + view + pic.
+        var aggJoins = searchActive
+            ? "INNER JOIN dbo.Warehouses w ON w.Id = p.WarehouseId LEFT JOIN dbo.Users u ON u.Id = p.CreatedBy "
+            : "";
+        var aggSql = @"
+            SELECT
+                COUNT(*)                                                            AS TotalPulls,
+                ISNULL(SUM(CASE WHEN p.Status='pending'        THEN 1 ELSE 0 END),0) AS Pending,
+                ISNULL(SUM(CASE WHEN p.Status='in_progress'    THEN 1 ELSE 0 END),0) AS InProgress,
+                ISNULL(SUM(CASE WHEN p.Status='fully_received' THEN 1 ELSE 0 END),0) AS FullyReceived,
+                ISNULL(SUM(CASE WHEN p.Status='closed'         THEN 1 ELSE 0 END),0) AS Closed,
+                ISNULL(SUM(ISNULL(pic.ItemCount, 0)), 0)                   AS ItemsTotal,
+                ISNULL(SUM(ISNULL(vp.TotalReceived, 0)), 0)                AS ReceivedTotal,
+                ISNULL(SUM(ISNULL(vp.TotalExpected, 0)), 0)                AS ExpectedTotal
+            FROM dbo.Pulls p
+            LEFT JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id
+            LEFT JOIN (
+                SELECT PullId, COUNT(*) AS ItemCount
+                FROM dbo.PullItems
+                GROUP BY PullId
+            ) pic ON pic.PullId = p.Id
+            " + aggJoins + where + ";";
+
+        using var conn = _factory.Create();
+        using var multi = await conn.QueryMultipleAsync(
+            new CommandDefinition(pageSql + aggSql, p, cancellationToken: ct));
+        var items = (await multi.ReadAsync<PullSummary>()).AsList();
+        var agg = await multi.ReadSingleAsync<PullDashboardAggregates>();
+        return (items, agg);
+    }
+
     // §3.5 typeahead for the linked-pull picker on /Pos. Returns at most @Take
     // open pulls (pending OR in_progress) in @WarehouseId whose PullNumber or
     // Notes contains @Q. Ranking: prefix matches on PullNumber first, then

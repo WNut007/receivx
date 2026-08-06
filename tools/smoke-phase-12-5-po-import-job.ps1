@@ -1,23 +1,29 @@
-# Smoke: Phase 12.5 — atomic upsert (PoImportJob) + /upload + /confirm endpoints.
+# Smoke: Phase 12.5 — PoImportJob (import new, skip duplicates) + /upload +
+# /confirm endpoints.
 #
-# Source-level smoke. Behavioral round-trip (upload → confirm → poll
-# 'succeeded' → verify DB rows) lands in 12.7 integration smoke when a
-# fixture infrastructure exists. 12.5's purpose is to verify the SQL +
-# state-machine invariants without needing a real .xlsx in the repo.
+# Source-level smoke. Behavioral round-trips live in the 12.7 integration
+# smoke (clean import) and smoke-po-import-skip-duplicates (mixed new +
+# duplicate file). 12.5's purpose is to verify the SQL + state-machine
+# invariants without needing a real .xlsx in the repo.
 #
 # Asserts:
 #   1. PoImportJob.cs exists with the expected Hangfire attributes
 #   2. Job injects the 5 expected dependencies + a typed ILogger
 #   3. State-machine guards: aborts on non-'queued' status
-#   4. Atomic insert lives inside ONE transaction with rollback on error
+#   4. Per-PO transaction: opened inside the group loop, duplicates skip via
+#      the 2627/2601 catch, genuine errors still rollback + rethrow
+#   4b. Duplicate pre-check takes NO locking hints (they'd be theatre —
+#      per-PO txs can't hold them; UQ_PurchaseOrders_PoNumber is the
+#      correctness guarantee)
 #   5. Re-parse from log.StoragePath happens before any DB write
-#   6. PoNumber duplicate re-check uses UPDLOCK + ROWLOCK + NO WH filter
-#      (global UNIQUE constraint, per db/010)
+#   6. PoNumber duplicate pre-check has NO WH filter (PoNumber is globally
+#      UNIQUE per db/010)
 #   7. PurchaseOrders INSERT — PullId set NULL, OrderDate from server,
 #      CreatedBy from log.UploadedByUserId (not a string)
 #   8. PurchaseOrderLines INSERT — LineNumber generated, Description
 #      coalesced from null, ReceivedQty hardcoded 0
-#   9. Audit emits 'po-import-succeeded' and 'po-import-failed'
+#   9. Audit emits 'po-import-succeeded' / 'po-import-partial' (skips > 0)
+#      / 'po-import-failed'
 #  10. Hangfire queue 'po-import' added to AddHangfireServer config
 #  11. PoImportController on api/imports/po with admin,supervisor gate
 #  12. Confirm endpoint: 'validated' gate + ownership check +
@@ -87,18 +93,59 @@ if ($job -notmatch 'expected ''queued''') {
 OK "Job aborts cleanly on non-queued log row"
 
 # ----------------------------------------------------------------------------
-# 4. Atomic transaction with rollback
+# 4. Per-PO transaction — import new, skip duplicates
 # ----------------------------------------------------------------------------
-Step "Single tx with rollback on any error"
+# Superseded the "exactly 1 Commit + 1 Rollback" assertion. The job no longer
+# wraps the whole file in one tx: each PO group commits independently so that
+# one already-imported PoNumber can't roll back the POs that ARE new. There
+# are now 1 Commit + 2 Rollbacks (duplicate-skip + genuine-error), all inside
+# the per-group loop.
+Step "Per-PO transaction with skip-on-duplicate + rethrow on real errors"
 if ($job -notmatch 'conn\.BeginTransaction\(\)') { Fail "BeginTransaction() not used" }
 if ($job -notmatch 'tx\.Commit\(\)')             { Fail "tx.Commit() not called" }
 if ($job -notmatch 'tx\.Rollback\(\)')           { Fail "tx.Rollback() not called" }
-# Confirm there is exactly one Commit (the happy path) and one Rollback (the inner catch).
-$commitCount   = ([regex]::Matches($job, 'tx\.Commit\(\)')).Count
-$rollbackCount = ([regex]::Matches($job, 'tx\.Rollback\(\)')).Count
-if ($commitCount   -ne 1) { Fail "Expected exactly 1 tx.Commit(), found $commitCount" }
-if ($rollbackCount -ne 1) { Fail "Expected exactly 1 tx.Rollback(), found $rollbackCount" }
-OK "One Commit + one Rollback + outer catch rethrows"
+
+# The tx must be opened INSIDE the group loop — a BeginTransaction above the
+# foreach would resurrect the all-or-nothing shape.
+$loopPos   = $job.IndexOf('foreach (var group in groups)')
+$beginPos  = $job.IndexOf('conn.BeginTransaction()')
+if ($loopPos -lt 0)                    { Fail "Per-group foreach loop not found" }
+if ($beginPos -lt 0 -or $beginPos -lt $loopPos) {
+    Fail "BeginTransaction() must sit INSIDE the per-group loop (loop:$loopPos begin:$beginPos) — a tx above the loop is the old all-or-nothing shape"
+}
+
+# Duplicate → skip (NOT an error). The unique-violation filter is the sole
+# correctness guarantee now that the pre-check holds no locks.
+if ($job -notmatch 'catch \(SqlException ex\) when \(ex\.Number is 2627 or 2601\)') {
+    Fail "Missing 'catch (SqlException ex) when (ex.Number is 2627 or 2601)' — the unique-violation skip path"
+}
+# That catch must record a skip, not rethrow.
+$dupCatchPos = $job.IndexOf('when (ex.Number is 2627 or 2601)')
+$dupBlock    = $job.Substring($dupCatchPos, [Math]::Min(600, $job.Length - $dupCatchPos))
+if ($dupBlock -notmatch 'skipped\.Add\(group\.Key\)') {
+    Fail "Unique-violation catch must add the PoNumber to the skipped list"
+}
+if ($dupBlock -match '\bthrow\b') {
+    Fail "Unique-violation catch must NOT rethrow — a duplicate is a normal outcome, not a run failure"
+}
+
+# A genuine error still fails the whole run.
+if ($job -notmatch '(?s)catch\s*\{\s*//[^\n]*\n(\s*//[^\n]*\n)*\s*tx\.Rollback\(\);\s*throw;') {
+    Fail "Missing the general 'catch { tx.Rollback(); throw; }' — non-duplicate errors must still fail the run"
+}
+OK "Per-PO tx + duplicate-skips + genuine errors still rethrow"
+
+# ----------------------------------------------------------------------------
+# 4b. Pre-check is a plain read — no lock theatre
+# ----------------------------------------------------------------------------
+# Locking hints on the pre-check would imply a guarantee it cannot provide:
+# each PO commits in its own tx, so any lock taken by the pre-check is long
+# released by insert time. UQ_PurchaseOrders_PoNumber is the real authority.
+Step "Duplicate pre-check takes no locks"
+if ($job -match 'FROM\s+dbo\.PurchaseOrders WITH \(') {
+    Fail "Pre-check must NOT use locking hints — per-PO transactions cannot hold them; the 2627/2601 catch is the correctness guarantee"
+}
+OK "Pre-check is a plain existence read"
 
 # ----------------------------------------------------------------------------
 # 5. Re-parse from log.StoragePath
@@ -118,10 +165,7 @@ OK "Re-parse happens before connection open"
 # ----------------------------------------------------------------------------
 # 6. PoNumber duplicate re-check — UPDLOCK, ROWLOCK, no WH filter
 # ----------------------------------------------------------------------------
-Step "Duplicate re-check: UPDLOCK + ROWLOCK + global (no WH filter)"
-if ($job -notmatch 'FROM\s+dbo\.PurchaseOrders WITH \(UPDLOCK, ROWLOCK\)') {
-    Fail "UPDLOCK + ROWLOCK hints missing on PurchaseOrders duplicate check"
-}
+Step "Duplicate re-check: global (no WH filter)"
 if ($job -notmatch 'WHERE\s+PoNumber IN @PoNumbers') {
     Fail "Duplicate-check WHERE clause missing"
 }
@@ -137,12 +181,16 @@ OK "Duplicate check is global (correct) + serialized via locks"
 # ----------------------------------------------------------------------------
 Step "PurchaseOrders INSERT — schema-correct columns"
 AssertFile $jobFile 'INSERT INTO dbo.PurchaseOrders'
-# A1 (db/033): PullId stays NULL (Guid FK_PO_Pull preserved untouched),
-# PullExternalRef = @PullExternalRef sits between PullId and VendorCode so
-# the denormalized PRS_ID survives independently. Regex matches the new
-# VALUES-clause shape.
-if ($job -notmatch ',\s*NULL,\s*@PullExternalRef,\s*@VendorCode,\s*@VendorName,') {
-    Fail "VALUES clause should be (..., NULL, @PullExternalRef, @VendorCode, @VendorName, ...) — PullId NULL literal + PullExternalRef param + Vendor*"
+# A1 (db/033): PullId stays NULL (Guid FK_PO_Pull preserved untouched) and
+# PullExternalRef follows it so the denormalized PRS_ID survives independently.
+#
+# NOTE: this assertion previously also demanded @VendorCode/@VendorName in the
+# PurchaseOrders VALUES clause. Phase 14 (v3.4) moved vendor to
+# PurchaseOrderLines and dropped both params from the header INSERT, but the
+# smoke was never updated — so it had been failing here since v3.4. Vendor at
+# line grain is asserted in step 8 below and by smoke-phase-14-vendor-at-line.
+if ($job -notmatch ',\s*NULL,\s*@PullExternalRef,') {
+    Fail "VALUES clause should be (..., NULL, @PullExternalRef, ...) — PullId NULL literal + PullExternalRef param"
 }
 # PullExternalRef bound to firstRow.PoNumber (Q1=B denormalization)
 if ($job -notmatch 'PullExternalRef\s*=\s*firstRow\.PoNumber') {
@@ -179,9 +227,16 @@ OK "LineNumber + Description coalesce + ReceivedQty=0 all correct"
 # ----------------------------------------------------------------------------
 # 9. Audit — succeeded + failed
 # ----------------------------------------------------------------------------
-Step "Audit rows: po-import-succeeded + po-import-failed"
+Step "Audit rows: po-import-succeeded + po-import-partial + po-import-failed"
 if ($job -notmatch '"po-import-succeeded"') { Fail "po-import-succeeded audit missing" }
 if ($job -notmatch '"po-import-failed"')    { Fail "po-import-failed audit missing" }
+# 'po-import-partial' distinguishes runs that skipped duplicates. 17 chars —
+# fits VARCHAR(32) since db/032 (the pre-db/032 VARCHAR(16) cap silently
+# truncated exactly this family of strings; see the v3.2 12.7 trailer).
+if ($job -notmatch '"po-import-partial"') { Fail "po-import-partial audit missing" }
+if ($job -notmatch 'skipped\.Count > 0 \? "po-import-partial" : "po-import-succeeded"') {
+    Fail "ActionType must switch to po-import-partial only when skipped > 0 (a clean run keeps po-import-succeeded)"
+}
 # Both must use EntityType='PoImportLog' (parallel to 12.4)
 if (([regex]::Matches($job, '"PoImportLog"')).Count -lt 2) {
     Fail "Expected >=2 audit rows tagged EntityType='PoImportLog'"
@@ -271,5 +326,5 @@ if (-not (Test-Path $gitkeep)) {
 OK "Gitignore + .gitkeep present"
 
 Write-Host ""
-Write-Host "ALL PASS — Phase 12.5: PoImportJob + controller surface + atomic-insert invariants verified." -ForegroundColor Green
+Write-Host "ALL PASS — Phase 12.5: PoImportJob + controller surface + per-PO import/skip invariants verified." -ForegroundColor Green
 exit 0

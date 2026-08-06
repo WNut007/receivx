@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using ReceivingOps.Web.Models.Dtos;
 
@@ -115,16 +116,26 @@ public class PoImportLogRepository : IPoImportLogRepository
 
     public async Task MarkSucceededAsync(
         Guid runId, int posInserted, int linesInserted, int elapsedMs,
+        IReadOnlyList<string> skippedPoNumbers,
         CancellationToken ct = default)
     {
+        var skipped = skippedPoNumbers ?? Array.Empty<string>();
+
+        // Always write the JSON array, even when empty. An empty array plus
+        // PosSkipped=0 says "this run skipped nothing"; NULL is reserved for
+        // rows written before db/046 added the columns.
+        var skippedJson = JsonSerializer.Serialize(skipped);
+
         const string sql = @"
             UPDATE dbo.PoImportLog
-            SET    Status        = 'succeeded',
-                   CompletedAt   = SYSUTCDATETIME(),
-                   ElapsedMs     = @ElapsedMs,
-                   PosInserted   = @PosInserted,
-                   LinesInserted = @LinesInserted,
-                   ErrorMessage  = NULL
+            SET    Status           = 'succeeded',
+                   CompletedAt      = SYSUTCDATETIME(),
+                   ElapsedMs        = @ElapsedMs,
+                   PosInserted      = @PosInserted,
+                   LinesInserted    = @LinesInserted,
+                   PosSkipped       = @PosSkipped,
+                   SkippedPoNumbers = @SkippedPoNumbers,
+                   ErrorMessage     = NULL
             WHERE  RunId = @RunId;";
         using var conn = _factory.Create();
         await conn.ExecuteAsync(new CommandDefinition(sql, new
@@ -133,6 +144,8 @@ public class PoImportLogRepository : IPoImportLogRepository
             ElapsedMs = elapsedMs,
             PosInserted = posInserted,
             LinesInserted = linesInserted,
+            PosSkipped = skipped.Count,
+            SkippedPoNumbers = skippedJson,
         }, cancellationToken: ct));
     }
 
@@ -174,7 +187,8 @@ public class PoImportLogRepository : IPoImportLogRepository
                     FileName, FileSizeBytes, StoragePath, Status,
                     SubmittedAt, StartedAt, CompletedAt, ElapsedMs,
                     TotalRowsRead, ValidationErrorCount, ValidationErrors,
-                    PosInserted, LinesInserted, ErrorMessage, HangfireJobId
+                    PosInserted, LinesInserted, PosSkipped, SkippedPoNumbers,
+                    ErrorMessage, HangfireJobId
             FROM    dbo.PoImportLog
             WHERE   (@Wh IS NULL OR WarehouseId = @Wh)
             ORDER BY SubmittedAt DESC, RunId DESC
@@ -203,7 +217,8 @@ public class PoImportLogRepository : IPoImportLogRepository
                     FileName, FileSizeBytes, StoragePath, Status,
                     SubmittedAt, StartedAt, CompletedAt, ElapsedMs,
                     TotalRowsRead, ValidationErrorCount, ValidationErrors,
-                    PosInserted, LinesInserted, ErrorMessage, HangfireJobId
+                    PosInserted, LinesInserted, PosSkipped, SkippedPoNumbers,
+                    ErrorMessage, HangfireJobId
             FROM    dbo.PoImportLog
             WHERE   RunId = @RunId;";
         using var conn = _factory.Create();

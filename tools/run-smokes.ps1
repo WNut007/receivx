@@ -67,6 +67,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-email-test.ps1'
         'smoke-export-extensions.ps1'
         'smoke-my-exports.ps1'
+        'smoke-ktf-export.ps1'
         'smoke-exports-badge.ps1'
         'smoke-exports-2tab.ps1'
         'smoke-phase-9-extended-fields.ps1'
@@ -90,6 +91,9 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-12-6-nav-entry.ps1'
         'smoke-phase-12-7-integration.ps1'
         'smoke-phase-12-8-import-ui.ps1'
+        # Shares smoke-phase-12-7's P127TEST-% fixture namespace. Both purge
+        # the prefix on entry and exit; they must not run concurrently.
+        'smoke-po-import-skip-duplicates.ps1'
         'smoke-phase-14-vendor-at-line.ps1'
         'smoke-phase-14-do-multi-do.ps1'
         'smoke-do-signatures.ps1'

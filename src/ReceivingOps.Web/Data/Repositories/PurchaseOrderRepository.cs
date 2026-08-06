@@ -9,6 +9,44 @@ public class PurchaseOrderRepository : IPurchaseOrderRepository
 
     public PurchaseOrderRepository(IDbConnectionFactory factory) => _factory = factory;
 
+    public async Task<IReadOnlyDictionary<string, string>> GetVendorNameByBareCodeAsync(CancellationToken ct = default)
+    {
+        // One pass over the distinct pairs — POL is the only vendor-name source
+        // (db/036) and there are only tens of them, so this is a scan of a tiny
+        // grouped set, not a per-row lookup. IX_POL_Vendor covers VendorCode.
+        const string sql = @"
+            SELECT DISTINCT VendorCode, VendorName
+            FROM   dbo.PurchaseOrderLines
+            WHERE  VendorCode IS NOT NULL AND LTRIM(RTRIM(VendorCode)) <> ''
+              AND  VendorName IS NOT NULL AND LTRIM(RTRIM(VendorName)) <> '';";
+
+        using var conn = _factory.Create();
+        var pairs = await conn.QueryAsync<(string VendorCode, string VendorName)>(
+            new CommandDefinition(sql, cancellationToken: ct));
+
+        // Group by the bare code so an ambiguous one (same bare form, two names)
+        // can be dropped instead of silently resolving to whichever row won.
+        return pairs
+            .Select(x => (Bare: StripVendorPrefix(x.VendorCode), x.VendorName))
+            .Where(x => x.Bare.Length > 0)
+            .GroupBy(x => x.Bare, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(x => x.VendorName).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First().VendorName, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// "COI-84491" → "84491". POL codes are source-system-prefixed (COI-/WDT-/V-);
+    /// PullItems.VendorCode holds the bare form. Splits on the FIRST '-' only —
+    /// codes like "COI-3008238BP1" must keep their own internal characters.
+    /// A code with no prefix is returned unchanged.
+    /// </summary>
+    private static string StripVendorPrefix(string code)
+    {
+        var trimmed = code.Trim();
+        var dash = trimmed.IndexOf('-');
+        return dash >= 0 ? trimmed[(dash + 1)..] : trimmed;
+    }
+
     public async Task<(IReadOnlyList<PoListRow> Items, int Total)> QueryAsync(
         Guid? warehouseId, string? status, string? itemCode, string? q,
         DateOnly? orderDateFrom, DateOnly? orderDateTo,

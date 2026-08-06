@@ -151,6 +151,9 @@ builder.Services.AddScoped<IDbConnectionFactory, SqlConnectionFactory>();
 // so startup stays healthy even with ERP integration disabled.
 builder.Services.AddScoped<IErpDbConnectionFactory, ErpSqlConnectionFactory>();
 
+// In-memory cache for the dashboard warehouse code→id map (warehouses rarely change).
+builder.Services.AddMemoryCache();
+
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IWarehouseRepository, WarehouseRepository>();
 builder.Services.AddScoped<IAssignmentRepository, AssignmentRepository>();
@@ -238,6 +241,7 @@ builder.Services.AddOptions<ExportOptions>()
     });
 builder.Services.AddSingleton<ExportTokenService>();
 builder.Services.AddScoped<TransactionsExportJob>();
+builder.Services.AddScoped<KtfExportJob>();
 builder.Services.AddScoped<PosExportJob>();
 builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
@@ -404,7 +408,10 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthentication();

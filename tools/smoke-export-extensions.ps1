@@ -43,13 +43,29 @@ function SignToken($jobId) {
     return (& $b64 ([System.Text.Encoding]::UTF8.GetBytes($payload))) + '.' + (& $b64 $sig)
 }
 
-function WaitForFile($jobId, $prefix, $timeoutSec = 30) {
+function WaitForFile($jobId, $prefix, $timeoutSec = 45) {
+    # File appears early (0 bytes) and grows as Hangfire writes. Wait for the
+    # file to exist, be non-zero, AND not be exclusively locked by the writer —
+    # a bare Test-Path returns the instant ClosedXML creates the file, so the
+    # caller's Get-Item then measures a half-written workbook and the later
+    # download disagrees with it. Same hardened helper as
+    # smoke-phase-9-1-pull-extended-fields.ps1.
     $expected = Join-Path $exportRoot "$prefix-$($jobId.Replace('-','')).xlsx"
     $deadline = (Get-Date).AddSeconds($timeoutSec)
-    while (-not (Test-Path $expected) -and (Get-Date) -lt $deadline) {
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path $expected) {
+            $len = (Get-Item $expected -ErrorAction SilentlyContinue).Length
+            if ($len -gt 0) {
+                try {
+                    # FileShare.None — succeeds only if no other handle has it open.
+                    $fs = [System.IO.File]::Open($expected, 'Open', 'Read', 'None')
+                    $fs.Close()
+                    return $expected
+                } catch { }
+            }
+        }
         Start-Sleep -Milliseconds 500
     }
-    if (Test-Path $expected) { return $expected }
     return $null
 }
 

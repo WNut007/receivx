@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using ReceivingOps.Web.Data.Repositories;
 using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
@@ -16,36 +17,94 @@ public class PullsApiController : ControllerBase
     private readonly ICloseService _close;
     private readonly IPullAdminService _admin;
     private readonly IPullItemAdminService _itemsAdmin;
+    private readonly IWarehouseRepository _warehouses;
+    private readonly IPurchaseOrderRepository _pos;
+    private readonly IMemoryCache _cache;
+
+    // Cached warehouse code→id map for the dashboard admin filter (warehouses
+    // rarely change → resolve once, not per request).
+    private const string WhMapCacheKey = "dashboard.warehouseCodeToId";
+
+    // Cached vendor code→name map for the Receiving Console's Vendor column.
+    // Same shape as the warehouse map: tiny, near-static, whole-dictionary.
+    private const string VendorNameMapCacheKey = "console.vendorNameByBareCode";
 
     public PullsApiController(IPullRepository pulls, ICloseService close,
-        IPullAdminService admin, IPullItemAdminService itemsAdmin)
+        IPullAdminService admin, IPullItemAdminService itemsAdmin,
+        IWarehouseRepository warehouses, IPurchaseOrderRepository pos, IMemoryCache cache)
     {
         _pulls = pulls;
         _close = close;
         _admin = admin;
         _itemsAdmin = itemsAdmin;
+        _warehouses = warehouses;
+        _pos = pos;
+        _cache = cache;
     }
 
-    // §6 GET /api/pulls?warehouseId=&dateFrom=&dateTo=&status=&q=
+    // Resolve an admin's selected warehouse CODE to its Guid via a cached map.
+    // "all"/empty ⇒ null ⇒ NO warehouse predicate (never Guid.Empty, so "all"
+    // can't degrade into a zero-row filter). An unknown code also ⇒ null ⇒ all
+    // (only reachable by URL-tampering an admin, who can already see everything).
+    private async Task<Guid?> ResolveWarehouseIdAsync(string? code, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(code) || code == "all") return null;
+
+        var map = await _cache.GetOrCreateAsync(WhMapCacheKey, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
+            var all = await _warehouses.GetAllActiveAsync(ct);
+            return all.ToDictionary(w => w.Code, w => w.Id, StringComparer.OrdinalIgnoreCase);
+        });
+
+        return map is not null && map.TryGetValue(code.Trim(), out var id) ? id : null;
+    }
+
+    // §6 GET /api/pulls?warehouse=<code>&dateFrom=&dateTo=&status=&q=&lock=&page=&pageSize=
+    // Returns one page of cards (default sort PullDate DESC, PullNumber DESC) plus
+    // tile/badge aggregates over the FULL filtered set.
     [HttpGet]
-    public async Task<IReadOnlyList<PullSummary>> List(
-        [FromQuery] Guid? warehouseId,
+    public async Task<PullDashboardResponse> List(
+        [FromQuery] string? warehouse,                 // admin: warehouse CODE ("WH-01") or "all"/empty
         [FromQuery] DateOnly? dateFrom,
         [FromQuery] DateOnly? dateTo,
         [FromQuery] string? status,
         [FromQuery] string? q,
-        CancellationToken ct)
+        [FromQuery(Name = "lock")] string? lockMode,   // "locked" | "unlocked" | null
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
     {
-        // Non-admins are scoped to the warehouse on their session, no matter what
-        // they pass in the query string. Admins can pass any warehouseId, or omit
-        // to see everything.
         var isAdmin = User.IsInRole("admin");
-        var effectiveWh = isAdmin
-            ? warehouseId
-            : ParseGuid(User.FindFirstValue("warehouseId"));
 
-        var filter = new PullQuery(effectiveWh, dateFrom, dateTo, status, q);
-        return await _pulls.QueryAsync(filter, ct);
+        // Admin: resolve the selected CODE → Guid ("all"/empty → null → no predicate).
+        // Non-admin: ignore the query and hard-force the session warehouse by id —
+        // unchanged security behavior. Exactly one of the two is ever non-null.
+        Guid? adminWhId   = isAdmin ? await ResolveWarehouseIdAsync(warehouse, ct) : null;
+        Guid? sessionWhId = isAdmin ? null : ParseGuid(User.FindFirstValue("warehouseId"));
+
+        bool? lockFilter = lockMode switch { "locked" => true, "unlocked" => false, _ => null };
+
+        var filter = new PullQuery(
+            WarehouseId: adminWhId,
+            SessionWarehouseId: sessionWhId,
+            DateFrom: dateFrom,
+            DateTo: dateTo,
+            Status: status,
+            Q: q,
+            LockPoByPull: lockFilter,
+            Page: Math.Max(1, page),
+            PageSize: Math.Clamp(pageSize, 1, 500));
+
+        var (items, agg) = await _pulls.QueryDashboardAsync(filter, ct);
+        return new PullDashboardResponse
+        {
+            Items = items,
+            Page = filter.Page,
+            PageSize = filter.PageSize,
+            Total = agg.TotalPulls,   // == COUNT(*) over the same WHERE
+            Aggregates = agg,
+        };
     }
 
     // §3.5 GET /api/pulls/search?warehouseId=&q=&take=
@@ -82,16 +141,16 @@ public class PullsApiController : ControllerBase
     // §6 GET /api/pulls/{id}
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<PullDetail>> GetById(Guid id, CancellationToken ct)
-        => await ResolveAsync(await _pulls.GetByIdAsync(id, ct));
+        => await ResolveAsync(await _pulls.GetByIdAsync(id, ct), ct);
 
     // Dashboard links into Receiving with the human-readable PullNumber, not a GUID.
     [HttpGet("by-number/{pullNumber}")]
     public async Task<ActionResult<PullDetail>> GetByNumber(string pullNumber, CancellationToken ct)
-        => await ResolveAsync(await _pulls.GetByPullNumberAsync(pullNumber, ct));
+        => await ResolveAsync(await _pulls.GetByPullNumberAsync(pullNumber, ct), ct);
 
-    private Task<ActionResult<PullDetail>> ResolveAsync(PullDetail? pull)
+    private async Task<ActionResult<PullDetail>> ResolveAsync(PullDetail? pull, CancellationToken ct)
     {
-        if (pull is null) return Task.FromResult<ActionResult<PullDetail>>(NotFound());
+        if (pull is null) return NotFound();
 
         if (!User.IsInRole("admin"))
         {
@@ -100,11 +159,48 @@ public class PullsApiController : ControllerBase
             {
                 // Forbid() routes through the cookie scheme and would redirect to
                 // /Account/AccessDenied (302). For API callers we want a real 403.
-                return Task.FromResult<ActionResult<PullDetail>>(
-                    Problem(title: "You do not have access to this pull", statusCode: 403));
+                return Problem(title: "You do not have access to this pull", statusCode: 403);
             }
         }
-        return Task.FromResult<ActionResult<PullDetail>>(Ok(pull));
+
+        await FillVendorNamesAsync(pull, ct);
+        return Ok(pull);
+    }
+
+    // The ERP sync stamps PullItems.VendorCode from BPI_PRS.VENDOR but never a
+    // name — BPI_PRS has no name column — so the Console's Vendor column had a
+    // code and a blank second line on virtually every ERP-sourced row. The only
+    // vendor NAME in the system lives on dbo.PurchaseOrderLines (db/036), keyed
+    // by the same code under a source-system prefix.
+    //
+    // Resolved from a cached whole-map, never per row: one query per 10 minutes
+    // for the whole app, then a dictionary hit per item.
+    //
+    // Display-only — deliberately does NOT write PullItems.VendorName. Anything
+    // the map can't resolve keeps its existing value (usually null → blank line),
+    // which is the honest rendering rather than a guess.
+    private async Task FillVendorNamesAsync(PullDetail pull, CancellationToken ct)
+    {
+        if (pull.Items.Count == 0) return;
+
+        // Nothing to do when every row already carries a name (e.g. hand-seeded pulls).
+        var needing = pull.Items
+            .Where(i => string.IsNullOrWhiteSpace(i.VendorName) && !string.IsNullOrWhiteSpace(i.VendorCode))
+            .ToList();
+        if (needing.Count == 0) return;
+
+        var map = await _cache.GetOrCreateAsync(VendorNameMapCacheKey, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
+            return await _pos.GetVendorNameByBareCodeAsync(ct);
+        });
+        if (map is null || map.Count == 0) return;
+
+        foreach (var item in needing)
+        {
+            if (map.TryGetValue(item.VendorCode!.Trim(), out var name))
+                item.VendorName = name;
+        }
     }
 
     // §3.5 POST /api/pulls — create a new pull with optional LockPoByPull

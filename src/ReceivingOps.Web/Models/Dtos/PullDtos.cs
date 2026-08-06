@@ -108,12 +108,51 @@ public class PullItemWindowDto
 }
 
 /// <summary>Query parameters for /api/pulls.</summary>
+/// <remarks>
+/// Warehouse is expressed as TWO mutually-exclusive, null-guarded Guid filters,
+/// both keyed on Pulls.WarehouseId so they hit IX_Pulls_Date's INCLUDE(WarehouseId)
+/// with no join to dbo.Warehouses on the hot aggregate path:
+///   • <see cref="WarehouseId"/>        — admin's resolved warehouse (null = "All warehouses" ⇒ NO predicate)
+///   • <see cref="SessionWarehouseId"/> — non-admin's session warehouse force (null for admins)
+/// The controller sets at most one of them.
+/// </remarks>
 public record PullQuery(
     Guid? WarehouseId,
+    Guid? SessionWarehouseId,
     DateOnly? DateFrom,
     DateOnly? DateTo,
     string? Status,
-    string? Q);
+    string? Q,
+    bool? LockPoByPull,
+    int Page = 1,
+    int PageSize = 20);
+
+/// <summary>
+/// Dashboard summary tiles + per-status column badges, aggregated over the
+/// FULL filtered set (NOT the paged rows). One row from the aggregate query.
+/// </summary>
+public class PullDashboardAggregates
+{
+    public int TotalPulls { get; set; }      // COUNT(*) over the filter → "Total Pulls" tile + page Total
+    public int Pending { get; set; }         // column badge
+    public int InProgress { get; set; }      // "In Progress" tile + column badge
+    public int FullyReceived { get; set; }   // "Ready to Close" tile + column badge
+    public int Closed { get; set; }          // column badge
+    public int ItemsTotal { get; set; }      // Σ (all PullItems per pull, active + canceled) → "Items · Today" tile
+    public int ReceivedTotal { get; set; }   // Σ vp.TotalReceived → Throughput units
+    public int ExpectedTotal { get; set; }   // Σ vp.TotalExpected → Throughput % denominator
+}
+
+/// <summary>Envelope for GET /api/pulls: one page of cards + full-set aggregates.</summary>
+public class PullDashboardResponse
+{
+    public IReadOnlyList<PullSummary> Items { get; set; } = Array.Empty<PullSummary>();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int Total { get; set; }           // == Aggregates.TotalPulls (same WHERE)
+    public bool HasMore => Page * PageSize < Total;
+    public PullDashboardAggregates Aggregates { get; set; } = new();
+}
 
 /// <summary>
 /// Lightweight pull row returned by GET /api/pulls/search — the typeahead

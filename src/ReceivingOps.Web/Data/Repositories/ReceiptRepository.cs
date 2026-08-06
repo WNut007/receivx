@@ -6,13 +6,18 @@ namespace ReceivingOps.Web.Data.Repositories;
 
 public class ReceiptRepository : IReceiptRepository
 {
+    /// <summary>Row ceiling for the paged page endpoint. Export callers pass a higher maxTake.</summary>
+    public const int DefaultMaxTake = 500;
+
     // Column list matches ReceiptJournalRow exactly so Dapper maps without explicit aliases.
     // PO context columns (§4.8 v2) are populated by 013_views_v2.sql.
     // Phase 9.1 — last 7 columns are the ERP-sourced PullItem fields added by db/025.
+    // db/041 — WarehouseTimezone + InvoiceNo added for the KTF export.
     private const string JournalSelect = @"
         SELECT  Id, PullItemId, PullId, PullNumber, WarehouseId, WarehouseCode, WarehouseName,
+                WarehouseTimezone,
                 ItemCode, ItemDescription,
-                PurchaseOrderId, PoNumber, VendorCode, VendorName,
+                PurchaseOrderId, PoNumber, VendorCode, VendorName, InvoiceNo,
                 PurchaseOrderLineId, PoLineNumber,
                 HourOfDay, QtyReceived,
                 LotBatch, PalletId, BinLocation, QcStatus, Note,
@@ -43,7 +48,7 @@ public class ReceiptRepository : IReceiptRepository
             new { Id = receiptId }, cancellationToken: ct));
     }
 
-    public async Task<PagedTransactions> QueryAsync(TransactionsQuery filter, CancellationToken ct = default)
+    public async Task<PagedTransactions> QueryAsync(TransactionsQuery filter, CancellationToken ct = default, int maxTake = DefaultMaxTake)
     {
         // Build WHERE incrementally. All parameter values flow through DynamicParameters
         // (never string-concatenated) — even the multi-token search uses parameterized LIKEs.
@@ -134,7 +139,10 @@ public class ReceiptRepository : IReceiptRepository
         }
 
         // Take/skip clamps — paging defaults handled at controller; here we just clamp.
-        var take = Math.Clamp(filter.Take, 1, 500);
+        // maxTake defaults to the page ceiling so the public /api/transactions
+        // surface can't be talked into a 100K fetch; export callers raise it
+        // explicitly (see KtfExportJob).
+        var take = Math.Clamp(filter.Take, 1, Math.Max(1, maxTake));
         var skip = Math.Max(0, filter.Skip);
         p.Add("Take", take);
         p.Add("Skip", skip);

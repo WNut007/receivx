@@ -172,10 +172,13 @@
     <table id="grid">
       <thead>
         <tr>
-          <th style="min-width:100px">Status</th>
-          <th style="min-width:260px">Item · Description</th>
-          <th style="min-width:180px">Vendor</th>
-          <th style="min-width:140px">Remark</th>
+          @* Widths live in receiving.css next to the `left` offsets that are
+             derived from them — an inline min-width here would silently drift
+             out of sync with the frozen column maths. *@
+          <th class="freeze c-status">Status</th>
+          <th class="freeze c-item">Item · Description</th>
+          <th class="freeze c-vendor">Vendor</th>
+          <th class="freeze c-remark">Remark</th>
           <th class="hour-col" data-col="0"><span class="hour-num">11.00</span><span class="hour-tag">Window 1</span></th>
           <th class="hour-col current" data-col="1"><span class="hour-num">12.00</span><span class="hour-tag">▸ Active</span></th>
           <th class="hour-col" data-col="2"><span class="hour-num">13.00</span><span class="hour-tag">Window 3</span></th>

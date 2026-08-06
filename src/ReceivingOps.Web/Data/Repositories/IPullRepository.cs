@@ -4,7 +4,18 @@ namespace ReceivingOps.Web.Data.Repositories;
 
 public interface IPullRepository
 {
+    // Superseded by QueryDashboardAsync for the Pull Controller dashboard; retained
+    // for any non-paged caller. (Currently unused after the dashboard cutover.)
     Task<IReadOnlyList<PullSummary>> QueryAsync(PullQuery filter, CancellationToken ct = default);
+
+    /// <summary>
+    /// Dashboard load: one page of PullSummary (default sort PullDate DESC,
+    /// PullNumber DESC) PLUS tile/badge aggregates over the FULL filtered set,
+    /// in a single QueryMultiple round trip. The page slice and the aggregate
+    /// share one WHERE so they can never drift.
+    /// </summary>
+    Task<(IReadOnlyList<PullSummary> Items, PullDashboardAggregates Aggregates)>
+        QueryDashboardAsync(PullQuery filter, CancellationToken ct = default);
     Task<PullDetail?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<PullDetail?> GetByPullNumberAsync(string pullNumber, CancellationToken ct = default);
     Task<IReadOnlyList<PullSearchResult>> SearchAsync(Guid warehouseId, string q, int take, CancellationToken ct = default);

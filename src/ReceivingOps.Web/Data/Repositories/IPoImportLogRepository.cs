@@ -45,9 +45,23 @@ public interface IPoImportLogRepository
     /// <summary>Hangfire worker started — StartedAt=now.</summary>
     Task MarkRunningAsync(Guid runId, CancellationToken ct = default);
 
-    /// <summary>Atomic insert tx committed — Status='succeeded' + CompletedAt + counts + elapsed.</summary>
+    /// <summary>
+    /// Stage 2 ran to completion — Status='succeeded' + CompletedAt + counts
+    /// + elapsed.
+    ///
+    /// <para><paramref name="skippedPoNumbers"/> (db/046) names the PO groups
+    /// that were NOT imported because their PoNumber already existed; each
+    /// was left completely untouched. Persisted as a JSON array alongside
+    /// PosSkipped = the list's count. Pass an empty list for a run that
+    /// skipped nothing — that writes 0, which is meaningfully different from
+    /// the NULL carried by pre-db/046 rows.</para>
+    ///
+    /// <para>A run that skipped every PO in the file is still 'succeeded' —
+    /// the counts, not the status, express the outcome.</para>
+    /// </summary>
     Task MarkSucceededAsync(
         Guid runId, int posInserted, int linesInserted, int elapsedMs,
+        IReadOnlyList<string> skippedPoNumbers,
         CancellationToken ct = default);
 
     /// <summary>Catastrophic worker failure — Status='failed' + CompletedAt + truncated error.</summary>

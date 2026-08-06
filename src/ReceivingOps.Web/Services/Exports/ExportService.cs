@@ -43,6 +43,16 @@ public class ExportService : IExportService
         return jobId;
     }
 
+    public async Task<Guid> EnqueueKtfExportAsync(
+        TransactionsExportRequest request, Guid requesterUserId,
+        string requesterEmail, string requesterName, CancellationToken ct = default)
+    {
+        var jobId = Guid.NewGuid();
+        await InsertQueuedAsync(jobId, "ktf", request, requesterUserId, requesterEmail, requesterName, ct);
+        _jobs.Enqueue<KtfExportJob>(job => job.RunAsync(jobId, request, requesterEmail, requesterName));
+        return jobId;
+    }
+
     public async Task<Guid> EnqueuePosExportAsync(
         PosExportRequest request, Guid requesterUserId,
         string requesterEmail, string requesterName, CancellationToken ct = default)
