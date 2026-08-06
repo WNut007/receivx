@@ -59,9 +59,20 @@ public class ReceiptService : IReceiptService
     //   - 403 on warehouse mismatch (non-admin)
     //   - 409 on closed pull, lock=true & no PO linked, or insufficient capacity
     // ============================================================================
-    public async Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, byte? hourOfDay = null, CancellationToken ct = default)
+    public async Task<ReceivePreviewResult> PreviewAsync(
+        Guid pullItemId, int qty, byte? hourOfDay = null,
+        bool varianceAccepted = false, CancellationToken ct = default)
     {
-        if (qty <= 0) throw new ValidationException("Quantity must be positive");
+        // db/047 §2c — PREVIEW AND CONFIRM MUST AGREE. Every rule below is the same rule
+        // ReceiveAsync applies, raising the same status, code and message. A preview that
+        // promises more than confirm delivers is the same defect as the silent clamp
+        // wearing a different hat: the screen states one quantity and the system uses
+        // another. If you change a rule here, change it there in the same edit.
+        if (qty < 0) throw new ValidationException("Quantity cannot be negative");
+        if (qty == 0 && !varianceAccepted)
+            throw new ValidationException(
+                "A zero quantity records nothing. Tick 'accept variance' to close the line short.",
+                "ZERO_QTY_WITHOUT_VARIANCE");
         if (hourOfDay is { } h && h > 23) throw new ValidationException("HourOfDay must be 0–23");
 
         var sessionWh = SessionWarehouseId();
@@ -85,14 +96,61 @@ public class ReceiptService : IReceiptService
         if (string.Equals(pullCtx.PullStatus, "closed", StringComparison.Ordinal))
             throw new BusinessException("Pull is closed");
 
-        // v2.1 Phase 6 — hour-cap check fires BEFORE the FIFO walk per spec:
-        // localized error first, no point reading PO lines if the window will
-        // reject. Only runs when LockHourCap=true AND the caller supplied an
-        // hour (older clients that don't yet send ?hour= fall through; the
-        // commit-time check inside ReceiveAsync is the authoritative gate).
-        if (pullCtx.LockHourCap && hourOfDay is { } hr)
-            await EnforceHourCapAsync(conn, transaction: null, withLock: false,
-                                      pullCtx, hr, qty, ct);
+        // ----- Window rules, mirroring ReceiveAsync exactly (§2c agreement) -----
+        // Only when the caller supplied an hour. Older clients that don't send ?hour= fall
+        // through unchanged, and the commit-time checks inside ReceiveAsync remain the
+        // authoritative gate — preview is a convenience, never the enforcement.
+        var closeOnlyPreview = false;
+        if (hourOfDay is { } hr)
+        {
+            var window = await ReadWindowStateAsync(conn, transaction: null, withLock: false,
+                                                    pullCtx, hr, ct);
+
+            if (window.IsClosed)
+                throw new BusinessException(
+                    $"This line was already closed at hour {hr:D2}:00 and cannot accept further receipts.",
+                    "LINE_ALREADY_CLOSED");
+
+            if (varianceAccepted)
+            {
+                var windowCount = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                    "SELECT COUNT(*) FROM dbo.PullItemWindows WHERE PullItemId = @PullItemId;",
+                    new { PullItemId = pullItemId }, cancellationToken: ct));
+
+                if (windowCount > 1)
+                    throw new ValidationException(
+                        $"This SKU is scheduled across {windowCount} hour windows. Accepting variance would close only " +
+                        $"the {hr:D2}:00 slot, not the SKU, so it is not supported.",
+                        "MULTI_WINDOW_NOT_SUPPORTED");
+            }
+
+            var outstanding = window.Outstanding;
+            var variance    = varianceAccepted && qty != outstanding;
+
+            // §2f — the lock stays a lock, in preview too.
+            if (pullCtx.LockHourCap)
+                await EnforceHourCapAsync(conn, transaction: null, withLock: false,
+                                          pullCtx, hr, qty, ct);
+
+            if (qty > outstanding && !variance)
+                throw new ValidationException(
+                    $"Receiving {qty} pcs exceeds the {outstanding} pcs outstanding at hour {hr:D2}:00. " +
+                    $"Tick 'accept variance' to record the over-delivery and close the line.",
+                    "OVER_RECEIPT_NOT_ACCEPTED");
+
+            // §2d — a close-only confirm allocates nothing, so preview must not pretend it
+            // will consume PO capacity (and must not fail when the PO is exhausted).
+            closeOnlyPreview = qty == 0;
+        }
+
+        if (closeOnlyPreview)
+            return new ReceivePreviewResult
+            {
+                Allocations      = new List<AllocationResult>(),
+                TotalAllocatable = 0,
+                Shortage         = 0,
+                Scope            = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide",
+            };
 
         var openLines = (await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false,
                                                     pullCtx, ct)).AsList();
@@ -162,10 +220,13 @@ public class ReceiptService : IReceiptService
     {
         var window = await ReadWindowStateAsync(conn, transaction, withLock, pullCtx, hourOfDay, ct);
 
+        // §2f — message wording is the user-facing contract and is asserted verbatim by
+        // smoke-hourcap-6.2. The code is additive (db/047); the title is unchanged.
         if (requestedQty > window.Outstanding)
             throw new BusinessException(
                 $"Insufficient hour capacity. Hour {hourOfDay:D2}:00 expected {window.ExpectedQty} pcs, " +
-                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.");
+                $"already received {window.ReceivedQty}. Pick a different hour window or adjust quantity.",
+                "HOUR_CAP_EXCEEDED");
 
         return window.Outstanding;
     }
@@ -363,9 +424,23 @@ public class ReceiptService : IReceiptService
             // variance to record when the quantity lands exactly on outstanding.
             var variance = req.VarianceAccepted && req.Qty != outstanding;
 
-            // §6 — over-receipt is terminal and has only one reading, so the tick is
-            // mandatory. Under-receipt is ambiguous and stays optional, which is why there
-            // is deliberately no matching guard below outstanding.
+            // §2f — THE LOCK STAYS A LOCK. On a pull with LockHourCap = true an
+            // over-receipt is refused outright, and VarianceAccepted does NOT override it.
+            // Ticking a box must not let anyone holding CanReceive walk through a cap that
+            // was deliberately set; that would retire the v2.1 Phase 6 feature rather than
+            // change its error code. Runs before the variance rule so the locked pull gets
+            // the localized hour-cap message it has always given.
+            //
+            // Note this fires only when qty EXCEEDS outstanding — a short close on a locked
+            // pull stays available, because a cap constrains how much may arrive, not how
+            // little.
+            if (pullCtx.LockHourCap)
+                await EnforceHourCapAsync(conn, transaction: tx, withLock: true,
+                                          pullCtx, req.HourOfDay, req.Qty, ct);
+
+            // §6 — on an unlocked pull, over-receipt is terminal and has only one reading,
+            // so the tick is mandatory. Under-receipt is ambiguous and stays optional, which
+            // is why there is deliberately no matching guard below outstanding.
             if (req.Qty > outstanding && !variance)
                 throw new ValidationException(
                     $"Receiving {req.Qty} pcs exceeds the {outstanding} pcs outstanding at hour {req.HourOfDay:D2}:00. " +

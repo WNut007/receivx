@@ -59,17 +59,18 @@ public class ReceiptsApiController : ControllerBase
     // lines, so the modal's alloc panel can render the localized error early.
     [HttpGet("preview")]
     public async Task<ActionResult<ReceivePreviewResult>> Preview(
-        [FromQuery] Guid pullItemId, [FromQuery] int qty, [FromQuery] byte? hour, CancellationToken ct)
+        [FromQuery] Guid pullItemId, [FromQuery] int qty, [FromQuery] byte? hour,
+        [FromQuery] bool varianceAccepted, CancellationToken ct)
     {
         try
         {
-            var result = await _receipts.PreviewAsync(pullItemId, qty, hour, ct);
+            var result = await _receipts.PreviewAsync(pullItemId, qty, hour, varianceAccepted, ct);
             return Ok(result);
         }
-        catch (ValidationException ex)  { return Problem(title: ex.Message, statusCode: 400); }
+        catch (ValidationException ex)  { return ProblemWithCode(ex.Message, 400, ex.Code); }
         catch (NotFoundException ex)    { return Problem(title: ex.Message, statusCode: 404); }
         catch (ForbiddenException ex)   { return Problem(title: ex.Message, statusCode: 403); }
-        catch (BusinessException ex)    { return Problem(title: ex.Message, statusCode: 409); }
+        catch (BusinessException ex)    { return ProblemWithCode(ex.Message, 409, ex.Code); }
     }
 
     // §7.3 POST /api/receipts/{id}/cancel

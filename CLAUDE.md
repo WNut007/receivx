@@ -651,12 +651,29 @@ spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 - **PO cap is always the hard limit (§7.1).** No matter the per-pull
   hour-cap setting, total received against a PO line can never exceed
   `OrderedQty`.
-- **Per-hour cap is configurable per pull (v2.1, §7.1).**
+- **Per-hour cap is configurable per pull (v2.1, §7.1; amended by db/047).**
   `Pulls.LockHourCap` set at create-time and immutable thereafter. Default
-  `true` (strict). When `false`, per-hour `ExpectedQty` is a planning hint
-  only — legacy v2 behavior. The Phase 6.1 backfill set every existing pull
-  to `true`; pre-existing over-state is preserved as-is but FUTURE receives
-  on the same window are now blocked.
+  `true` (strict). The Phase 6.1 backfill set every existing pull to `true`;
+  pre-existing over-state is preserved as-is but FUTURE receives on the same
+  window are blocked.
+  - `LockHourCap = true` — **the lock stays a lock.** An over-receipt is
+    refused outright with 409 (`HOUR_CAP_EXCEEDED`), and `VarianceAccepted`
+    does **not** override it. Were the tick able to bypass the cap, anyone
+    holding `CanReceive` could walk through it and the feature would be
+    retired rather than merely re-coded.
+  - `LockHourCap = false` — per-hour `ExpectedQty` is **no longer a bare
+    planning hint** (this is the db/047 amendment). Exceeding it now requires
+    an explicit acknowledgement: unticked over-receipt is refused with 400
+    `OVER_RECEIPT_NOT_ACCEPTED`; ticked, it is recorded at the entered figure
+    and **closes the line**. Before db/047 an unticked over-receipt was
+    silently accepted here — though never reachable from the product, because
+    `receiving.js:752` clamped every pull to outstanding regardless of the
+    lock.
+  - **A short close is unaffected by the lock on both settings.** A cap
+    constrains how much may arrive, not how little.
+  - `smoke-hourcap-6.2.ps1` case 7 asserts the pre-db/047 loose-pull
+    behaviour (unticked over-receipt → 200) and now fails by design. Cases
+    1-6 and 8 pass unmodified.
 - **FIFO is server-only (§7.14).** The modal MUST NOT expose a PO selector.
   The server allocates by `PurchaseOrders.OrderDate ASC, PoNumber ASC`.
 - **One receive call may produce multiple `Receipts` rows (§7.2a)** when the

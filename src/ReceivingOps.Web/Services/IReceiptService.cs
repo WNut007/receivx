@@ -12,7 +12,14 @@ public interface IReceiptService
     /// also enforces the per-hour cap (409 "Insufficient hour capacity") before
     /// reading PO lines, so the modal can surface the localized error early.
     /// </summary>
-    Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, byte? hourOfDay = null, CancellationToken ct = default);
+    /// <summary>
+    /// Read-only FIFO preview. db/047 §2c — applies the IDENTICAL rules to
+    /// <see cref="ReceiveAsync"/> and raises the same status, code and message, so the
+    /// modal can never promise a quantity confirm would refuse. <paramref name="varianceAccepted"/>
+    /// defaults false, so callers that never send it behave exactly as before.
+    /// </summary>
+    Task<ReceivePreviewResult> PreviewAsync(Guid pullItemId, int qty, byte? hourOfDay = null,
+                                            bool varianceAccepted = false, CancellationToken ct = default);
 
     /// <summary>
     /// §7.2a atomic multi-row receive. Locks the pull row + all candidate PO lines
