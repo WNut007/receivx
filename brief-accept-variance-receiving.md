@@ -1,7 +1,7 @@
 # Brief: Accept Variance on Goods Receipt
 
 **System:** ReceivingOps, post-v3.5 on `feat/digital-signature` (.NET 8, Dapper, SQL Server)
-**Revision:** rev 6 — zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
+**Revision:** rev 7 — filtered index dropped from db/047, quick-fill event bug added (section 2e). Zero-close decided (section 2d). Where this document contradicts itself, sections 2c and 2d win over everything earlier.
 **Screen:** "Receive Goods" modal (quantity entry against a scheduled pull slot)
 **Type:** Schema change + service layer + API + UI
 
@@ -157,6 +157,19 @@ Keep it minimal: one endpoint, one confirm dialog with a reason box. No bulk reo
 
 ---
 
+## 2e. The quick-fill buttons don't tell the preview
+
+`receiving.js:739-741` sets `input.value` directly for FILL OUTSTANDING, ½ OUTSTANDING and MARK ZERO, without dispatching an `input` event. The debounced preview at `:704-728` therefore never re-runs, so after clicking a quick-fill button:
+
+- the allocation panel keeps advertising the previous quantity (observed: input reading 0 while the panel promised "Will allocate: 1,000")
+- the cap hint snaps back to the "Cannot receive over expected" copy that section 7 requires removing
+
+This is the same defect class as the silent clamp: the screen states one thing and the system does another. Fix it by dispatching a real `input` event from all three buttons so the preview and hint recompute, and cover it in the preview/confirm agreement test from section 2c.
+
+**MARK ZERO characterised (2026-08-06):** it has always been a dead control. `:741` sets 0, `:753` rejects `qty <= 0` and returns before the fetch, so no request is ever sent and the operator gets a red toast telling them the button's own output is invalid. Server-side agrees independently — a crafted `qty=0` POST returns `400 "Quantity must be positive"` (`ReceiptService.cs:220`). Under section 2d the button finally does something; that server-side guard needs the close-only path carved out of it.
+
+---
+
 ## 3. Discovery — do not guess names
 
 Before implementing, locate and report back:
@@ -194,9 +207,13 @@ New migration. Two concerns: recording that a given receipt accepted variance, a
 `IsClosed` is required — it cannot be derived. An under-receipt leaves `Expected - Received > 0`, so arithmetic alone will keep showing the line as pending forever. That is precisely the bug this change exists to fix.
 
 Add a filtered index if the pending-lines query is hot:
-`CREATE NONCLUSTERED INDEX IX_PIW_Open ON dbo.PullItemWindows (PullItemId) INCLUDE (ExpectedQty, ReceivedQty) WHERE IsClosed = 0`
+**No index in db/047.** An earlier revision called for a filtered `IX_PIW_Open`. Dropped, for three reasons:
 
-`PullItemWindows` has no `PullId` — it reaches the pull via `PullItemId → PullItems.PullId`. The conditional close needs no new index: `UQ_PIW_Hour (PullItemId, HourOfDay)` already makes it a unique seek.
+- `UQ_PIW_Hour (PullItemId, HourOfDay)` already leads on `PullItemId`, so the only thing gained is the `INCLUDE` and the filter.
+- The table holds ~48,000 rows. Nothing suggests any of the five queries is slow, and this brief's own wording was "add a filtered index **if** the pending-lines query is hot".
+- A filtered index imposes SET-option requirements on every subsequent `INSERT`/`UPDATE` against the table. `SqlClient` satisfies them by default, but the ERP sync also writes `PullItemWindows`, and a mismatch there breaks sync on production.
+
+db/047 is therefore **columns only** — the safest shape a migration can take. Revisit the index when a query is measurably slow; it can be added `ONLINE` at any time without touching the DLL.
 
 Use `WITH (ONLINE = ON)`. Verified on production 2026-08-06: Enterprise Edition (64-bit), EngineEdition 3, ProductVersion 16.0.1000.6.
 
