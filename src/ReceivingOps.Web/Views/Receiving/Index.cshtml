@@ -255,6 +255,25 @@
         </div>
       </div>
 
+      @* db/047 §7 — accept-variance. Inside the green band, below the input. Hidden by
+         default and shown by receiving.js only when the quantity differs from
+         outstanding; never pre-ticked, in any state. Hidden entirely on a multi-window
+         SKU (§2c guard) and for an OVER quantity on a LockHourCap pull (§2f), because in
+         both cases the server refuses regardless and offering the box would promise
+         something confirm will not honour. *@
+      <div class="variance-accept" id="m-variance-block" hidden>
+        <label class="variance-accept-row">
+          <input type="checkbox" id="m-variance">
+          <span class="variance-accept-text">
+            <b id="m-variance-title">This is the final receipt — close the line at this quantity</b>
+            <span class="variance-accept-sub" id="m-variance-sub">
+              The line will be closed at the quantity entered and will not appear as
+              outstanding again.
+            </span>
+          </span>
+        </label>
+      </div>
+
       <div class="cap-hint" id="cap-hint">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         @* db/047 §7 — "Maximum allowed: N pcs. Cannot receive over expected." was false on
@@ -299,8 +318,16 @@
           </select>
         </div>
         <div class="field full">
-          <label>Note (optional)</label>
-          <textarea placeholder="Any discrepancy, damage, or instruction…"></textarea>
+          @* db/047 — this textarea had NO id, so confirmReceipt's fieldVal('m-note')
+             never found it and the note was posted as null on every receipt ever taken
+             through this modal. Wired now because the note is the mandatory audit
+             reason whenever variance is accepted. The same is true of m-lot, m-pallet,
+             m-bin and m-qc — flagged separately, not fixed here. *@
+          <label id="m-note-label">Note (optional)</label>
+          <textarea id="m-note" placeholder="Any discrepancy, damage, or instruction…"></textarea>
+          <div class="note-required-msg" id="m-note-required-msg" hidden>
+            A note is required when accepting variance — it is the audit reason.
+          </div>
         </div>
       </div>
 

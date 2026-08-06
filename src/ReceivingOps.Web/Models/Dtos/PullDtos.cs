@@ -105,6 +105,23 @@ public class PullItemWindowDto
     public byte HourOfDay { get; set; }
     public int ExpectedQty { get; set; }
     public int ReceivedQty { get; set; }
+
+    // db/047 — close state. Without IsClosed on the wire the grid cannot tell a
+    // short-closed line from a partial still waiting on a delivery: both render
+    // "400 / 1,000". ClosedAt/ClosedReason feed the closed-state modal, which has to
+    // show what it is offering to undo.
+    //
+    // ClosedBy is deliberately NOT surfaced: it is a Users.Id GUID that would need a
+    // join to render as a name, and the audit row already carries the attribution.
+    //
+    // Every consumer of this DTO is fed from the two assembly sites in PullRepository
+    // (GetByIdAsync's inline loop and AssembleItems), including the three PullItem
+    // admin endpoints — ListWindows, AddWindow and UpdateWindow all re-read through
+    // GetItemByIdAsync rather than hand-constructing. So populating the source
+    // populates them all; none can report a stale IsClosed = false.
+    public bool IsClosed { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedReason { get; set; }
 }
 
 /// <summary>Query parameters for /api/pulls.</summary>

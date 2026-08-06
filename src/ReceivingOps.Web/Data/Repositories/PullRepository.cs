@@ -284,7 +284,8 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
@@ -335,6 +336,9 @@ public class PullRepository : IPullRepository
                     HourOfDay = h,
                     ExpectedQty = r.ExpectedQty ?? 0,
                     ReceivedQty = r.ReceivedQty ?? 0,
+                    IsClosed = r.IsClosed ?? false,   // db/047
+                    ClosedAt = r.ClosedAt,
+                    ClosedReason = r.ClosedReason,
                 });
             }
         }
@@ -491,7 +495,8 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
@@ -510,7 +515,8 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId AND pi.Id = @ItemId
@@ -590,6 +596,9 @@ public class PullRepository : IPullRepository
                     HourOfDay = h,
                     ExpectedQty = r.ExpectedQty ?? 0,
                     ReceivedQty = r.ReceivedQty ?? 0,
+                    IsClosed = r.IsClosed ?? false,   // db/047
+                    ClosedAt = r.ClosedAt,
+                    ClosedReason = r.ClosedReason,
                 });
             }
         }
@@ -617,5 +626,10 @@ public class PullRepository : IPullRepository
         public byte? HourOfDay { get; set; }
         public int? ExpectedQty { get; set; }
         public int? ReceivedQty { get; set; }
+        // db/047 — nullable because the window join is a LEFT JOIN: an item with no
+        // windows yields NULLs across the whole window group, not just the quantities.
+        public bool? IsClosed { get; set; }
+        public DateTime? ClosedAt { get; set; }
+        public string? ClosedReason { get; set; }
     }
 }

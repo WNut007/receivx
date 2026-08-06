@@ -35,6 +35,12 @@
   let currentWhName = null;
   let serverPullStatus = null;   // pending|in_progress|fully_received|closed
   let currentPullLocked = false; // §3.5 — Pulls.LockPoByPull mirrored from PullDetail
+  // db/047 §2f — Pulls.LockHourCap mirrored from PullDetail. Already on the wire via
+  // PullSummary; the page simply never read it. Drives whether the accept-variance
+  // checkbox may be offered for an OVER quantity: on a locked pull an over-receipt is
+  // refused outright and the tick does not open it, so offering the box there would be
+  // the same lie as the old "cannot receive over expected" copy, inverted.
+  let currentPullHourCapLocked = false;
   let items = [];
 
   function loadPullWarehouse(pullId, whCode) {
@@ -53,11 +59,21 @@
     // 'over' is its own state so the visual treatment can flag the overage
     // distinctly from 'complete' (per §7.1 v2, over-receive is allowed when
     // the PO has capacity — but it shouldn't look identical to exactly-done).
+    // db/047 §2d — 'closed' wins over 'pending'. A short-closed window renders
+    // 400 / 1,000, which is character-for-character identical to a partial still
+    // waiting on a delivery. Without its own state the grid cannot tell a finished
+    // line from an unfinished one, which is the exact confusion this change exists
+    // to remove — a reopen button on the modal would just move the problem.
+    //
+    // A window that is closed AND exactly complete still reads 'complete': it
+    // finished normally through the full-receipt path, and there is no variance to
+    // signal. Over stays 'over' for the same reason — the overage is the story.
     const s = (slot.e === 0) ? 'empty'
             : (slot.r >  slot.e) ? 'over'
             : (slot.r === slot.e) ? 'complete'
+            : slot.c ? 'closed'
             : 'pending';
-    return { r: slot.r, e: slot.e, s };
+    return { r: slot.r, e: slot.e, s, closed: !!slot.c };
   }
   function setReceived(item, hour, newR) {
     if (!item.schedule[hour]) return;
@@ -214,8 +230,11 @@
           btn.innerHTML = `<div class="hour-nums"><span class="label">add</span></div>`;
         } else {
           // 'over' = up-arrow + raw pct (e.g. "↑ 130%"); 'complete' = checkmark.
+          // db/047 §2d — a closed line says so, in words. "56%" on a closed window
+          // reads as work outstanding; "CLOSED" does not.
           const statusText = c.s === 'over'     ? `↑ ${pct}%`
                            : c.s === 'complete' ? `✓ ${pct}%`
+                           : c.s === 'closed'   ? `CLOSED`
                            : `${pct}%`;
           // Numerals get an extra "+N over" tail when over-received so the
           // cell tells one consistent story (number + status both flag overage).
@@ -447,6 +466,14 @@
     input.classList.remove('is-error');
     document.getElementById('cap-hint').classList.remove('error');
 
+    // db/047 §7 — never pre-ticked, in any state. Reset the box and the note before
+    // deriving the UI, so a tick left over from the previous slot cannot leak across.
+    const vbox = document.getElementById('m-variance');
+    if (vbox) vbox.checked = false;
+    const vnote = document.getElementById('m-note');
+    if (vnote) { vnote.value = ''; vnote.classList.remove('is-error'); }
+    refreshVarianceUi();
+
     // ---- Read-only gate when pull is closed ----
     applyModalReadOnlyMode();
 
@@ -660,8 +687,14 @@
       // comes from openModal (stored on window._activeHour); omit if absent
       // (no harm — Receive's commit-time check is the authoritative gate).
       const hour = (typeof window._activeHour === 'number') ? window._activeHour : null;
+      // db/047 §2c — the preview must be asked the SAME question confirm will be asked,
+      // flag included. Without it the preview would evaluate an over-quantity as
+      // unticked and refuse a receive the operator has already acknowledged.
+      const variance = !document.getElementById('m-variance-block')?.hidden
+                       && !!document.getElementById('m-variance')?.checked;
       const url = `/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`
-                + (hour !== null ? `&hour=${hour}` : '');
+                + (hour !== null ? `&hour=${hour}` : '')
+                + `&varianceAccepted=${variance}`;
       const r = await fetch(url);
       if (seq !== _allocRequestSeq) return;   // stale response — newer typing replaced it
 
@@ -704,32 +737,136 @@
     }
   }
 
-  document.getElementById('m-input').addEventListener('input', (e) => {
-    // Non-blocking soft hint when input exceeds the per-hour plan
-    // (informational only; the server's PO cap is the authoritative gate).
-    const v = parseInt(e.target.value) || 0;
-    const hint = document.getElementById('cap-hint');
-    const text = document.getElementById('cap-hint-text');
-    if (v < 0) { e.target.value = 0; }
-    if (text) {
-      // IMPORTANT: keep <b id="cap-hint-max"> alive across rewrites — openModal
-      // (line ~370) and the cancel flow (line ~1578) both grab it by id to
-      // update the displayed cap. Without the `<b id="cap-hint-max">` wrapper
-      // these rewrites would destroy the element and the next openModal()
-      // crashes with "Cannot set properties of null".
-      if (v > activeMax) {
-        hint?.classList.add('warn');
-        text.innerHTML = `Over per-hour plan (<b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs). Allowed if PO has capacity.`;
-      } else {
-        hint?.classList.remove('warn');
-        text.innerHTML = `Per-hour plan: <b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs. PO capacity is the hard cap.`;
-      }
+  // ==========================================================================
+  // db/047 §7 — accept-variance UI.
+  //
+  // One function owns the whole derived state: checkbox visibility, the live
+  // variance readout, the note's required styling and the Confirm gate. Every
+  // input path calls it, so the four can never disagree with each other — which
+  // is the failure this change exists to remove, one layer up from the wire.
+  //
+  // The client mirrors the server rules from §2c/§2f exactly. It is a
+  // convenience, never the enforcement: the same request refused here is
+  // refused by ReceiveAsync, with the same code.
+  // ==========================================================================
+
+  // The (item, hour) slot the modal is currently open on.
+  function currentSlotMeta() {
+    const item = items[activeRow] || {};
+    const hour = window._activeHour;
+    const slot = (item.schedule || {})[hour] || {};
+    return {
+      item,
+      hour,
+      multiWindow:  (item.winCount || 1) > 1,   // §2c guard — variance not offered
+      closed:       !!slot.c,
+      closedAt:     slot.ca || null,
+      closedReason: slot.cr || null,
+    };
+  }
+
+  function refreshVarianceUi() {
+    const input = document.getElementById('m-input');
+    const box   = document.getElementById('m-variance');
+    const block = document.getElementById('m-variance-block');
+    const hint  = document.getElementById('cap-hint');
+    const text  = document.getElementById('cap-hint-text');
+    const btn   = document.getElementById('m-confirm');
+    const noteEl    = document.getElementById('m-note');
+    const noteLabel = document.getElementById('m-note-label');
+    const noteMsg   = document.getElementById('m-note-required-msg');
+    if (!input || !box || !block || !btn) return;
+
+    const qty = parseInt(input.value) || 0;
+    const outstanding = activeMax | 0;
+    const meta = currentSlotMeta();
+
+    const over  = qty > outstanding;
+    const exact = qty === outstanding;
+    const under = qty < outstanding;
+
+    // §2f — on a LockHourCap pull an over-receipt is refused outright and the tick
+    // does NOT open it. Offering the checkbox there would promise something confirm
+    // will not honour, which is the same class of lie as the old clamp.
+    const overRefusedByLock = over && currentPullHourCapLocked;
+
+    // Hidden when the quantity exactly matches outstanding (§7): there is no variance
+    // to accept, and the server ignores the flag in that case anyway.
+    const canOffer = !exact && !meta.multiWindow && !overRefusedByLock;
+
+    if (!canOffer && box.checked) box.checked = false;   // never leave a stale tick
+    block.hidden = !canOffer;
+    block.classList.toggle('is-required', canOffer && over);
+
+    const ticked  = canOffer && box.checked;
+    const noteVal = (noteEl?.value || '').trim();
+
+    // ---- live variance readout -------------------------------------------------
+    // The <b id="cap-hint-max"> wrapper must survive every rewrite: openModal and the
+    // cancel-refresh path both grab it by id, and losing it makes the next openModal
+    // throw "Cannot set properties of null".
+    const pcs = n => `<b id="cap-hint-max">${Math.abs(n).toLocaleString()}</b>`;
+    let cls = 'neutral', msg;
+    if (meta.closed) {
+      cls = 'error';
+      msg = `LINE CLOSED · ${pcs(outstanding)} PCS WERE WRITTEN OFF`;
+    } else if (overRefusedByLock) {
+      cls = 'error';
+      msg = `OVER BY ${pcs(qty - outstanding)} PCS · HOUR CAP IS LOCKED ON THIS PULL — NOT PERMITTED`;
+    } else if (over) {
+      cls = 'warn';   // amber
+      msg = `OVER BY ${pcs(qty - outstanding)} PCS · REQUIRES ACCEPT VARIANCE`;
+    } else if (exact) {
+      cls = 'ok';     // green
+      msg = `COMPLETES THE LINE · ${pcs(qty)} PCS`;
+    } else if (under && ticked) {
+      cls = 'error';  // red — only once the operator says so
+      msg = `SHORT CLOSE · ${pcs(outstanding - qty)} PCS WRITTEN OFF`;
+    } else if (qty === 0) {
+      cls = 'neutral';
+      msg = `NOTHING RECEIVED · TICK TO CLOSE THE LINE SHORT BY ${pcs(outstanding)} PCS`;
+    } else {
+      // §7 — an under-receipt is NOT an error state until the operator ticks the box.
+      cls = 'neutral';
+      msg = `PARTIAL · ${pcs(outstanding - qty)} PCS WILL REMAIN OUTSTANDING`;
     }
+    if (text) text.innerHTML = msg;
+    if (hint) {
+      hint.classList.remove('ok', 'warn', 'error');
+      if (cls !== 'neutral') hint.classList.add(cls);
+    }
+
+    // ---- note: optional until the box is ticked --------------------------------
+    if (noteLabel) noteLabel.textContent = ticked ? 'Note · Required' : 'Note (optional)';
+    if (noteEl)  noteEl.classList.toggle('is-error', ticked && noteVal.length === 0);
+    if (noteMsg) noteMsg.hidden = !(ticked && noteVal.length === 0);
+
+    // ---- Confirm gate (§7) -----------------------------------------------------
+    btn.disabled =
+         meta.closed                       // already closed — nothing to add
+      || overRefusedByLock                 // §2f, server refuses regardless
+      || (over && !ticked)                 // over needs the tick
+      || (ticked && noteVal.length === 0)  // ticked needs a reason
+      || (qty === 0 && !ticked)            // zero records nothing unless it closes
+      || qty < 0;
+  }
+
+  document.getElementById('m-input').addEventListener('input', (e) => {
+    if ((parseInt(e.target.value) || 0) < 0) { e.target.value = 0; }
+    refreshVarianceUi();
 
     // Debounced FIFO preview (~200ms)
     clearTimeout(_allocDebounce);
     _allocDebounce = setTimeout(refreshAllocationPreview, 200);
   });
+
+  document.getElementById('m-variance').addEventListener('change', () => {
+    refreshVarianceUi();
+    clearTimeout(_allocDebounce);
+    _allocDebounce = setTimeout(refreshAllocationPreview, 200);
+  });
+
+  document.getElementById('m-note').addEventListener('input', refreshVarianceUi);
 
   document.getElementById('m-close').addEventListener('click', closeModal);
   document.getElementById('m-cancel').addEventListener('click', closeModal);
@@ -742,6 +879,14 @@
       if (action === 'all') input.value = activeMax;
       else if (action === 'half') input.value = Math.floor(activeMax / 2);
       else if (action === '0') input.value = 0;
+
+      // db/047 §2e — setting .value in script does NOT fire an `input` event, so the
+      // debounced preview and the variance readout never recomputed. The panel kept
+      // advertising the previous quantity (observed: input reading 0 while the panel
+      // promised "Will allocate: 1,000") and the hint snapped back to stale copy.
+      // Same defect class as the clamp: the screen states one thing, the system uses
+      // another. Dispatch a real event so every listener recomputes.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     });
   });
 
@@ -783,6 +928,11 @@
       binLocation: fieldVal('m-bin') || null,
       qcStatus:    fieldVal('m-qc') || 'pending',
       note:        fieldVal('m-note') || null,
+      // db/047 — only send true when the box is actually offered AND ticked. The
+      // server re-derives everything from the quantity anyway, but sending a flag the
+      // operator could not see would be a lie in the other direction.
+      varianceAccepted: !document.getElementById('m-variance-block')?.hidden
+                        && !!document.getElementById('m-variance')?.checked,
     };
 
     const btn = document.getElementById('m-confirm');
@@ -980,7 +1130,13 @@
   document.addEventListener('keydown', (e) => {
     if (modal.classList.contains('open')) {
       if (e.key === 'Escape') closeModal();
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') confirmReceipt();
+      // db/047 §7 — the keyboard path obeys the same gate as the button. It must not
+      // be a way round the checkbox or the required note.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        const btn = document.getElementById('m-confirm');
+        if (btn && btn.disabled) return;
+        confirmReceipt();
+      }
     }
     if (closeModalEl.classList.contains('open')) {
       if (e.key === 'Escape') closeCloseModal();
@@ -1234,16 +1390,30 @@
     // §3.5 — drives the lock-icon prefix on PO tokens in drawer + modal-embedded
     // tx rows. Defaults false so older PullDetail responses stay backwards-compat.
     currentPullLocked  = !!pd.lockPoByPull;
+    currentPullHourCapLocked = !!pd.lockHourCap;   // db/047 §2f
 
     const mapped = (pd.items || [])
       .sort((a,b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
       .map(i => {
         const schedule = {};
         for (const w of (i.windows || [])) {
-          schedule[w.hourOfDay] = { r: w.receivedQty | 0, e: w.expectedQty | 0 };
+          schedule[w.hourOfDay] = {
+            r: w.receivedQty | 0,
+            e: w.expectedQty | 0,
+            // db/047 — close state. `c` drives the CLOSED pill in the grid and the
+            // closed-state modal; without it a short-closed 400/1,000 is visually
+            // identical to a partial still awaiting delivery.
+            c:  !!w.isClosed,
+            ca: w.closedAt || null,
+            cr: w.closedReason || null,
+          };
         }
         return {
           pullItemId: i.id,             // GUID — used by POST /api/receipts
+          // db/047 §2c — the accept-variance guard is server-enforced as
+          // MULTI_WINDOW_NOT_SUPPORTED; the UI hides the checkbox for the same reason.
+          // Derived from the payload rather than asked for separately.
+          winCount:  (i.windows || []).length,
           code:       i.itemCode,
           desc:       i.description,
           tag:        i.tag,
