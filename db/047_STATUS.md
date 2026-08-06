@@ -68,15 +68,69 @@ is built from this branch plus what is now baselined in `def8f2e`).
   reopen dialog (§2d), reopen round-trip verified end to end.
 - **All 23 §8 cases covered.** See the suite table below.
 
+- **Dev fixtures cleared** — `tools/clear-variance-dev-fixtures.ps1`. 89 pulls,
+  8 receipts and 2 POs removed; SUMMARY capacity **47,050 → 56,300**. Dev is
+  back to 243 receipts (the pre-existing history), 0 closed windows and 0
+  variance receipts: the db/047 columns are present and unused, as on a fresh
+  install.
+- **Hangfire checked** — this machine registers against the LOCAL database
+  only. See below.
+
 ## Not done
 
 1. `db/047` has not been run on production. Deploy order: **migration first,
    then DLL, then app-pool restart**. `deploy.ps1` does NOT run migrations, and
    its auto-rollback restores the DLL, not the schema — verified safe, since
    the migration is additive and every deployed INSERT names its columns.
-2. Fixtures `PL-VAR-*`, `PO-VAR-*`, `PL-UIDEMO-*`, `PL-CLAMPFIX-*` are still in
-   the dev database from this work and want clearing when convenient. The
-   `smoke-variance-*` suites clean up after themselves.
+2. **`db/probe-hangfire-workers.sql` has not been run on production.** It is
+   read-only and answers whether any machine other than the prod web host is
+   registered as a Hangfire worker there.
+
+## Hangfire: this machine is not a production worker
+
+Hangfire storage is `ConnectionStrings:Default` (`Program.cs:322-332`) — the
+same database as the app, with no separate credential. So a worker registers
+wherever that connection string points.
+
+Verified on this machine:
+
+- No `ConnectionStrings__Default` environment override; `appsettings.json`
+  contains no server; the effective value is the user-secret, which is
+  `Server=LAPTOP-CSB3KO3E` with integrated security.
+- `HangFire.Server` in the **local** database holds exactly one row,
+  `laptop-csb3ko3e:14472:…`, heartbeating live — and PID 14472 is the only
+  `ReceivingOps.Web` process running, from `bin\Debug\net8.0`.
+- No IIS (`C:\Programs` absent, no `W3SVC`), no Windows service and no
+  scheduled task referencing the app. There is no second instance that could
+  hold a different connection string.
+
+So the dev build carrying variance code, against a dev database carrying
+db/047, is confined to the local database.
+
+**The production side still needs checking, and only the operator can do it.**
+`RECEIVINGOPS_HARDENING.md` records that on 2026-07-16 this machine's
+user-secret pointed at the production host; any `dotnet run` in that window
+would have registered the laptop in production's `HangFire.Server` and let it
+execute production jobs. Hangfire's ServerWatchdog sweeps lapsed heartbeats, so
+a stale row has probably gone — but "probably" is not a check. Run
+`db/probe-hangfire-workers.sql` on production: any `MachineName` that is not
+the production web host is the finding, and `*** LIVE NOW ***` means it is
+still taking jobs.
+
+## The capacity drain, now measured exactly
+
+`PurchaseOrderLines.ReceivedQty` is a cache the receive path increments, and
+deleting a receipt does not decrement it. Every smoke that tears down its own
+receipts therefore leaks a little capacity permanently.
+
+Measured at cleanup time: **5 PO lines overstated consumption by 17,550 units**,
+and all five were fixture-capacity lines (`PO-SEED-SUMMARY-*`, `PO-VAR-*`) —
+i.e. the leak came entirely from this change's own test runs, not from real
+data. `clear-variance-dev-fixtures.ps1` restores what the fixtures consumed
+*and* reconciles those fixture lines set-from-truth against
+`SUM(Receipts.QtyReceived)`, the same technique `db/038` used. After it,
+**zero** PO lines in the whole database disagree with the ledger and none is
+negative.
 
 ## Exact next step
 
