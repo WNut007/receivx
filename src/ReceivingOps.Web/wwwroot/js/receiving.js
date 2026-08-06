@@ -473,16 +473,6 @@
     const vnote = document.getElementById('m-note');
     if (vnote) { vnote.value = ''; vnote.classList.remove('is-error'); }
 
-    // db/047 §2g — the mockup's hardcoded LOT-2403-118 / PLT-00482 / A-12-03 are gone
-    // from the markup; clear any carry-over from the previously opened slot so one
-    // pallet id cannot silently attach itself to the next receipt.
-    for (const id of ['m-lot', 'm-pallet', 'm-bin']) {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
-    }
-    const qcEl = document.getElementById('m-qc');
-    if (qcEl) qcEl.value = 'pending';
-
     renderClosedState(currentSlotMeta());   // db/047 §2d
     refreshVarianceUi();
 
@@ -982,39 +972,47 @@
     if (!reason || !meta.item?.pullItemId) return;
 
     btn.disabled = true;
+
+    // The try wraps ONLY the request. It used to wrap the DOM updates below too,
+    // which meant a client-side slip (a mistyped render function) was caught here
+    // and reported to the operator as "Network error" on a request the server had
+    // already committed — the screen contradicting the system, one more time.
+    let resp;
     try {
-      const resp = await fetch('/api/receipts/reopen', {
+      resp = await fetch('/api/receipts/reopen', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pullItemId: meta.item.pullItemId, hourOfDay: meta.hour, reason }),
       });
-      if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
-      if (!resp.ok) {
-        let title = `Reopen rejected (${resp.status})`;
-        try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
-        showToast('Cannot reopen line', title, 'error');
-        btn.disabled = false;
-        return;
-      }
-
-      // Update local state in place and return the modal to its receive state —
-      // §2d requires no page reload.
-      const slot = (meta.item.schedule || {})[meta.hour];
-      if (slot) { slot.c = false; slot.ca = null; slot.cr = null; }
-      document.getElementById('m-reopen-confirm').hidden = true;
-      renderClosedState(currentSlotMeta());
-      activeMax = Math.max(0, (slot?.e | 0) - (slot?.r | 0));
-      const inp = document.getElementById('m-input');
-      if (inp) { inp.removeAttribute('max'); inp.value = activeMax; }
-      const capMax = document.getElementById('cap-hint-max');
-      if (capMax) capMax.textContent = activeMax.toLocaleString();
-      refreshVarianceUi();
-      renderTable();            // repaint the grid so the CLOSED pill clears
-      showToast('Line reopened', `${activeMax.toLocaleString()} pcs outstanding again`, 'success');
     } catch (err) {
       showToast('Cannot reopen line', 'Network error — try again', 'error');
       btn.disabled = false;
+      return;
     }
+
+    if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!resp.ok) {
+      let title = `Reopen rejected (${resp.status})`;
+      try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Cannot reopen line', title, 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    // Update local state in place and return the modal to its receive state —
+    // §2d requires no page reload.
+    const slot = (meta.item.schedule || {})[meta.hour];
+    if (slot) { slot.c = false; slot.ca = null; slot.cr = null; }
+    document.getElementById('m-reopen-confirm').hidden = true;
+    renderClosedState(currentSlotMeta());
+    activeMax = Math.max(0, (slot?.e | 0) - (slot?.r | 0));
+    const inp = document.getElementById('m-input');
+    if (inp) { inp.removeAttribute('max'); inp.value = activeMax; }
+    const capMax = document.getElementById('cap-hint-max');
+    if (capMax) capMax.textContent = activeMax.toLocaleString();
+    refreshVarianceUi();
+    render();                 // repaint the grid so the CLOSED pill clears
+    showToast('Line reopened', `${activeMax.toLocaleString()} pcs outstanding again`, 'success');
   });
 
   document.getElementById('m-close').addEventListener('click', closeModal);

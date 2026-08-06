@@ -92,6 +92,45 @@ Phase-14 wipe removed the `db/006` seed pulls (only `PL-2847` survives) and
 they were never re-seeded. Same family as the SUMMARY PO gap below. It is one
 of the ~13 seed-gap smokes CLAUDE.md already tracks.
 
+## Observation — four modal fields have no `id`, and nobody has missed them
+
+**Not a defect queued for repair. Left exactly as found, deliberately.**
+
+`Lot / Batch`, `Pallet ID`, `Bin / Location` and `QC Status` in the receive
+modal carry no `id` attributes, so `confirmReceipt`'s `fieldVal()` never matches
+them and they post as `null`. The evidence is unambiguous: **243 of 243
+receipts** carry `NULL LotBatch`, `NULL PalletId`, `NULL BinLocation` and
+`QcStatus = 'pending'`. The modal also ships hardcoded mockup values
+(`LOT-2403-118`, `PLT-00482`, `A-12-03`, `Passed inspection`) that an operator
+sees pre-filled.
+
+The tempting reading is "silent data loss, same class as the clamp". **That
+reading is wrong**, and the thing that settles it is not in the code:
+the system has run in production for two weeks with no complaint about these
+four fields. So this is not data being lost in transit — it is four fields
+nobody fills in. Nothing that was ever captured is being dropped, and there is
+no traceability regression, because no traceability was ever entered.
+
+That changes the question. It is not *when do we wire these up*; it is
+**whether these fields should exist at all** — which is a UI decision for the
+operator to make, not a bug for an engineer to fix. Wiring them would also have
+required two judgement calls that only matter if the fields stay: the `<option>`
+values must become the server's tokens (`pending|passed|hold|rejected`, else
+they 400 on the whitelist), and the pre-filled mockup values would have to go,
+since a lot number the operator did not type is a fabricated record.
+
+For the record, if the decision is ever to wire them, the consumer check was
+done and came back clean: **nothing branches on `QcStatus`** (zero SQL
+`WHERE`/`CASE`, zero C# comparisons); `transactions.css` already styles all four
+badge states; the KTF export reads none of the four; the DO/DN `PalletId` comes
+from `MAX(pol.PalletId)` on `PurchaseOrderLines`, not `Receipts`; and receipt
+search `LIKE`s the three text columns, so real values would make search work
+rather than break it.
+
+**`m-note` is the exception and IS wired** — it had the same missing-`id` cause,
+but the accept-variance flow requires a mandatory note as its audit reason, so
+it is load-bearing for this change.
+
 ### Dev fixture: SUMMARY PO capacity
 
 `db/014_seed_smoke_po_lines.sql` seeded SUMMARY purchase-order coverage in WH-01

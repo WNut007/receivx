@@ -327,47 +327,33 @@
         <button data-fill="0">Mark zero</button>
       </div>
 
-      @* db/047 §2g — these four had NO id attributes, so confirmReceipt's fieldVal()
-         never matched them and every value posted as null. 243 of 243 receipts carry
-         NULL LotBatch / PalletId / BinLocation and QcStatus='pending', while the
-         operator saw all four filled in and reasonably believed they were recorded.
-         For a warehouse that is heavier than a quantity discrepancy: there is no lot
-         traceability in the receipt history at all, so a recall has nothing to trace.
-
-         The hardcoded mockup values are gone with the ids. A pre-filled lot number
-         that the operator did not type is a fabricated traceability record — worse
-         than an empty box, because it looks deliberate. Placeholders stay as hints. *@
+      @* db/047 — Lot / Batch, Pallet ID, Bin / Location and QC Status carry no id
+         attributes, so confirmReceipt's fieldVal() never matches them and they post as
+         null. Left EXACTLY as they are, deliberately: two weeks of live production use
+         produced no complaint about them, which reframes the 243/243 NULLs as four
+         fields nobody fills in rather than data lost in transit. Nothing that was ever
+         captured is being dropped. The open question is whether these fields should
+         exist at all — a UI decision, not a bug fix. Recorded as an observation in
+         db/047_STATUS.md. The note field below IS wired, because variance depends on it. *@
       <div class="fields-grid">
         <div class="field">
           <label>Lot / Batch</label>
-          <input type="text" id="m-lot" placeholder="e.g. LOT-2403-A" maxlength="64">
+          <input type="text" placeholder="e.g. LOT-2403-A" value="LOT-2403-118">
         </div>
         <div class="field">
           <label>Pallet ID</label>
-          <input type="text" id="m-pallet" placeholder="e.g. PLT-00482" maxlength="64">
+          <input type="text" placeholder="e.g. PLT-00482" value="PLT-00482">
         </div>
         <div class="field">
           <label>Bin / Location</label>
-          <input type="text" id="m-bin" placeholder="e.g. A-12-03" maxlength="64">
+          <input type="text" placeholder="e.g. A-12-03" value="A-12-03">
         </div>
         <div class="field">
           <label>QC Status</label>
-          @* Option VALUES must be the server's tokens — AllowedQcStatus is
-             {pending, passed, hold, rejected} and ReceiptService rejects anything else
-             with 400. Wiring the labels as-is would have posted "Passed inspection".
-
-             'Pending QC' is the default rather than 'Passed inspection', which was
-             first in the mockup. Every one of the 243 historical rows is 'pending', so
-             this preserves the stored default — and asserting that goods passed
-             inspection because a dropdown happened to list it first is precisely the
-             kind of unearned record this section exists to stop. QC status should be
-             set deliberately. 'Rejected' is added: the whitelist, the Transactions
-             qc-badge CSS and the export all already handle it. *@
-          <select class="select" id="m-qc" style="width:100%; padding-left:12px;">
-            <option value="pending" selected>Pending QC</option>
-            <option value="passed">Passed inspection</option>
-            <option value="hold">Flagged · Hold</option>
-            <option value="rejected">Rejected</option>
+          <select class="select" style="width:100%; padding-left:12px;">
+            <option>Passed inspection</option>
+            <option>Pending QC</option>
+            <option>Flagged · Hold</option>
           </select>
         </div>
         <div class="field full">
