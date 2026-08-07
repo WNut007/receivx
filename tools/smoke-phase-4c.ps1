@@ -75,18 +75,61 @@ if ($poStatus -ne 'closed') { Fail "Expected PO-2405-001 status=closed, got '$po
 if ($poClosed -ne 'SET')    { Fail "Expected ClosedAt SET, got '$poClosed'" }
 OK "PO-2405-001 status=closed, ClosedAt=SET"
 
-# Bonus: another receive should now fail 409 "Insufficient" or "No PO linked" —
-#        since PO is closed, lock-aware query filters it out (po.Status='open' filter).
-Step "(2b) Bonus: receive 1 more on PL-2900 now → 409 (no open POs)"
+# Bonus: another receive should now fail — since the PO is closed, the lock-aware
+# query filters it out (po.Status='open') and there is nothing left to allocate.
+#
+# This step used to assert a bare 409 with no tick. It cannot any more: the 500-receive
+# filled the window, so a further 1 pc is an OVER-RECEIPT, and rev 11 (§2f) refuses that
+# at 400 OVER_RECEIPT_NOT_ACCEPTED before the PO walk is ever reached. The old assertion
+# was testing the over-receipt gate while believing it tested PO exhaustion.
+#
+# Both halves are asserted now, in order, because the ORDER is the point: the window gate
+# fires first, and only past it does PO exhaustion surface as the 409 this step is
+# actually about.
+Step "(2b) Bonus: receive 1 more on PL-2900, no tick → 400 at the window gate (not the PO gate)"
 $body = @{ pullItemId=$PI_2900_PCBA; hourOfDay=12; qty=1 } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
-    Fail "Expected 409, got success"
+    Fail "Expected 400, got success"
 } catch {
     $code = $_.Exception.Response.StatusCode.value__
-    if ($code -ne 409) { Fail "Expected 409, got $code" }
-    OK "409 — locked pull has no open POs left"
+    if ($code -ne 400) { Fail "Expected 400 OVER_RECEIPT_NOT_ACCEPTED, got $code" }
+    $pd = $null; try { $pd = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+    if ($pd.code -ne 'OVER_RECEIPT_NOT_ACCEPTED') { Fail "Expected OVER_RECEIPT_NOT_ACCEPTED. Got: $($_.ErrorDetails.Message)" }
+    OK "400 OVER_RECEIPT_NOT_ACCEPTED — the window gate refuses before any PO is consulted"
 }
+
+# With the tick, the window gate passes and the receive reaches the PO walk — which is
+# what this step has always been about. It also pins the variance-overflow fallback
+# (brief-po-overflow-on-variance §4.1): overflow anchors its vendor on a pull-linked OPEN
+# PO line, and PO-2405-001 is closed, so there is no anchor. The correct answer is to
+# refuse, NOT to widen to every open PO in WH-01. If that fallback ever regresses, this
+# step turns green in the wrong way — hence the row/PO checks below, which prove the
+# refusal was total.
+Step "(2b') Same receive WITH the tick → 409 No PO linked; overflow must not widen without an anchor"
+$before = Q "SELECT COUNT(*) FROM dbo.Receipts WHERE PullItemId='$PI_2900_PCBA';"
+$body = @{ pullItemId=$PI_2900_PCBA; hourOfDay=12; qty=1; varianceAccepted=$true
+           note='4c: drained PO, tick accepted' } | ConvertTo-Json
+try {
+    Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
+    Fail "Expected 409, got success — the tick must not conjure PO capacity that does not exist"
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -ne 409) { Fail "Expected 409, got $code : $($_.ErrorDetails.Message)" }
+    if ($_.ErrorDetails.Message -notmatch 'No PO linked') { Fail "Expected 'No PO linked'. Got: $($_.ErrorDetails.Message)" }
+    OK "409 No PO linked — no pull-linked open line to anchor a vendor, so no widening"
+}
+$after = Q "SELECT COUNT(*) FROM dbo.Receipts WHERE PullItemId='$PI_2900_PCBA';"
+if ($after -ne $before) { Fail "the refused receive wrote rows: $before -> $after" }
+# The whole point of the anchor fallback: some OTHER open PO in WH-01 carrying this item
+# must not have been drawn on.
+$strayPo = Q @"
+SELECT ISNULL(SUM(r.QtyReceived),0) FROM dbo.Receipts r
+INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId
+WHERE r.PullItemId='$PI_2900_PCBA' AND po.Id <> '$PO_2405_001';
+"@
+if ($strayPo -ne '0') { Fail "receipts landed on a PO other than PO-2405-001 ($strayPo pcs) — overflow widened without an anchor" }
+OK "no rows written, no other PO touched"
 
 # ============================================================================
 # (3) Cancel restores to SAME PO line (no FIFO reverse-walk)
