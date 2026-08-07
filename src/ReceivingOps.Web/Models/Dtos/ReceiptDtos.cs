@@ -41,6 +41,14 @@ public class AllocationResult
     public Guid PurchaseOrderLineId { get; set; }
     public int PoLineNumber { get; set; }
     public int Qty { get; set; }
+
+    /// <summary>
+    /// False when this slice was drawn from a PO that is not linked to the pull —
+    /// a variance overflow allocation (§4.1). The modal marks these so the operator
+    /// sees they are drawing on another PO before confirming, not after.
+    /// Always true on the normal path and in warehouse-wide (Mode A) receives.
+    /// </summary>
+    public bool IsPullLinked { get; set; } = true;
 }
 
 /// <summary>
@@ -87,7 +95,10 @@ public class ReceivePreviewResult
     public List<AllocationResult> Allocations { get; set; } = new();
     public int TotalAllocatable { get; set; }    // SUM of remaining across all visible lines for this (warehouse,item) under the active scope
     public int Shortage { get; set; }            // always 0 on success in v2 — kept for transitional UI compatibility
-    public string Scope { get; set; } = "warehouse-wide";  // "warehouse-wide" | "pull-locked"
+    // "warehouse-wide" | "pull-locked" | "pull-locked + variance overflow"
+    // The third value means at least one slice of the plan came from a PO line that is
+    // NOT linked to this pull (§5.1). Decided from the plan, never from the request flag.
+    public string Scope { get; set; } = "warehouse-wide";
 }
 
 /// <summary>

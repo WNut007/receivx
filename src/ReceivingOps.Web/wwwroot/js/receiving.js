@@ -668,6 +668,12 @@
   }
 
   function scopeBadgeHtml(scope) {
+    // §5.1 — three states. The overflow case must be checked BEFORE 'pull-locked',
+    // because it is still a locked pull and would otherwise fall through to the
+    // warehouse-wide badge and misreport what just happened.
+    if (scope === 'pull-locked + variance overflow') {
+      return '<span class="alloc-scope overflow" title="Accepted variance: allocation spilled past this pull’s PO into other open POs for the same vendor">⚠ Pull-locked + overflow</span>';
+    }
     if (scope === 'pull-locked') {
       return '<span class="alloc-scope pull-locked" title="FIFO is restricted to POs linked to this pull (§3.5)">🔒 Pull-locked</span>';
     }
@@ -734,9 +740,16 @@
       // Cache the scope so a subsequent 409 (e.g. drained PO) can still show the right badge.
       if (item) item.scopeHint = p.scope || 'warehouse-wide';
 
-      const lines = (p.allocations || []).map(a =>
-        `<span class="alloc-line">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}</span>`
-      ).join('');
+      // §6.2 — a slice drawn from a PO that is not linked to this pull is marked inline,
+      // so the operator sees they are drawing on another PO BEFORE confirming. The server
+      // decides isPullLinked from the plan it built; the badge never infers it from qty.
+      const lines = (p.allocations || []).map(a => {
+        const overflow = a.isPullLinked === false;
+        const tag = overflow
+          ? ' <span class="alloc-overflow-tag" title="Not linked to this pull — drawn from another open PO for the same vendor">other PO</span>'
+          : '';
+        return `<span class="alloc-line${overflow ? ' is-overflow' : ''}">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}${tag}</span>`;
+      }).join('');
       const header = (p.allocations || []).length > 1
         ? `<span class="alloc-line"><b>Will allocate ${qty.toLocaleString()} pcs across ${p.allocations.length} POs:</b></span>`
         : `<span class="alloc-line"><b>Will allocate:</b></span>`;

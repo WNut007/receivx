@@ -101,6 +101,12 @@ public class ReceiptService : IReceiptService
         // through unchanged, and the commit-time checks inside ReceiveAsync remain the
         // authoritative gate — preview is a convenience, never the enforcement.
         var closeOnlyPreview = false;
+
+        // Overflow is gated on a real over-receipt, which is only knowable once an hour has
+        // been supplied. Older clients that omit ?hour= therefore never widen — they fall
+        // through to the unchanged narrow walk, and ReceiveAsync stays the authoritative gate.
+        var previewVariance = false;
+
         if (hourOfDay is { } hr)
         {
             var window = await ReadWindowStateAsync(conn, transaction: null, withLock: false,
@@ -126,6 +132,7 @@ public class ReceiptService : IReceiptService
 
             var outstanding = window.Outstanding;
             var variance    = varianceAccepted && qty != outstanding;
+            previewVariance = variance;
 
             // §2f (rev 11) — no lock check here either. Preview and confirm apply the
             // same rule, and that rule no longer consults LockHourCap.
@@ -149,8 +156,13 @@ public class ReceiptService : IReceiptService
                 Scope            = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide",
             };
 
+        // §6.1 — preview must widen on exactly the same condition confirm does, or the
+        // modal shows a failure the server would not have raised and the Confirm button
+        // stays disabled on a receive that would have succeeded.
         var openLines = (await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false,
-                                                    pullCtx, ct)).AsList();
+                                                    pullCtx,
+                                                    varianceAccepted: previewVariance,
+                                                    allowOverflow: previewVariance, ct)).AsList();
 
         if (pullCtx.LockPoByPull && openLines.Count == 0)
             throw new BusinessException(
@@ -158,8 +170,8 @@ public class ReceiptService : IReceiptService
 
         var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
         if (totalAvailable < qty)
-            throw new BusinessException(
-                $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.");
+            throw new BusinessException(await BuildCapacityMessageAsync(
+                conn, transaction: null, pullCtx, qty, totalAvailable, previewVariance, ct));
 
         var plan = BuildAllocationPlan(openLines, qty);
 
@@ -168,9 +180,90 @@ public class ReceiptService : IReceiptService
             Allocations      = plan,
             TotalAllocatable = totalAvailable,
             Shortage         = 0,
-            Scope            = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide",
+            Scope            = ScopeLabel(pullCtx, plan.Any(a => !a.IsPullLinked), "warehouse-wide"),
         };
     }
+
+    // §5.2 — the capacity refusal states a remedy, not just a fact. The old text
+    // ("Insufficient PO capacity. Need 401, have 400 pcs.") was a dead end: true, and no
+    // help. Which sentence the operator gets depends on whether widening is available to
+    // them, so the message is composed from the mode rather than templated once.
+    //
+    // No PO numbers appear here. The allocation preview already shows them, but a refusal
+    // is not an allocation and has no reason to name POs this pull is not linked to.
+    private async Task<string> BuildCapacityMessageAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        PullItemContext pullCtx,
+        int qty,
+        int totalAvailable,
+        bool variance,
+        CancellationToken ct)
+    {
+        // Mode A is already warehouse-wide — there is nothing wider left to offer.
+        if (!pullCtx.LockPoByPull)
+            return $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.";
+
+        if (variance)
+            return $"Insufficient PO capacity. Need {qty} pcs; only {totalAvailable} pcs remain across all " +
+                   $"open POs for this vendor and item at this warehouse. " +
+                   $"Procurement must open or link another PO.";
+
+        // Not ticked. Only advertise the tick when it would actually have covered the
+        // quantity — pointing at a remedy that still fails is worse than the bare fact.
+        var anchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks: false, pullCtx, ct);
+        if (anchor is not null)
+        {
+            var wide = await ReadVendorWideAvailableAsync(conn, transaction, pullCtx, anchor, ct);
+            if (wide >= qty)
+                return $"The PO linked to this pull has {totalAvailable} pcs left, short of the {qty} pcs entered. " +
+                       $"Tick 'accept variance' to draw the remaining {qty - totalAvailable} pcs from other " +
+                       $"open POs for the same vendor.";
+        }
+
+        return $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.";
+    }
+
+    // Total open capacity for the anchored vendor across this item + warehouse.
+    // Deliberately lock-free: it runs only on a refusal path, to compose an error string,
+    // inside a transaction that is about to roll back.
+    private static async Task<int> ReadVendorWideAvailableAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        PullItemContext pullCtx,
+        string vendorAnchor,
+        CancellationToken ct)
+        => await conn.ExecuteScalarAsync<int>(new CommandDefinition(@"
+            SELECT ISNULL(SUM(pol.OrderedQty - pol.ReceivedQty), 0)
+            FROM   dbo.PurchaseOrderLines pol
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+            WHERE  po.WarehouseId = @WarehouseId
+              AND  po.Status      = 'open'
+              AND  pol.ItemCode   = @ItemCode
+              AND  pol.OrderedQty > pol.ReceivedQty
+              AND  pol.VendorCode = @VendorAnchor;",
+            new
+            {
+                pullCtx.WarehouseId,
+                pullCtx.ItemCode,
+                VendorAnchor = vendorAnchor,
+            },
+            transaction: transaction,
+            cancellationToken: ct));
+
+    // §5.1 — three states, decided from the plan that was actually built and never from
+    // the request flag. A 401-unit receive against a pull PO that happened to have 500
+    // remaining is not an overflow, and labelling it as one would make the audit trail
+    // lie in the direction of alarm.
+    //
+    // modeALabel differs by surface and that is deliberate: the audit message has always
+    // read "warehouse-wide FIFO" while the preview's wire value has always read
+    // "warehouse-wide". Both are asserted by existing smokes (phase-4b and phase-4a), so
+    // the difference is preserved rather than tidied into one string.
+    private static string ScopeLabel(PullItemContext pullCtx, bool overflowed, string modeALabel)
+        => !pullCtx.LockPoByPull ? modeALabel
+         : overflowed            ? "pull-locked + variance overflow"
+         :                         "pull-locked";
 
     // ----- helpers shared by Preview (no locks) and Receive (UPDLOCK + HOLDLOCK in 4b) -----
 
@@ -191,6 +284,7 @@ public class ReceiptService : IReceiptService
                     PurchaseOrderLineId = line.PurchaseOrderLineId,
                     PoLineNumber        = line.LineNumber,
                     Qty                 = take,
+                    IsPullLinked        = line.IsPullLinked,
                     // ReceiptId stays Guid.Empty for preview — no row inserted.
                 });
                 remaining -= take;
@@ -259,17 +353,53 @@ public class ReceiptService : IReceiptService
     // Pulls row for that PRS_ID. Cross-table race (import-after-FIFO-walk) is
     // benign — the line-level UPDLOCK+HOLDLOCK still serializes actual qty
     // allocation; at worst the receiver retries on "Insufficient capacity".
+    //
+    // Variance overflow (§4.1): when the operator has ticked accept-variance, a
+    // lock-by-pull receive may spill past the pull's own PO into other open PO lines
+    // for the SAME vendor, item and warehouse — pull-linked lines first. The
+    // over-delivered units already have purchase-order cover; it just sits on a
+    // different line. This is a matching problem, not an unpurchased-goods problem,
+    // so every unit still lands on a real PO line and CK_POL_Caps is never stressed.
     private static async Task<IEnumerable<PoLineAvailability>> ReadOpenPoLinesAsync(
         System.Data.IDbConnection conn,
         System.Data.IDbTransaction? transaction,
         bool withLocks,
         PullItemContext pullCtx,
+        bool varianceAccepted,
+        bool allowOverflow,
         CancellationToken ct)
     {
+        // §4.1 — allowOverflow may never outrun the operator's tick. A caller that widens
+        // the PO scope without variance accepted is a programming error, not a user error:
+        // fail loudly here rather than quietly draw on another pull's PO in production.
+        if (allowOverflow && !varianceAccepted)
+            throw new InvalidOperationException(
+                "ReadOpenPoLinesAsync: allowOverflow requires varianceAccepted. " +
+                "Overflow is gated on the operator's tick (§4.1).");
+
+        const string pullMatch = "(po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
+
+        // Overflow only means anything inside lock-by-pull mode. Mode A is already
+        // warehouse-wide, and adding a vendor filter there would be a behaviour change
+        // nobody asked for (§4.1).
+        var overflow = allowOverflow && pullCtx.LockPoByPull;
+
+        string? vendorAnchor = null;
+        if (overflow)
+        {
+            vendorAnchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks, pullCtx, ct);
+
+            // No anchor means no pull-linked line to take a vendor from. Do NOT widen on a
+            // guess: fall back to today's narrow scope so the caller raises the existing
+            // "No PO linked to this pull" error rather than silently draining the warehouse.
+            if (vendorAnchor is null) overflow = false;
+        }
+
         var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
         var sql = $@"
             SELECT pol.Id AS PurchaseOrderLineId, pol.PurchaseOrderId, po.PoNumber, po.OrderDate,
-                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty
+                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty,
+                   CAST(CASE WHEN {pullMatch} THEN 1 ELSE 0 END AS BIT) AS IsPullLinked
             FROM   dbo.PurchaseOrderLines pol {hints}
             INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
             WHERE  po.WarehouseId = @WarehouseId
@@ -277,13 +407,72 @@ public class ReceiptService : IReceiptService
               AND  pol.ItemCode   = @ItemCode
               AND  pol.OrderedQty > pol.ReceivedQty";
 
+        // The row-restricting predicate stays INSIDE the locked scan on both paths. On the
+        // normal path that keeps the UPDLOCK+HOLDLOCK range exactly as narrow as it is
+        // today (§4.2); filtering after the fact would lock the whole warehouse pool to
+        // return one line.
+        var tier = "";
         if (pullCtx.LockPoByPull)
-            sql += " AND (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
+        {
+            if (overflow)
+            {
+                sql += " AND pol.VendorCode = @VendorAnchor";
+                tier  = $"CASE WHEN {pullMatch} THEN 0 ELSE 1 END, ";
+            }
+            else
+            {
+                sql += $" AND {pullMatch}";
+            }
+        }
 
-        sql += " ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
+        sql += $" ORDER BY {tier}po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
 
         return await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(
             sql,
+            new
+            {
+                pullCtx.WarehouseId,
+                pullCtx.ItemCode,
+                pullCtx.PullId,
+                PullNumberStr = pullCtx.PullNumber,
+                VendorAnchor  = vendorAnchor,
+            },
+            transaction: transaction,
+            cancellationToken: ct));
+    }
+
+    // §4.1 — the vendor the pull is actually transacting with, taken from the pull-linked
+    // PO line(s) themselves.
+    //
+    // PullItems.VendorCode is deliberately NOT a fallback. The two columns hold different
+    // formats on live data: PurchaseOrderLines carries the prefixed ERP code ('COI-HSABP1',
+    // 14,554 of 14,623 non-null rows) while PullItems carries the bare form ('HSABP1', 0 of
+    // 47,813 prefixed). Anchoring on PullItems would compare the two and match nothing —
+    // widening to an empty set, which reads to the operator as "no capacity anywhere" while
+    // looking like a working feature from the code. The divergence is left as-is; reconciling
+    // the two encodings is an ERP-semantics question, not something to guess at here.
+    //
+    // Read under the same hints as the main walk when locking, so the anchor rows are held
+    // from here on and cannot shift beneath the widened read that follows.
+    private static async Task<string?> ReadPullVendorAnchorAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        bool withLocks,
+        PullItemContext pullCtx,
+        CancellationToken ct)
+    {
+        var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
+        return await conn.ExecuteScalarAsync<string?>(new CommandDefinition($@"
+            SELECT TOP 1 pol.VendorCode
+            FROM   dbo.PurchaseOrderLines pol {hints}
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+            WHERE  po.WarehouseId = @WarehouseId
+              AND  po.Status      = 'open'
+              AND  pol.ItemCode   = @ItemCode
+              AND  pol.OrderedQty > pol.ReceivedQty
+              AND  (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)
+              AND  pol.VendorCode IS NOT NULL
+            ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;",
             new
             {
                 pullCtx.WarehouseId,
@@ -454,8 +643,14 @@ public class ReceiptService : IReceiptService
 
             if (!closeOnly)
             {
+                // §4.1/§4.2 — the widened UPDLOCK+HOLDLOCK range (up to every open line for
+                // this vendor+item+warehouse) is taken ONLY on the variance path, which is
+                // operator-initiated and rare per unit time. The normal path's lock footprint
+                // is unchanged.
                 var openLines = (await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true,
-                                                           pullCtx, ct)).AsList();
+                                                           pullCtx,
+                                                           varianceAccepted: variance,
+                                                           allowOverflow: variance, ct)).AsList();
 
                 // §3.5 strict mode: pull is locked but no PO is linked → procurement must act
                 if (pullCtx.LockPoByPull && openLines.Count == 0)
@@ -464,8 +659,8 @@ public class ReceiptService : IReceiptService
 
                 var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
                 if (totalAvailable < req.Qty)
-                    throw new BusinessException(
-                        $"Insufficient PO capacity. Need {req.Qty}, have {totalAvailable} pcs.");
+                    throw new BusinessException(await BuildCapacityMessageAsync(
+                        conn, tx, pullCtx, req.Qty, totalAvailable, variance, ct));
 
                 // ----- 3. Build the allocation plan (FIFO walk) -----
                 var remaining = req.Qty;
@@ -540,6 +735,7 @@ public class ReceiptService : IReceiptService
                     PurchaseOrderLineId = line.PurchaseOrderLineId,
                     PoLineNumber        = line.LineNumber,
                     Qty                 = take,
+                    IsPullLinked        = line.IsPullLinked,
                 });
             }
 
@@ -642,7 +838,7 @@ public class ReceiptService : IReceiptService
 
             // ----- 8. Audit (one summary row, with §3.5 scope label) -----
             var summary  = string.Join(" + ", plan.Select(p => $"{p.Take}@{p.Line.PoNumber}"));
-            var scopeLbl = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide FIFO";
+            var scopeLbl = ScopeLabel(pullCtx, plan.Any(p => !p.Line.IsPullLinked), "warehouse-wide FIFO");
             await _audit.WriteAsync(conn, tx, "receive", "Receipt", $"pi={req.PullItemId}",
                 $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}", ct);
 
@@ -1058,6 +1254,10 @@ public class ReceiptService : IReceiptService
         public int LineNumber { get; set; }
         public int OrderedQty { get; set; }
         public int ReceivedQty { get; set; }
+
+        // §5.1 — projected on every read so the audit scope label can be decided from the
+        // allocation that actually happened rather than from the request flag.
+        public bool IsPullLinked { get; set; }
     }
 
     private sealed class ReceiptLockRow

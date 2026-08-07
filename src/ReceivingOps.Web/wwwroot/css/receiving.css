@@ -1836,9 +1836,35 @@
     background: rgba(74, 143, 255, 0.10);
     border: 1px solid rgba(74, 143, 255, 0.35);
   }
+  /* §5.1/§6.2 — variance overflow. Uses the themed over-state tokens so the
+     "we went past the plan" colour matches the OVER BY n PCS readout and the
+     hour-grid over cells across all three themes. */
+  .alloc-scope.overflow {
+    color: var(--over);
+    background: var(--over-bg);
+    border: 1px solid var(--over-border);
+  }
   .alloc-line {
     display: block;
     padding: 1px 0;
+  }
+  .alloc-line.is-overflow {
+    color: var(--over);
+  }
+  .alloc-overflow-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    margin-left: 6px;
+    border-radius: 999px;
+    color: var(--over);
+    background: var(--over-bg);
+    border: 1px solid var(--over-border);
+    vertical-align: 1px;
   }
   .cap-hint .ico {
     width: 14px; height: 14px;
