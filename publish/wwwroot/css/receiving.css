@@ -1017,6 +1017,45 @@
     width: 3px;
     background: var(--pending);
   }
+  /* ====================================================================== */
+  /* db/047 §2d — CLOSED window.                                            */
+  /*                                                                        */
+  /* Deliberately NOT green: the line is finished, but finished SHORT, and  */
+  /* dressing that as success hides the write-off. Muted + struck-through   */
+  /* numerals + a hatched left edge read as "settled, not fulfilled" and    */
+  /* are distinguishable from 'pending' at a glance across a dense grid,    */
+  /* which is the whole point — 400 / 1,000 alone is not.                   */
+  /* ====================================================================== */
+  .hour-btn.closed {
+    background: var(--surface-2);
+    opacity: 0.92;
+  }
+  .hour-btn.closed .recv,
+  .hour-btn.closed .exp,
+  .hour-btn.closed .sep {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .hour-btn.closed .hour-status {
+    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  .hour-btn.closed .hour-meter span { background: var(--text-muted); }
+  .hour-btn.closed::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    /* Hatched rather than solid — a solid bar reads as another status colour. */
+    background: repeating-linear-gradient(
+      135deg,
+      var(--text-muted) 0 2px,
+      transparent 2px 4px
+    );
+  }
+
   .hour-btn.complete { background: var(--complete-bg); }
   .hour-btn.complete .recv { color: var(--complete); }
   .hour-btn.complete .hour-meter span { background: var(--complete); }
@@ -1500,6 +1539,220 @@
     font-weight: 600;
   }
 
+  /* ======================================================================== */
+  /* db/047 §2f — hour-cap lock marker, sits under the qty cards.             */
+  /*                                                                          */
+  /* NEUTRAL in both states, deliberately. A locked cap is a fact about the    */
+  /* pull, not a fault; it becomes an error only when exceeded, and the        */
+  /* readout and the server message cover that. Red here would shout at the    */
+  /* operator for opening a modal.                                            */
+  /* ======================================================================== */
+  .cap-lock {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: -6px 0 12px;
+    padding: 6px 11px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-muted);
+  }
+  .cap-lock-ico { flex: 0 0 auto; opacity: 0.75; }
+  /* The locked variant earns a slightly firmer edge — still not a colour. */
+  .cap-lock.is-locked {
+    border-color: var(--border-bright);
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  /* ======================================================================== */
+  /* db/047 §2d — closed-state banner. Replaces the quantity block entirely.  */
+  /* Muted like the grid's closed cell, for the same reason: the line is      */
+  /* finished but finished short, and neither success-green nor error-red is  */
+  /* the truth. The reason is shown in full, never truncated.                 */
+  /* ======================================================================== */
+  .slotclose-banner {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .slotclose-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .slotclose-pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+  .slotclose-who {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .slotclose-figures {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .slotclose-figures b { color: var(--text); font-size: 14px; }
+  .slotclose-variance.short b { color: var(--over); }
+  .slotclose-variance.over  b { color: var(--warn); }
+  .slotclose-reason-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .slotclose-reason {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;      /* full text, wrapped — never truncated */
+    margin-bottom: 14px;
+  }
+  .slotclose-reason.is-empty { color: var(--text-muted); font-style: italic; }
+
+  .btn-slot-reopen {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-slot-reopen:hover:not(:disabled) { background: var(--surface-2); }
+  .btn-slot-reopen:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .reopen-confirm {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+  }
+  .reopen-confirm-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .reopen-confirm-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .reopen-reason-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .reopen-confirm textarea {
+    width: 100%;
+    min-height: 62px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    resize: vertical;
+  }
+  .reopen-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .btn-ghost {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* ======================================================================== */
+  /* db/047 §7 — accept-variance checkbox. Sits inside the green "How many    */
+  /* units?" band, below the input.                                           */
+  /* ======================================================================== */
+  .variance-accept {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  /* Mandatory for an over-quantity: amber, matching the readout's own amber so
+     the box and the line above it are visibly the same conversation. */
+  .variance-accept.is-required {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+  }
+  .variance-accept-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    margin: 0;
+  }
+  .variance-accept-row input[type="checkbox"] {
+    margin-top: 2px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    cursor: pointer;
+    accent-color: var(--warn);
+  }
+  .variance-accept-text { display: block; }
+  .variance-accept-text b {
+    display: block;
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+  .variance-accept-sub {
+    display: block;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  /* Note becomes mandatory once variance is accepted. */
+  #m-note.is-error {
+    border-color: var(--over-border);
+    background: var(--over-bg);
+  }
+  .note-required-msg {
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--over);
+  }
+
   .cap-hint {
     margin-bottom: 14px;
     padding: 8px 12px;
@@ -1519,6 +1772,15 @@
     color: var(--over);
     background: var(--over-bg);
     border-color: var(--over-border);
+    font-weight: 600;
+  }
+  /* db/047 §7 — the live variance readout is green when the quantity completes the
+     line. Uses --complete, the same token the completed hour-cell uses, so "done"
+     means one colour across the screen. */
+  .cap-hint.ok {
+    color: var(--complete);
+    background: var(--complete-bg);
+    border-color: var(--complete-border);
     font-weight: 600;
   }
   /* v2 §7.1 — overage on the hour is allowed; only show a soft yellow hint */
@@ -1574,9 +1836,35 @@
     background: rgba(74, 143, 255, 0.10);
     border: 1px solid rgba(74, 143, 255, 0.35);
   }
+  /* §5.1/§6.2 — variance overflow. Uses the themed over-state tokens so the
+     "we went past the plan" colour matches the OVER BY n PCS readout and the
+     hour-grid over cells across all three themes. */
+  .alloc-scope.overflow {
+    color: var(--over);
+    background: var(--over-bg);
+    border: 1px solid var(--over-border);
+  }
   .alloc-line {
     display: block;
     padding: 1px 0;
+  }
+  .alloc-line.is-overflow {
+    color: var(--over);
+  }
+  .alloc-overflow-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    margin-left: 6px;
+    border-radius: 999px;
+    color: var(--over);
+    background: var(--over-bg);
+    border: 1px solid var(--over-border);
+    vertical-align: 1px;
   }
   .cap-hint .ico {
     width: 14px; height: 14px;

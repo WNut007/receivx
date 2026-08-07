@@ -35,6 +35,20 @@
   let currentWhName = null;
   let serverPullStatus = null;   // pending|in_progress|fully_received|closed
   let currentPullLocked = false; // §3.5 — Pulls.LockPoByPull mirrored from PullDetail
+  // Pulls.LockHourCap mirrored from PullDetail.
+  //
+  // §2f (rev 11) — this no longer gates anything on the receive path: over-receipt is
+  // permitted on every pull with the final-receipt tick. Kept because the dashboard
+  // still displays the flag (Strict/Loose pill, drawer) and it remains immutable after
+  // create, so the value is still meaningful — it just no longer decides a receive.
+  let currentPullHourCapLocked = false;
+
+  // db/047 — did the server's preview refuse this quantity? The allocation preview
+  // used to write btn.disabled directly, which meant two functions owned the Confirm
+  // button: the preview's success path re-enabled it ~200ms after typing and silently
+  // undid the variance gate, so an unticked over-receipt became clickable. The preview
+  // now records its verdict here and refreshVarianceUi is the single owner of the gate.
+  let _previewBlocked = false;
   let items = [];
 
   function loadPullWarehouse(pullId, whCode) {
@@ -53,11 +67,21 @@
     // 'over' is its own state so the visual treatment can flag the overage
     // distinctly from 'complete' (per §7.1 v2, over-receive is allowed when
     // the PO has capacity — but it shouldn't look identical to exactly-done).
+    // db/047 §2d — 'closed' wins over 'pending'. A short-closed window renders
+    // 400 / 1,000, which is character-for-character identical to a partial still
+    // waiting on a delivery. Without its own state the grid cannot tell a finished
+    // line from an unfinished one, which is the exact confusion this change exists
+    // to remove — a reopen button on the modal would just move the problem.
+    //
+    // A window that is closed AND exactly complete still reads 'complete': it
+    // finished normally through the full-receipt path, and there is no variance to
+    // signal. Over stays 'over' for the same reason — the overage is the story.
     const s = (slot.e === 0) ? 'empty'
             : (slot.r >  slot.e) ? 'over'
             : (slot.r === slot.e) ? 'complete'
+            : slot.c ? 'closed'
             : 'pending';
-    return { r: slot.r, e: slot.e, s };
+    return { r: slot.r, e: slot.e, s, closed: !!slot.c };
   }
   function setReceived(item, hour, newR) {
     if (!item.schedule[hour]) return;
@@ -214,8 +238,11 @@
           btn.innerHTML = `<div class="hour-nums"><span class="label">add</span></div>`;
         } else {
           // 'over' = up-arrow + raw pct (e.g. "↑ 130%"); 'complete' = checkmark.
+          // db/047 §2d — a closed line says so, in words. "56%" on a closed window
+          // reads as work outstanding; "CLOSED" does not.
           const statusText = c.s === 'over'     ? `↑ ${pct}%`
                            : c.s === 'complete' ? `✓ ${pct}%`
+                           : c.s === 'closed'   ? `CLOSED`
                            : `${pct}%`;
           // Numerals get an extra "+N over" tail when over-received so the
           // cell tells one consistent story (number + status both flag overage).
@@ -439,10 +466,24 @@
     if (capMaxEl) capMaxEl.textContent = outstanding.toLocaleString();
 
     const input = document.getElementById('m-input');
-    input.max = outstanding;
-    input.value = outstanding;
+    // db/047 §7 — no `max` attribute. The operator may enter any quantity; over-receipt
+    // is governed by the accept-variance checkbox and the server, not by the input
+    // silently refusing to hold the number. `min="0"` stays (in the markup).
+    input.removeAttribute('max');
+    input.value = outstanding;   // sensible starting figure, not a ceiling
     input.classList.remove('is-error');
     document.getElementById('cap-hint').classList.remove('error');
+
+    // db/047 §7 — never pre-ticked, in any state. Reset the box and the note before
+    // deriving the UI, so a tick left over from the previous slot cannot leak across.
+    const vbox = document.getElementById('m-variance');
+    if (vbox) vbox.checked = false;
+    const vnote = document.getElementById('m-note');
+    if (vnote) { vnote.value = ''; vnote.classList.remove('is-error'); }
+
+    renderCapLock(outstanding);             // db/047 §2f
+    renderClosedState(currentSlotMeta());   // db/047 §2d
+    refreshVarianceUi();
 
     // ---- Read-only gate when pull is closed ----
     applyModalReadOnlyMode();
@@ -622,11 +663,17 @@
     const warn = document.getElementById('m-alloc-warning');
     if (list) { list.classList.remove('show'); list.innerHTML = ''; }
     if (warn) { warn.classList.remove('show'); warn.innerHTML = ''; }
-    const btn = document.getElementById('m-confirm');
-    if (btn) btn.disabled = false;
+    _previewBlocked = false;
+    refreshVarianceUi();   // single owner of the Confirm gate
   }
 
   function scopeBadgeHtml(scope) {
+    // §5.1 — three states. The overflow case must be checked BEFORE 'pull-locked',
+    // because it is still a locked pull and would otherwise fall through to the
+    // warehouse-wide badge and misreport what just happened.
+    if (scope === 'pull-locked + variance overflow') {
+      return '<span class="alloc-scope overflow" title="Accepted variance: allocation spilled past this pull’s PO into other open POs for the same vendor">⚠ Pull-locked + overflow</span>';
+    }
     if (scope === 'pull-locked') {
       return '<span class="alloc-scope pull-locked" title="FIFO is restricted to POs linked to this pull (§3.5)">🔒 Pull-locked</span>';
     }
@@ -657,8 +704,14 @@
       // comes from openModal (stored on window._activeHour); omit if absent
       // (no harm — Receive's commit-time check is the authoritative gate).
       const hour = (typeof window._activeHour === 'number') ? window._activeHour : null;
+      // db/047 §2c — the preview must be asked the SAME question confirm will be asked,
+      // flag included. Without it the preview would evaluate an over-quantity as
+      // unticked and refuse a receive the operator has already acknowledged.
+      const variance = !document.getElementById('m-variance-block')?.hidden
+                       && !!document.getElementById('m-variance')?.checked;
       const url = `/api/receipts/preview?pullItemId=${encodeURIComponent(pullItemId)}&qty=${qty}`
-                + (hour !== null ? `&hour=${hour}` : '');
+                + (hour !== null ? `&hour=${hour}` : '')
+                + `&varianceAccepted=${variance}`;
       const r = await fetch(url);
       if (seq !== _allocRequestSeq) return;   // stale response — newer typing replaced it
 
@@ -670,7 +723,8 @@
         list.innerHTML = '';
         warn.innerHTML = `${scopeBadgeHtml(item?.scopeHint || 'warehouse-wide')}<span>${escapeHtml(title)}</span>`;
         warn.classList.add('show');
-        btn.disabled = true;
+        _previewBlocked = true;
+        refreshVarianceUi();
         return;
       }
       if (!r.ok) {
@@ -686,46 +740,325 @@
       // Cache the scope so a subsequent 409 (e.g. drained PO) can still show the right badge.
       if (item) item.scopeHint = p.scope || 'warehouse-wide';
 
-      const lines = (p.allocations || []).map(a =>
-        `<span class="alloc-line">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}</span>`
-      ).join('');
+      // §6.2 — a slice drawn from a PO that is not linked to this pull is marked inline,
+      // so the operator sees they are drawing on another PO BEFORE confirming. The server
+      // decides isPullLinked from the plan it built; the badge never infers it from qty.
+      const lines = (p.allocations || []).map(a => {
+        const overflow = a.isPullLinked === false;
+        const tag = overflow
+          ? ' <span class="alloc-overflow-tag" title="Not linked to this pull — drawn from another open PO for the same vendor">other PO</span>'
+          : '';
+        return `<span class="alloc-line${overflow ? ' is-overflow' : ''}">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}${tag}</span>`;
+      }).join('');
       const header = (p.allocations || []).length > 1
         ? `<span class="alloc-line"><b>Will allocate ${qty.toLocaleString()} pcs across ${p.allocations.length} POs:</b></span>`
         : `<span class="alloc-line"><b>Will allocate:</b></span>`;
       list.innerHTML = `${scopeBadgeHtml(p.scope)}${header}${lines}`;
       list.classList.add('show');
-      btn.disabled = false;
+      _previewBlocked = false;
+      refreshVarianceUi();
     } catch (e) {
       // Network/transport — hide preview rather than block the user.
       hideAllocPanel();
     }
   }
 
-  document.getElementById('m-input').addEventListener('input', (e) => {
-    // Non-blocking soft hint when input exceeds the per-hour plan
-    // (informational only; the server's PO cap is the authoritative gate).
-    const v = parseInt(e.target.value) || 0;
-    const hint = document.getElementById('cap-hint');
-    const text = document.getElementById('cap-hint-text');
-    if (v < 0) { e.target.value = 0; }
-    if (text) {
-      // IMPORTANT: keep <b id="cap-hint-max"> alive across rewrites — openModal
-      // (line ~370) and the cancel flow (line ~1578) both grab it by id to
-      // update the displayed cap. Without the `<b id="cap-hint-max">` wrapper
-      // these rewrites would destroy the element and the next openModal()
-      // crashes with "Cannot set properties of null".
-      if (v > activeMax) {
-        hint?.classList.add('warn');
-        text.innerHTML = `Over per-hour plan (<b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs). Allowed if PO has capacity.`;
-      } else {
-        hint?.classList.remove('warn');
-        text.innerHTML = `Per-hour plan: <b id="cap-hint-max">${activeMax.toLocaleString()}</b> pcs. PO capacity is the hard cap.`;
-      }
+  // ==========================================================================
+  // db/047 §7 — accept-variance UI.
+  //
+  // One function owns the whole derived state: checkbox visibility, the live
+  // variance readout, the note's required styling and the Confirm gate. Every
+  // input path calls it, so the four can never disagree with each other — which
+  // is the failure this change exists to remove, one layer up from the wire.
+  //
+  // The client mirrors the server rules from §2c/§2f exactly. It is a
+  // convenience, never the enforcement: the same request refused here is
+  // refused by ReceiveAsync, with the same code.
+  // ==========================================================================
+
+  // db/047 §2f — the lock marker, written once on open.
+  //
+  // Stated as context, not discovered through a rejection. On a locked pull it names
+  // the ceiling so the operator knows the limit before typing; on an unlocked pull it
+  // says quietly that over IS possible, which is the fact they otherwise have to
+  // establish by trial. Neutral in both cases: nothing here is wrong yet.
+  function renderCapLock(outstanding) {
+    const box  = document.getElementById('m-cap-lock');
+    const text = document.getElementById('m-cap-lock-text');
+    if (!box || !text) return;
+
+    // §2f (rev 11) — the copy no longer varies by LockHourCap, because the outcome no
+    // longer does. "HOUR CAP LOCKED · CANNOT RECEIVE OVER 1,000" described the old rule
+    // and became false the moment the tick was made the escape on every pull; a marker
+    // that states a limit the system does not enforce is the same defect as the clamp
+    // hint that said over was allowed when it was not.
+    //
+    // The hour figure stays as context — it is still what the plan says to expect, and
+    // it is the number the variance is measured against.
+    box.classList.remove('is-locked');
+    text.textContent =
+      `Planned for this hour: ${(outstanding | 0).toLocaleString()} · over is possible with the final-receipt box`;
+    box.hidden = false;
+  }
+
+  // The (item, hour) slot the modal is currently open on.
+  function currentSlotMeta() {
+    const item = items[activeRow] || {};
+    const hour = window._activeHour;
+    const slot = (item.schedule || {})[hour] || {};
+    return {
+      item,
+      hour,
+      multiWindow:  (item.winCount || 1) > 1,   // §2c guard — variance not offered
+      closed:       !!slot.c,
+      closedAt:     slot.ca || null,
+      closedReason: slot.cr || null,
+    };
+  }
+
+  // ==========================================================================
+  // db/047 §2d — closed-state modal.
+  //
+  // Clicking a closed window opens THIS modal in a closed state rather than a
+  // separate surface or a dead quantity box. Everything to do with entering a
+  // receipt is hidden; what replaces it is the record of the close — who, when,
+  // the reason in full, and the final figures — plus a single Reopen line button.
+  // ==========================================================================
+  function renderClosedState(meta) {
+    const closed  = !!meta.closed;
+    const banner  = document.getElementById('m-closed-banner');
+    const confirm = document.getElementById('m-reopen-confirm');
+
+    // Everything that belongs to entering a quantity.
+    const receiveOnly = [
+      document.getElementById('m-receive-block'),
+      document.getElementById('m-cap-lock'),   // db/047 §2f — a ceiling is moot once closed
+      document.getElementById('cap-hint'),
+      document.getElementById('m-variance-block'),
+      document.querySelector('.quick-fill'),
+      document.querySelector('.fields-grid'),
+      document.getElementById('m-alloc-list'),
+      document.getElementById('m-alloc-warning'),
+    ];
+    for (const el of receiveOnly) if (el) el.hidden = closed;
+
+    // The quick-fill buttons are disabled as well as hidden: hiding alone would
+    // still leave them clickable via the keyboard if the modal is ever restyled.
+    document.querySelectorAll('.quick-fill button').forEach(b => { b.disabled = closed; });
+
+    const confirmBtn = document.getElementById('m-confirm');
+    if (confirmBtn) confirmBtn.hidden = closed;
+
+    if (banner)  banner.hidden  = !closed;
+    if (confirm) confirm.hidden = true;          // always collapsed on (re)open
+
+    if (!closed) return;
+
+    // ---- populate the banner ----
+    const item = meta.item || {};
+    const slot = (item.schedule || {})[meta.hour] || {};
+    const expected = slot.e | 0, received = slot.r | 0;
+    const variance = received - expected;        // negative = short, positive = over
+
+    const when = meta.closedAt ? new Date(meta.closedAt) : null;
+    const whenTxt = when && !isNaN(when)
+      ? when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+      : 'date unknown';
+    const who = document.getElementById('m-closed-who');
+    if (who) who.textContent = `Closed ${whenTxt}`;
+
+    const figures = document.getElementById('m-closed-figures');
+    if (figures) {
+      const label = variance < 0 ? 'short' : variance > 0 ? 'over' : 'exact';
+      figures.innerHTML = `
+        <span><b>${expected.toLocaleString()}</b> expected</span>
+        <span><b>${received.toLocaleString()}</b> received</span>
+        <span class="slotclose-variance ${variance < 0 ? 'short' : variance > 0 ? 'over' : ''}">
+          <b>${variance > 0 ? '+' : ''}${variance.toLocaleString()}</b> ${label}
+        </span>`;
     }
+
+    const reason = document.getElementById('m-closed-reason');
+    if (reason) {
+      // In full, never truncated — the reason is the whole point of storing it.
+      reason.textContent = meta.closedReason || '(no reason recorded)';
+      reason.classList.toggle('is-empty', !meta.closedReason);
+    }
+  }
+
+  function refreshVarianceUi() {
+    const input = document.getElementById('m-input');
+    const box   = document.getElementById('m-variance');
+    const block = document.getElementById('m-variance-block');
+    const hint  = document.getElementById('cap-hint');
+    const text  = document.getElementById('cap-hint-text');
+    const btn   = document.getElementById('m-confirm');
+    const noteEl    = document.getElementById('m-note');
+    const noteLabel = document.getElementById('m-note-label');
+    const noteMsg   = document.getElementById('m-note-required-msg');
+    if (!input || !box || !block || !btn) return;
+
+    const qty = parseInt(input.value) || 0;
+    const outstanding = activeMax | 0;
+    const meta = currentSlotMeta();
+
+    const over  = qty > outstanding;
+    const exact = qty === outstanding;
+    const under = qty < outstanding;
+
+    // §2f (rev 11) — LockHourCap no longer affects whether the box is offered. The
+    // tick is the escape on every pull, so withholding it on a locked pull would now
+    // hide the only route to a legitimate over-receipt.
+    //
+    // Hidden when the quantity exactly matches outstanding (§7): there is no variance
+    // to accept, and the server ignores the flag in that case anyway.
+    const canOffer = !exact && !meta.multiWindow;
+
+    if (!canOffer && box.checked) box.checked = false;   // never leave a stale tick
+    block.hidden = !canOffer;
+    block.classList.toggle('is-required', canOffer && over);
+
+    const ticked  = canOffer && box.checked;
+    const noteVal = (noteEl?.value || '').trim();
+
+    // ---- live variance readout -------------------------------------------------
+    // The <b id="cap-hint-max"> wrapper must survive every rewrite: openModal and the
+    // cancel-refresh path both grab it by id, and losing it makes the next openModal
+    // throw "Cannot set properties of null".
+    const pcs = n => `<b id="cap-hint-max">${Math.abs(n).toLocaleString()}</b>`;
+    let cls = 'neutral', msg;
+    if (meta.closed) {
+      cls = 'error';
+      msg = `LINE CLOSED · ${pcs(outstanding)} PCS WERE WRITTEN OFF`;
+    } else if (over) {
+      cls = 'warn';   // amber
+      msg = `OVER BY ${pcs(qty - outstanding)} PCS · REQUIRES ACCEPT VARIANCE`;
+    } else if (exact) {
+      cls = 'ok';     // green
+      msg = `COMPLETES THE LINE · ${pcs(qty)} PCS`;
+    } else if (under && ticked) {
+      cls = 'error';  // red — only once the operator says so
+      msg = `SHORT CLOSE · ${pcs(outstanding - qty)} PCS WRITTEN OFF`;
+    } else if (qty === 0) {
+      cls = 'neutral';
+      msg = `NOTHING RECEIVED · TICK TO CLOSE THE LINE SHORT BY ${pcs(outstanding)} PCS`;
+    } else {
+      // §7 — an under-receipt is NOT an error state until the operator ticks the box.
+      cls = 'neutral';
+      msg = `PARTIAL · ${pcs(outstanding - qty)} PCS WILL REMAIN OUTSTANDING`;
+    }
+    if (text) text.innerHTML = msg;
+    if (hint) {
+      hint.classList.remove('ok', 'warn', 'error');
+      if (cls !== 'neutral') hint.classList.add(cls);
+    }
+
+    // ---- note: optional until the box is ticked --------------------------------
+    if (noteLabel) noteLabel.textContent = ticked ? 'Note · Required' : 'Note (optional)';
+    if (noteEl)  noteEl.classList.toggle('is-error', ticked && noteVal.length === 0);
+    if (noteMsg) noteMsg.hidden = !(ticked && noteVal.length === 0);
+
+    // ---- Confirm gate (§7) -----------------------------------------------------
+    btn.disabled =
+         meta.closed                       // already closed — nothing to add
+      || _previewBlocked                   // the server's preview refused this quantity
+      || (over && !ticked)                 // over needs the tick
+      || (ticked && noteVal.length === 0)  // ticked needs a reason
+      || (qty === 0 && !ticked)            // zero records nothing unless it closes
+      || qty < 0;
+  }
+
+  document.getElementById('m-input').addEventListener('input', (e) => {
+    if ((parseInt(e.target.value) || 0) < 0) { e.target.value = 0; }
+    refreshVarianceUi();
 
     // Debounced FIFO preview (~200ms)
     clearTimeout(_allocDebounce);
     _allocDebounce = setTimeout(refreshAllocationPreview, 200);
+  });
+
+  document.getElementById('m-variance').addEventListener('change', () => {
+    refreshVarianceUi();
+    clearTimeout(_allocDebounce);
+    _allocDebounce = setTimeout(refreshAllocationPreview, 200);
+  });
+
+  document.getElementById('m-note').addEventListener('input', refreshVarianceUi);
+
+  // ---- db/047 §2d — reopen ------------------------------------------------
+  document.getElementById('m-reopen-btn').addEventListener('click', () => {
+    const panel  = document.getElementById('m-reopen-confirm');
+    const reason = document.getElementById('m-reopen-reason');
+    const meta   = currentSlotMeta();
+    const slot   = (meta.item.schedule || {})[meta.hour] || {};
+    const outstanding = Math.max(0, (slot.e | 0) - (slot.r | 0));
+    const sub = document.getElementById('m-reopen-sub');
+    if (sub) sub.textContent =
+      `The line returns to the pending queue with ${outstanding.toLocaleString()} pcs outstanding.`;
+    if (reason) { reason.value = ''; }
+    document.getElementById('m-reopen-go').disabled = true;
+    if (panel) panel.hidden = false;
+    reason?.focus();
+  });
+
+  document.getElementById('m-reopen-cancel').addEventListener('click', () => {
+    document.getElementById('m-reopen-confirm').hidden = true;
+  });
+
+  // Reason is required client-side too; the server refuses independently with
+  // 400 REOPEN_REASON_REQUIRED, so this is a convenience, not the enforcement.
+  document.getElementById('m-reopen-reason').addEventListener('input', (e) => {
+    document.getElementById('m-reopen-go').disabled = (e.target.value || '').trim().length === 0;
+  });
+
+  document.getElementById('m-reopen-go').addEventListener('click', async () => {
+    const btn    = document.getElementById('m-reopen-go');
+    const reason = (document.getElementById('m-reopen-reason').value || '').trim();
+    const meta   = currentSlotMeta();
+    if (!reason || !meta.item?.pullItemId) return;
+
+    btn.disabled = true;
+
+    // The try wraps ONLY the request. It used to wrap the DOM updates below too,
+    // which meant a client-side slip (a mistyped render function) was caught here
+    // and reported to the operator as "Network error" on a request the server had
+    // already committed — the screen contradicting the system, one more time.
+    let resp;
+    try {
+      resp = await fetch('/api/receipts/reopen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pullItemId: meta.item.pullItemId, hourOfDay: meta.hour, reason }),
+      });
+    } catch (err) {
+      showToast('Cannot reopen line', 'Network error — try again', 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    if (resp.status === 401) { window.location.href = '/Account/Login'; return; }
+    if (!resp.ok) {
+      let title = `Reopen rejected (${resp.status})`;
+      try { const j = await resp.json(); if (j?.title) title = j.title; } catch {}
+      showToast('Cannot reopen line', title, 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    // Update local state in place and return the modal to its receive state —
+    // §2d requires no page reload.
+    const slot = (meta.item.schedule || {})[meta.hour];
+    if (slot) { slot.c = false; slot.ca = null; slot.cr = null; }
+    document.getElementById('m-reopen-confirm').hidden = true;
+    renderClosedState(currentSlotMeta());
+    activeMax = Math.max(0, (slot?.e | 0) - (slot?.r | 0));
+    const inp = document.getElementById('m-input');
+    if (inp) { inp.removeAttribute('max'); inp.value = activeMax; }
+    const capMax = document.getElementById('cap-hint-max');
+    if (capMax) capMax.textContent = activeMax.toLocaleString();
+    refreshVarianceUi();
+    render();                 // repaint the grid so the CLOSED pill clears
+    showToast('Line reopened', `${activeMax.toLocaleString()} pcs outstanding again`, 'success');
   });
 
   document.getElementById('m-close').addEventListener('click', closeModal);
@@ -739,6 +1072,14 @@
       if (action === 'all') input.value = activeMax;
       else if (action === 'half') input.value = Math.floor(activeMax / 2);
       else if (action === '0') input.value = 0;
+
+      // db/047 §2e — setting .value in script does NOT fire an `input` event, so the
+      // debounced preview and the variance readout never recomputed. The panel kept
+      // advertising the previous quantity (observed: input reading 0 while the panel
+      // promised "Will allocate: 1,000") and the hint snapped back to stale copy.
+      // Same defect class as the clamp: the screen states one thing, the system uses
+      // another. Dispatch a real event so every listener recomputes.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     });
   });
 
@@ -748,8 +1089,18 @@
   // local schedule. Optional fields (lot, pallet, bin, qc, note) — collect from the
   // modal if present so existing markup keeps wiring; default qcStatus = 'pending'.
   async function confirmReceipt() {
-    const inputVal = parseInt(document.getElementById('m-input').value) || 0;
-    const qty = Math.min(inputVal, activeMax);
+    // db/047 §2c — NEVER silently rewrite an entered quantity.
+    //
+    // This used to be `Math.min(inputVal, activeMax)`. Typing 1,500 against 1,000
+    // outstanding POSTed 1,000: no alert, no error, and the modal had already
+    // promised "Will allocate: 1,500" one screen earlier. The operator believed
+    // they had recorded 1,500 and the line showed 100% complete. That is silent
+    // data loss, not a limit — and the server would have accepted 1,500 anyway.
+    //
+    // The quantity the operator typed is the quantity that goes on the wire. It is
+    // either recorded at that figure or refused with a visible error; nothing in
+    // between.
+    const qty = parseInt(document.getElementById('m-input').value) || 0;
     if (qty <= 0) {
       showToast('Enter a quantity', 'Must be greater than zero', 'error');
       return;
@@ -770,6 +1121,11 @@
       binLocation: fieldVal('m-bin') || null,
       qcStatus:    fieldVal('m-qc') || 'pending',
       note:        fieldVal('m-note') || null,
+      // db/047 — only send true when the box is actually offered AND ticked. The
+      // server re-derives everything from the quantity anyway, but sending a flag the
+      // operator could not see would be a lie in the other direction.
+      varianceAccepted: !document.getElementById('m-variance-block')?.hidden
+                        && !!document.getElementById('m-variance')?.checked,
     };
 
     const btn = document.getElementById('m-confirm');
@@ -967,7 +1323,13 @@
   document.addEventListener('keydown', (e) => {
     if (modal.classList.contains('open')) {
       if (e.key === 'Escape') closeModal();
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') confirmReceipt();
+      // db/047 §7 — the keyboard path obeys the same gate as the button. It must not
+      // be a way round the checkbox or the required note.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        const btn = document.getElementById('m-confirm');
+        if (btn && btn.disabled) return;
+        confirmReceipt();
+      }
     }
     if (closeModalEl.classList.contains('open')) {
       if (e.key === 'Escape') closeCloseModal();
@@ -1221,16 +1583,30 @@
     // §3.5 — drives the lock-icon prefix on PO tokens in drawer + modal-embedded
     // tx rows. Defaults false so older PullDetail responses stay backwards-compat.
     currentPullLocked  = !!pd.lockPoByPull;
+    currentPullHourCapLocked = !!pd.lockHourCap;   // db/047 §2f
 
     const mapped = (pd.items || [])
       .sort((a,b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
       .map(i => {
         const schedule = {};
         for (const w of (i.windows || [])) {
-          schedule[w.hourOfDay] = { r: w.receivedQty | 0, e: w.expectedQty | 0 };
+          schedule[w.hourOfDay] = {
+            r: w.receivedQty | 0,
+            e: w.expectedQty | 0,
+            // db/047 — close state. `c` drives the CLOSED pill in the grid and the
+            // closed-state modal; without it a short-closed 400/1,000 is visually
+            // identical to a partial still awaiting delivery.
+            c:  !!w.isClosed,
+            ca: w.closedAt || null,
+            cr: w.closedReason || null,
+          };
         }
         return {
           pullItemId: i.id,             // GUID — used by POST /api/receipts
+          // db/047 §2c — the accept-variance guard is server-enforced as
+          // MULTI_WINDOW_NOT_SUPPORTED; the UI hides the checkbox for the same reason.
+          // Derived from the payload rather than asked for separately.
+          winCount:  (i.windows || []).length,
           code:       i.itemCode,
           desc:       i.description,
           tag:        i.tag,
@@ -1661,7 +2037,7 @@ document.getElementById('tx-cancel-confirm').addEventListener('click', async () 
             if (capMax) capMax.textContent = outstanding.toLocaleString();
             const input = document.getElementById('m-input');
             if (input && !pullClosed) {
-              input.max = outstanding;
+              input.removeAttribute('max');   // db/047 §7 — see openModal
               input.value = outstanding;
             }
             if (typeof activeMax !== 'undefined') window.activeMax = outstanding;
