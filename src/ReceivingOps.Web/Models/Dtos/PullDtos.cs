@@ -122,6 +122,16 @@ public class PullItemWindowDto
     public bool IsClosed { get; set; }
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }
+
+    // db/049 — structured reason for the accepted variance that closed this window.
+    // NULL on open windows, and also on windows closed BEFORE db/049 shipped: that NULL
+    // means "closed before reason codes existed" and is its own bucket, never OTHER.
+    public string? VarianceReasonCode { get; set; }
+
+    // Display label for the code above, resolved server-side from the one map in
+    // VarianceReasonCodes. Sent alongside the code so the client never has to hold a
+    // second copy of the labels — and so it can never render a raw code by accident.
+    public string? VarianceReasonLabel { get; set; }
 }
 
 /// <summary>Query parameters for /api/pulls.</summary>

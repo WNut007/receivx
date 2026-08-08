@@ -1739,8 +1739,42 @@
     color: var(--text-muted);
   }
 
-  /* Note becomes mandatory once variance is accepted. */
+  /* Note becomes mandatory only when the reason code is OTHER (db/049). */
   #m-note.is-error {
+    border-color: var(--over-border);
+    background: var(--over-bg);
+  }
+
+  /* db/049 — reason dropdown, inside the variance band below the checkbox row. */
+  .variance-reason {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .variance-reason-label {
+    display: block;
+    margin-bottom: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  .variance-reason .select {
+    width: 100%;
+    padding-left: 12px;
+  }
+  /* The Thai labels are the operator's real reading language; the rest of the modal is
+     mono/uppercase English, which mangles Thai glyph shaping. Force the UI font stack
+     and normal casing on this control only. */
+  .variance-reason .select,
+  .variance-reason .select option {
+    font-family: var(--font-ui, system-ui, sans-serif);
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  #m-reason.is-error {
     border-color: var(--over-border);
     background: var(--over-bg);
   }

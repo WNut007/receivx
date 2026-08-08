@@ -813,6 +813,8 @@
       closed:       !!slot.c,
       closedAt:     slot.ca || null,
       closedReason: slot.cr || null,
+      reasonCode:   slot.rc || null,   // db/049
+      reasonLabel:  slot.rl || null,
     };
   }
 
@@ -880,9 +882,23 @@
 
     const reason = document.getElementById('m-closed-reason');
     if (reason) {
-      // In full, never truncated — the reason is the whole point of storing it.
-      reason.textContent = meta.closedReason || '(no reason recorded)';
-      reason.classList.toggle('is-empty', !meta.closedReason);
+      // db/049 — the structured reason leads; the free text follows only if there is any.
+      //
+      // Three cases, and the third is why this is not a one-liner:
+      //   code + note → "ส่งเกิน — vendor shipped a full pallet"
+      //   code only   → "ส่งเกิน"
+      //   NEITHER     → "(no reason recorded)". That is a window closed BEFORE reason
+      //                 codes existed. It must not be dressed up as อื่นๆ/OTHER, which
+      //                 would attribute a decision to an operator who never made one.
+      //
+      // The label is always the server's; a raw code is never shown. If a code somehow
+      // arrives without a label (unknown to this build) the code is suppressed rather
+      // than printed, and the note alone carries the display.
+      const label = meta.reasonLabel || null;
+      const note  = meta.closedReason || null;
+      const parts = [label, note].filter(Boolean);
+      reason.textContent = parts.length ? parts.join(' — ') : '(no reason recorded)';
+      reason.classList.toggle('is-empty', parts.length === 0);
     }
   }
 
@@ -921,6 +937,29 @@
     const ticked  = canOffer && box.checked;
     const noteVal = (noteEl?.value || '').trim();
 
+    // ---- db/049 reason dropdown -------------------------------------------------
+    // Offered exactly when a variance is actually being accepted. Options are filtered
+    // to the direction, because offering "ส่งเกิน" on a short close is noise that
+    // invites a wrong click — the server refuses it anyway.
+    const reasonBlock = document.getElementById('m-reason-block');
+    const reasonEl    = document.getElementById('m-reason');
+    const reasonMsg   = document.getElementById('m-reason-required-msg');
+    const direction   = over ? 'over' : 'short';   // qty === outstanding never reaches here
+
+    if (reasonBlock) reasonBlock.hidden = !ticked;
+    if (ticked) renderReasonOptions(direction);
+    else if (reasonEl) reasonEl.value = '';        // never carry a stale pick into the next open
+
+    const reasonVal  = ticked ? (reasonEl?.value || '') : '';
+    const isOther    = reasonVal === 'OTHER';
+    // Mirrors the server's floor exactly (VarianceReasonCodes.MinNoteLength). Trimmed, so
+    // "   " fails and so does "." — the input this whole change exists to stop.
+    const noteOk     = noteVal.length >= 3;
+    const noteNeeded = isOther && !noteOk;
+
+    if (reasonEl)  reasonEl.classList.toggle('is-error', ticked && !reasonVal);
+    if (reasonMsg) reasonMsg.hidden = !(ticked && !reasonVal);
+
     // ---- live variance readout -------------------------------------------------
     // The <b id="cap-hint-max"> wrapper must survive every rewrite: openModal and the
     // cancel-refresh path both grab it by id, and losing it makes the next openModal
@@ -953,19 +992,91 @@
       if (cls !== 'neutral') hint.classList.add(cls);
     }
 
-    // ---- note: optional until the box is ticked --------------------------------
-    if (noteLabel) noteLabel.textContent = ticked ? 'Note · Required' : 'Note (optional)';
-    if (noteEl)  noteEl.classList.toggle('is-error', ticked && noteVal.length === 0);
-    if (noteMsg) noteMsg.hidden = !(ticked && noteVal.length === 0);
+    // ---- note: THREE states, rendered distinctly (db/049) -----------------------
+    //
+    // The old code rendered two states ('Note · Required' / 'Note (optional)') keyed on
+    // the tick alone. With the note required only for OTHER there are three conditions,
+    // and collapsing three into two is how the "." habit forms: a field that says
+    // "Required" when it is not teaches the operator to satisfy it without reading it.
+    //
+    //   no variance            → "Note (optional)", neutral placeholder
+    //   variance, real code    → "Note (optional)"  + a placeholder that INVITES detail
+    //   variance, OTHER        → "Note · Required"  + a placeholder that DEMANDS it
+    if (noteLabel) noteLabel.textContent = isOther ? 'Note · Required' : 'Note (optional)';
+    if (noteEl) {
+      noteEl.placeholder =
+          isOther ? 'Required — describe what happened (min 3 characters)'
+        : ticked  ? 'Optional — anything useful about this delivery'
+        :           'Any discrepancy, damage, or instruction…';
+      noteEl.classList.toggle('is-error', noteNeeded);
+    }
+    if (noteMsg) noteMsg.hidden = !noteNeeded;
 
     // ---- Confirm gate (§7) -----------------------------------------------------
     btn.disabled =
          meta.closed                       // already closed — nothing to add
       || _previewBlocked                   // the server's preview refused this quantity
       || (over && !ticked)                 // over needs the tick
-      || (ticked && noteVal.length === 0)  // ticked needs a reason
+      || (ticked && !reasonVal)            // db/049 — a variance needs a reason CODE
+      || noteNeeded                        // db/049 — and OTHER needs a real note with it
       || (qty === 0 && !ticked)            // zero records nothing unless it closes
       || qty < 0;
+  }
+
+  // db/049 — the dropdown's options, fetched once and cached. The labels live only on the
+  // server (VarianceReasonCodes.cs); this file holds none, so a label change never needs a
+  // JS edit. Fetched lazily on first use rather than at page load: most receives are
+  // ordinary partials that never open this control.
+  let _reasonCache = null;
+  let _reasonDirection = null;
+
+  async function loadReasons() {
+    if (_reasonCache) return _reasonCache;
+    try {
+      const res = await fetch('/api/receipts/variance-reasons', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _reasonCache = await res.json();
+    } catch (err) {
+      // Leave the cache empty so a later attempt retries. The Confirm gate keeps the
+      // button disabled while no reason is selected, so a failed fetch cannot let an
+      // unreasoned variance through — it blocks the receive rather than silently
+      // allowing one, which is the correct direction to fail in.
+      console.error('[receiving] could not load variance reasons', err);
+      _reasonCache = null;
+    }
+    return _reasonCache;
+  }
+
+  async function renderReasonOptions(direction) {
+    const sel = document.getElementById('m-reason');
+    if (!sel) return;
+    const reasons = await loadReasons();
+    if (!reasons) return;
+
+    // Only rebuild when the direction actually changed — the operator types continuously
+    // and rebuilding on every keystroke would discard a selection mid-edit.
+    if (_reasonDirection === direction && sel.options.length > 1) return;
+    _reasonDirection = direction;
+
+    const keep = sel.value;
+    const valid = reasons.filter(r => direction === 'over' ? r.validOver : r.validShort);
+
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = ''; ph.disabled = true; ph.selected = true;
+    ph.textContent = '— select a reason —';
+    sel.appendChild(ph);
+
+    for (const r of valid) {
+      const o = document.createElement('option');
+      o.value = r.code;              // the code is the value; logic never reads the label
+      o.textContent = r.label;       // server-provided; never constructed here
+      sel.appendChild(o);
+    }
+
+    // Preserve a still-valid selection across a direction flip (over → short can happen
+    // mid-typing); drop it silently if the new direction does not allow it.
+    if (keep && valid.some(r => r.code === keep)) sel.value = keep;
   }
 
   document.getElementById('m-input').addEventListener('input', (e) => {
@@ -984,6 +1095,10 @@
   });
 
   document.getElementById('m-note').addEventListener('input', refreshVarianceUi);
+
+  // db/049 — picking a reason changes whether the note is required (OTHER) and clears the
+  // Confirm gate, so the same repaint has to run.
+  document.getElementById('m-reason')?.addEventListener('change', refreshVarianceUi);
 
   // ---- db/047 §2d — reopen ------------------------------------------------
   document.getElementById('m-reopen-btn').addEventListener('click', () => {
@@ -1126,6 +1241,11 @@
       // operator could not see would be a lie in the other direction.
       varianceAccepted: !document.getElementById('m-variance-block')?.hidden
                         && !!document.getElementById('m-variance')?.checked,
+      // db/049 — send the code only when its control was actually on screen, for the same
+      // reason as the flag above. Null on an exact-quantity receive, where the server
+      // ignores it because that is not a variance.
+      varianceReasonCode: (!document.getElementById('m-reason-block')?.hidden
+                           && document.getElementById('m-reason')?.value) || null,
     };
 
     const btn = document.getElementById('m-confirm');
@@ -1599,6 +1719,11 @@
             c:  !!w.isClosed,
             ca: w.closedAt || null,
             cr: w.closedReason || null,
+            // db/049 — label comes from the server so this file holds no copy of the map.
+            // Both stay null on windows closed before reason codes existed; the closed
+            // modal renders that as "not recorded", never as OTHER.
+            rc: w.varianceReasonCode || null,
+            rl: w.varianceReasonLabel || null,
           };
         }
         return {

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Dapper;
 using ReceivingOps.Web.Data;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Services;
@@ -525,12 +526,24 @@ public class ReceiptService : IReceiptService
 
         if (req.HourOfDay > 23)  throw new ValidationException("HourOfDay must be 0–23");
 
-        // The note is the audit reason and is copied to PullItemWindows.ClosedReason, so it
-        // is mandatory whenever variance is accepted (§6).
-        if (req.VarianceAccepted && string.IsNullOrWhiteSpace(req.Note))
+        // db/049 — the audit reason is now the REASON CODE, not the note.
+        //
+        // What used to be here: "VarianceAccepted with a blank Note" → refuse. That rule
+        // required prose on a path that fires constantly (over-delivery happens on nearly
+        // every pull at this site), so in production it converted into a required keystroke
+        // and the first real use recorded ".". A required field that can be satisfied
+        // without saying anything is not a control.
+        //
+        // The replacement is NOT a second check layered on that one: the note requirement
+        // moves to OTHER only, and a required code takes its place. Both live below, after
+        // `outstanding` is known — required-ness depends on whether a variance is actually
+        // being accepted, which depends on the quantity. Only the shape check that needs no
+        // database is done here: a code that is not in the set is malformed regardless of
+        // quantity, and saying so early gives a clearer error than "invalid for direction".
+        if (req.VarianceReasonCode is not null && !VarianceReasonCodes.IsKnown(req.VarianceReasonCode))
             throw new ValidationException(
-                "A note is required when accepting variance — it is the audit reason.",
-                "VARIANCE_REASON_REQUIRED");
+                $"Unknown variance reason code '{req.VarianceReasonCode}'.",
+                "VARIANCE_REASON_UNKNOWN");
 
         var qcStatus = req.QcStatus ?? "pending";
         if (!AllowedQcStatus.Contains(qcStatus))
@@ -636,6 +649,52 @@ public class ReceiptService : IReceiptService
                     $"Receiving {req.Qty} pcs exceeds the {outstanding} pcs outstanding at hour {req.HourOfDay:D2}:00. " +
                     $"Tick 'accept variance' to record the over-delivery and close the line.",
                     "OVER_RECEIPT_NOT_ACCEPTED");
+
+            // db/049 §4.2 — reason validation, now that we know whether this IS a variance.
+            //
+            // Gated on `variance`, not on req.VarianceAccepted: an exact-quantity final
+            // receipt closes through the ordinary full-receipt path and is not a variance,
+            // so it must not demand a reason (§4.1). A code sent with one is ignored, not
+            // rejected — the request is well-formed, the field simply does not apply.
+            //
+            // Server-side is authoritative (BUILD_PROMPT §7). The client hides invalid
+            // options and gates Confirm, but a crafted request must be refused here.
+            string? reasonCode = null;
+            if (variance)
+            {
+                var direction = req.Qty > outstanding
+                    ? VarianceDirection.Over
+                    : VarianceDirection.Short;          // includes qty = 0, the zero-close
+
+                if (string.IsNullOrWhiteSpace(req.VarianceReasonCode))
+                    throw new ValidationException(
+                        "A reason is required when accepting variance. Valid codes for this " +
+                        $"{(direction == VarianceDirection.Over ? "over-receipt" : "short close")}: " +
+                        $"{VarianceReasonCodes.ValidCodesFor(direction)}.",
+                        "VARIANCE_REASON_REQUIRED");
+
+                // Known (checked at step 0) but wrong way round — e.g. OVER_DELIVERY on a
+                // short close. Named explicitly so the caller can tell this from a typo.
+                if (!VarianceReasonCodes.IsValidFor(req.VarianceReasonCode, direction))
+                    throw new ValidationException(
+                        $"Reason '{req.VarianceReasonCode}' is not valid for a " +
+                        $"{(direction == VarianceDirection.Over ? "over-receipt" : "short close")}. " +
+                        $"Valid codes: {VarianceReasonCodes.ValidCodesFor(direction)}.",
+                        "VARIANCE_REASON_WRONG_DIRECTION");
+
+                // OTHER is the only code that still demands prose — it is the one that says
+                // nothing on its own. The floor rejects "." and "-" without frustrating a
+                // terse but real answer; whitespace-only fails it too, since we trim first.
+                if (string.Equals(req.VarianceReasonCode, VarianceReasonCodes.Other, StringComparison.Ordinal)
+                    && (req.Note ?? "").Trim().Length < VarianceReasonCodes.MinNoteLength)
+                    throw new ValidationException(
+                        $"'{VarianceReasonCodes.Other}' requires a note of at least " +
+                        $"{VarianceReasonCodes.MinNoteLength} characters describing what happened. " +
+                        "Pick a specific reason instead if one fits.",
+                        "VARIANCE_NOTE_REQUIRED");
+
+                reasonCode = req.VarianceReasonCode;
+            }
 
             // Signed variance measured against outstanding AT THIS MOMENT, never against
             // Expected (§6 worked examples). Because every preceding partial reduced
@@ -795,10 +854,11 @@ public class ReceiptService : IReceiptService
             {
                 var closed = await conn.ExecuteAsync(new CommandDefinition(@"
                     UPDATE dbo.PullItemWindows
-                       SET IsClosed     = 1,
-                           ClosedAt     = SYSUTCDATETIME(),
-                           ClosedBy     = @ClosedBy,
-                           ClosedReason = @ClosedReason
+                       SET IsClosed           = 1,
+                           ClosedAt           = SYSUTCDATETIME(),
+                           ClosedBy           = @ClosedBy,
+                           ClosedReason       = @ClosedReason,
+                           VarianceReasonCode = @VarianceReasonCode   -- db/049
                      WHERE PullItemId = @PullItemId
                        AND HourOfDay  = @HourOfDay
                        AND IsClosed   = 0;",
@@ -807,7 +867,9 @@ public class ReceiptService : IReceiptService
                         req.PullItemId,
                         req.HourOfDay,
                         ClosedBy     = actorId,
+                        // Free text still stored verbatim; db/049 makes it optional, not gone.
                         ClosedReason = req.Note,
+                        VarianceReasonCode = reasonCode,
                     }, transaction: tx, cancellationToken: ct));
 
                 if (closed == 0)
@@ -853,8 +915,18 @@ public class ReceiptService : IReceiptService
             // ----- 8. Audit (one summary row, with §3.5 scope label) -----
             var summary  = string.Join(" + ", plan.Select(p => $"{p.Take}@{p.Line.PoNumber}"));
             var scopeLbl = ScopeLabel(pullCtx, plan.Any(p => !p.Line.IsPullLinked), "warehouse-wide FIFO");
+
+            // db/049 §5 — record the CODE, and that a note exists, not the note itself. The
+            // note is already stored verbatim on the window's ClosedReason; pasting it here
+            // would duplicate free text into a line meant to be skimmed, and a long one
+            // would bury the quantities. The code is what a human reading the trail can act
+            // on, and what a later report will group by.
+            var reasonLbl = reasonCode is null
+                ? ""
+                : $" Reason: {reasonCode}{(string.IsNullOrWhiteSpace(req.Note) ? "" : " (note recorded)")}.";
+
             await _audit.WriteAsync(conn, tx, "receive", "Receipt", $"pi={req.PullItemId}",
-                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}", ct);
+                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}.{reasonLbl}", ct);
 
             // ----- 9. Compute response fields before commit -----
             // db/047 §6 — the caller gets the recomputed outstanding and the window's
@@ -972,12 +1044,13 @@ public class ReceiptService : IReceiptService
             // the read above and here.
             var reopened = await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.PullItemWindows
-                   SET IsClosed     = 0,
-                       ClosedAt     = NULL,
-                       ClosedBy     = NULL,
-                       ClosedReason = NULL
-                 WHERE PullItemId = @PullItemId
-                   AND HourOfDay  = @HourOfDay
+                   SET IsClosed           = 0,
+                       ClosedAt           = NULL,
+                       ClosedBy           = NULL,
+                       ClosedReason       = NULL,
+                       VarianceReasonCode = NULL   -- db/049 §4.4: an explicit reopen clears
+                 WHERE PullItemId = @PullItemId    -- the decision for the same reason cancel
+                   AND HourOfDay  = @HourOfDay     -- does — the window no longer holds it.
                    AND IsClosed   = 1;",
                 new { req.PullItemId, req.HourOfDay },
                 transaction: tx, cancellationToken: ct));
@@ -1172,10 +1245,11 @@ public class ReceiptService : IReceiptService
             {
                 await conn.ExecuteAsync(new CommandDefinition(@"
                     UPDATE dbo.PullItemWindows
-                       SET IsClosed     = 0,
-                           ClosedAt     = NULL,
-                           ClosedBy     = NULL,
-                           ClosedReason = NULL
+                       SET IsClosed           = 0,
+                           ClosedAt           = NULL,
+                           ClosedBy           = NULL,
+                           ClosedReason       = NULL,
+                           VarianceReasonCode = NULL   -- db/049 §4.4
                      WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay;",
                     new { orig.PullItemId, orig.HourOfDay },
                     transaction: tx, cancellationToken: ct));

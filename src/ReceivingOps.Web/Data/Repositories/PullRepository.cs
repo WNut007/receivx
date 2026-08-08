@@ -1,5 +1,6 @@
 using System.Text;
 using Dapper;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Data.Repositories;
@@ -285,7 +286,8 @@ public class PullRepository : IPullRepository
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
-                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
@@ -339,6 +341,11 @@ public class PullRepository : IPullRepository
                     IsClosed = r.IsClosed ?? false,   // db/047
                     ClosedAt = r.ClosedAt,
                     ClosedReason = r.ClosedReason,
+                    // db/049 — code plus its label, resolved from the one map in
+                    // VarianceReasonCodes so no client holds a second copy of the labels
+                    // and none can render a raw code by accident.
+                    VarianceReasonCode = (string?)r.VarianceReasonCode,
+                    VarianceReasonLabel = VarianceReasonCodes.Label((string?)r.VarianceReasonCode),
                 });
             }
         }
@@ -496,7 +503,8 @@ public class PullRepository : IPullRepository
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
-                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
@@ -516,7 +524,8 @@ public class PullRepository : IPullRepository
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
                     piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
-                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason   -- db/047
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId AND pi.Id = @ItemId
@@ -599,6 +608,11 @@ public class PullRepository : IPullRepository
                     IsClosed = r.IsClosed ?? false,   // db/047
                     ClosedAt = r.ClosedAt,
                     ClosedReason = r.ClosedReason,
+                    // db/049 — code plus its label, resolved from the one map in
+                    // VarianceReasonCodes so no client holds a second copy of the labels
+                    // and none can render a raw code by accident.
+                    VarianceReasonCode = (string?)r.VarianceReasonCode,
+                    VarianceReasonLabel = VarianceReasonCodes.Label((string?)r.VarianceReasonCode),
                 });
             }
         }
@@ -631,5 +645,7 @@ public class PullRepository : IPullRepository
         public bool? IsClosed { get; set; }
         public DateTime? ClosedAt { get; set; }
         public string? ClosedReason { get; set; }
+        // db/049 — NULL on open windows AND on windows closed before reason codes existed.
+        public string? VarianceReasonCode { get; set; }
     }
 }

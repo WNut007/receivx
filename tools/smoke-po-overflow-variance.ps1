@@ -237,6 +237,11 @@ function Receive($session, $pullItemId, $qty, $variance, $note) {
     $body = @{
         pullItemId = $pullItemId; hourOfDay = $HOUR; qty = $qty
         varianceAccepted = $variance; note = $note
+        # db/049 — a variance needs a reason code. COUNT_MISMATCH is valid in both
+        # directions and needs no note, so it keeps these cases testing allocation and
+        # the VarianceQty recompute rather than the reason rules, which have their own
+        # suite in smoke-variance-reason.ps1.
+        varianceReasonCode = $(if ($variance) { 'COUNT_MISMATCH' } else { $null })
     } | ConvertTo-Json
     Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -Body $body `
         -ContentType 'application/json' -WebSession $session

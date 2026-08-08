@@ -83,6 +83,12 @@ function Recv($itemId, $qty, $variance = $false, $note = $null, $hour = 10) {
     Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -ContentType 'application/json' -WebSession $sv -Body (@{
         pullItemId=$itemId; hourOfDay=$hour; qty=$qty; lotBatch=$null; palletId=$null
         binLocation=$null; qcStatus='pending'; note=$note; varianceAccepted=$variance
+        # db/049 — a variance now needs a reason code. COUNT_MISMATCH is the fixture
+        # default because it is valid in BOTH directions and requires no note, so it
+        # keeps every case below testing what it was written to test rather than
+        # tripping the new validation. Cases that exercise the reason rules themselves
+        # live in smoke-variance-reason.ps1.
+        varianceReasonCode = $(if ($variance) { 'COUNT_MISMATCH' } else { $null })
     } | ConvertTo-Json)
 }
 function RecvFail($itemId, $qty, $variance, $note, $expStatus, $expCode) {
@@ -185,11 +191,51 @@ if ($w2.IsClosed -and $w2.Received -eq 4000 -and $r.varianceQty -eq -1000 -and $
 } else { Bad "closed=$($w2.IsClosed) received=$($w2.Received) variance=$($r.varianceQty) cols=$closedCols reason='$($w2.ClosedReason)'" }
 
 # ---------------------------------------------------------------------------
-Case '§8.12 — ticked with a blank note is refused'
+Case '§8.12 — a ticked variance cannot be waved through with nothing (db/049 rules)'
+# REWRITTEN for db/049. This case used to read "ticked with a blank note is refused" and
+# asserted VARIANCE_REASON_REQUIRED. That assertion still passes today, but for the WRONG
+# REASON — the request it sends carries no reason code, so it now trips the missing-code
+# rule and never reaches the note rule at all. Left as it was, it would have gone on
+# reporting green while testing nothing about notes.
+#
+# The original intent — a variance cannot be accepted without saying anything — now has
+# two halves, so both are asserted, and the middle case that MUST succeed is asserted too.
 $f = NewFixture 'C12' 1000
-$r = RecvFail $f.ItemId 400 $true '   ' 400 'VARIANCE_REASON_REQUIRED'
-if ($r.Ok) { OK '400 VARIANCE_REASON_REQUIRED on a whitespace-only note' }
-else { Bad "expected 400/VARIANCE_REASON_REQUIRED, got $($r.Status)/$($r.Code)" }
+
+# (a) and (b) post RAW rather than through Recv(), which now always attaches a valid code
+# — going through the helper would make (a) impossible to express and would silently test
+# the opposite of what it claims.
+function RawVarianceFail($itemId, $note, $code, $expCode, $label) {
+    $b = @{ pullItemId=$itemId; hourOfDay=10; qty=400; lotBatch=$null; palletId=$null
+            binLocation=$null; qcStatus='pending'; note=$note; varianceAccepted=$true }
+    if ($null -ne $code) { $b.varianceReasonCode = $code }
+    try {
+        Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -ContentType 'application/json' `
+            -WebSession $sv -Body ($b | ConvertTo-Json) | Out-Null
+        Bad "$label was ACCEPTED"
+    } catch {
+        $s = [int]$_.Exception.Response.StatusCode; $c = $null
+        if ($_.ErrorDetails.Message) { try { $c = ($_.ErrorDetails.Message | ConvertFrom-Json).code } catch {} }
+        if ($s -eq 400 -and $c -eq $expCode) { OK "$label → 400 $expCode" }
+        else { Bad "$label expected 400/$expCode, got $s/$c" }
+    }
+}
+
+# (a) no code at all → refused, however good the note is.
+RawVarianceFail $f.ItemId 'a genuinely descriptive note' $null 'VARIANCE_REASON_REQUIRED' `
+    '(a) variance with a note but no code'
+
+# (b) OTHER with a whitespace-only note → refused. The direct successor to the old case:
+# OTHER is the one code that still demands prose, and "   " is not prose.
+RawVarianceFail $f.ItemId '   ' 'OTHER' 'VARIANCE_NOTE_REQUIRED' `
+    '(b) OTHER with a whitespace-only note'
+
+# (c) a specific code with NO note → SUCCEEDS. This is the point of db/049: the operator
+# who picks a real reason is not made to type prose, which is what produced the ".".
+$r12 = Recv $f.ItemId 400 $true $null
+$w12 = WindowRow $f.PullNumber
+if ($w12.IsClosed -and $w12.Received -eq 400) { OK '(c) a specific code with no note is accepted — the "." is no longer needed' }
+else { Bad "(c) expected the line closed at 400, got closed=$($w12.IsClosed) received=$($w12.Received)" }
 
 # ---------------------------------------------------------------------------
 Case '§8.21 — FIFO slices: two rows, both flagged, exactly one VarianceQty'
@@ -237,7 +283,8 @@ if ($w.IsClosed -and ($w.Expected - $w.Received) -eq 300) {
 Case '§8.15 — concurrency: two simultaneous ticked submits, one wins'
 $f = NewFixture 'C15' 1000
 $body = @{ pullItemId=$f.ItemId; hourOfDay=10; qty=400; lotBatch=$null; palletId=$null
-           binLocation=$null; qcStatus='pending'; note='concurrent close'; varianceAccepted=$true } | ConvertTo-Json
+           binLocation=$null; qcStatus='pending'; note='concurrent close'; varianceAccepted=$true
+           varianceReasonCode='COUNT_MISMATCH' } | ConvertTo-Json
 $job = {
     param($base,$body,$wh)
     $s=$null
@@ -325,7 +372,20 @@ $checks = @(
     @{ n='input.max removed rather than set';             ok = ($js -match "removeAttribute\('max'\)") -and ($js -notmatch '\binput\.max\s*=') },
     @{ n='quick-fill dispatches a real input event';      ok = ($js -match "dispatchEvent\(new Event\('input'") },
     @{ n='stale tick cleared when the box cannot be offered'; ok = ($js -match 'if \(!canOffer && box\.checked\) box\.checked = false') },
-    @{ n='Confirm gate covers over-unticked, ticked-no-note and zero-unticked'; ok = ($js -match 'over && !ticked') -and ($js -match 'ticked && noteVal\.length === 0') -and ($js -match 'qty === 0 && !ticked') },
+    # db/049 — the gate's note term moved. It used to be `ticked && noteVal.length === 0`
+    # (a note on every variance); it is now a required CODE plus a note required only for
+    # OTHER, which the JS carries as `noteNeeded`. Asserting the old term here would fail
+    # honestly, but asserting nothing would let the gate lose a term unnoticed, so all four
+    # are pinned.
+    @{ n='Confirm gate covers over-unticked, no-code, OTHER-without-note and zero-unticked';
+       ok = ($js -match 'over && !ticked') -and ($js -match 'ticked && !reasonVal') `
+            -and ($js -match '\|\|\s*noteNeeded') -and ($js -match 'qty === 0 && !ticked') },
+    @{ n='db/049 note requirement is keyed on OTHER, not on the tick';
+       ok = ($js -match "isOther\s*=\s*reasonVal === 'OTHER'") -and ($js -match 'noteNeeded\s*=\s*isOther && !noteOk') },
+    @{ n='db/049 three distinct note states (required / inviting / neutral)';
+       ok = ($js -match "isOther \? 'Note · Required' : 'Note \(optional\)'") -and ($js -match 'noteEl\.placeholder\s*=') },
+    @{ n='db/049 client holds no copy of the labels (fetched from the API)';
+       ok = ($js -match "fetch\('/api/receipts/variance-reasons'") -and ($js -notmatch 'ส่งเกิน') },
     @{ n='Cmd+Enter honours the Confirm gate';            ok = ($js -match 'if \(btn && btn\.disabled\) return;') }
 )
 foreach ($c in $checks) { if ($c.ok) { OK $c.n } else { Bad $c.n } }

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
@@ -37,6 +38,21 @@ public class ReceiptsApiController : ControllerBase
             pd.Extensions["code"] = code;
         return result;
     }
+
+    // db/049 — GET /api/receipts/variance-reasons
+    //
+    // The dropdown's source of truth. The client renders whatever this returns and holds
+    // NO copy of the labels, so changing a label — or the eventual decision about what
+    // language the list is in — is an edit to VarianceReasonCodes.cs alone.
+    //
+    // Direction filtering is done client-side from the ValidOver/ValidShort flags rather
+    // than by asking the server per keystroke: the operator changes the quantity
+    // continuously while typing, and the set is six fixed rows. The server re-validates the
+    // submitted code against the direction on POST regardless — this endpoint decides what
+    // is OFFERED, never what is ACCEPTED.
+    [HttpGet("variance-reasons")]
+    public ActionResult<IReadOnlyList<VarianceReasonCodes.Reason>> VarianceReasons()
+        => Ok(VarianceReasonCodes.All);
 
     // §7.2 / §3.5 POST /api/receipts — lock-aware FIFO allocator; may emit multiple receipt rows
     [HttpPost]

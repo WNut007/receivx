@@ -80,7 +80,8 @@ function CallPreview($itemId, $qty, $variance) {
 }
 function CallConfirm($itemId, $qty, $variance) {
     $body = @{ pullItemId=$itemId; hourOfDay=10; qty=$qty; lotBatch=$null; palletId=$null
-               binLocation=$null; qcStatus='pending'; note='agreement smoke'; varianceAccepted=$variance } | ConvertTo-Json
+               binLocation=$null; qcStatus='pending'; note='agreement smoke'; varianceAccepted=$variance
+               varianceReasonCode = $(if ($variance) { 'COUNT_MISMATCH' } else { $null }) } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -ContentType 'application/json' -WebSession $sv -Body $body | Out-Null
         return [pscustomobject]@{ Status=200; Code=$null }

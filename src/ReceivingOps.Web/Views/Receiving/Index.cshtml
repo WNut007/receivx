@@ -320,6 +320,25 @@
             </span>
           </span>
         </label>
+
+        @* db/049 — structured reason. Shown only once the tick is on AND the quantity
+           differs from outstanding, i.e. only when a variance is actually being accepted.
+           Options are injected by receiving.js from GET /api/receipts/variance-reasons and
+           filtered to the current direction; there are deliberately NO <option> elements
+           here, because a label in markup would be a second copy of the map.
+
+           The placeholder option is disabled + selected so the control starts on "choose
+           one" and cannot be submitted unchosen. A pre-selected real code would reproduce
+           the "." defect in a new shape: a required field satisfied without a decision. *@
+        <div class="variance-reason" id="m-reason-block" hidden>
+          <label class="variance-reason-label" for="m-reason">Reason · Required</label>
+          <select class="select" id="m-reason">
+            <option value="" disabled selected>— select a reason —</option>
+          </select>
+          <div class="note-required-msg" id="m-reason-required-msg" hidden>
+            Choose the reason this delivery differed from the plan.
+          </div>
+        </div>
       </div>
 
       <div class="cap-hint" id="cap-hint">
@@ -379,10 +398,14 @@
              through this modal. Wired now because the note is the mandatory audit
              reason whenever variance is accepted. The same is true of m-lot, m-pallet,
              m-bin and m-qc — flagged separately, not fixed here. *@
+          @* db/049 — label, placeholder and message text are all set by receiving.js, which
+             renders three distinct states: no variance, variance with a specific code
+             (optional — invites detail), variance with OTHER (required). The markup carries
+             the neutral state only. *@
           <label id="m-note-label">Note (optional)</label>
           <textarea id="m-note" placeholder="Any discrepancy, damage, or instruction…"></textarea>
           <div class="note-required-msg" id="m-note-required-msg" hidden>
-            A note is required when accepting variance — it is the audit reason.
+            “อื่นๆ” needs a short description — at least 3 characters. Pick a specific reason instead if one fits.
           </div>
         </div>
       </div>

@@ -107,6 +107,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # -preview-confirm-agreement / -reopen, and smoke-hourcap-6.2's 7a/7b split) are
         # still run by hand — see db/047_STATUS.md.
         'smoke-po-overflow-variance.ps1'
+        'smoke-variance-reason.ps1'          # db/049
     )
 }
 

@@ -69,6 +69,9 @@ function Receive($itemId, $qty, $variance, $note) {
     Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -ContentType 'application/json' -WebSession $sv -Body (@{
         pullItemId=$itemId; hourOfDay=10; qty=$qty; lotBatch=$null; palletId=$null
         binLocation=$null; qcStatus='pending'; note=$note; varianceAccepted=$variance
+        # db/049 — a variance needs a reason code; COUNT_MISMATCH is valid in both
+        # directions and needs no note. Reason rules: smoke-variance-reason.ps1.
+        varianceReasonCode = $(if ($variance) { 'COUNT_MISMATCH' } else { $null })
     } | ConvertTo-Json)
 }
 function Reopen($itemId, $reason) {

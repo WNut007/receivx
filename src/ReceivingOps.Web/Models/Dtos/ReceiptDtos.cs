@@ -14,6 +14,21 @@ public class ReceiveRequest
     public string? Note { get; set; }
 
     /// <summary>
+    /// db/049 — structured reason for an accepted variance. One of
+    /// <see cref="Models.VarianceReasonCodes"/>; required whenever a variance is actually
+    /// being accepted (ticked AND the quantity differs from outstanding), ignored entirely
+    /// on an exact-quantity final receipt because that is not a variance.
+    ///
+    /// Replaces "always require a free-text note" as the audit reason. The note stays, but
+    /// is only mandatory when this is OTHER — the always-required note was being satisfied
+    /// with "." in production, which recorded nothing and could not be aggregated.
+    ///
+    /// Audit metadata only: nothing in allocation, the overflow decision, VarianceQty,
+    /// IsClosed or PO consumption reads it.
+    /// </summary>
+    public string? VarianceReasonCode { get; set; }
+
+    /// <summary>
     /// db/047 — operator ticked "this is the final receipt; close the line at this quantity".
     /// Defaults false, so existing callers that never send it keep today's behaviour exactly.
     ///

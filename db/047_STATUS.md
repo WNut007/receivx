@@ -158,7 +158,7 @@ columns on an append-only ledger — then locks Pulls, then re-reads the target 
 under `UPDLOCK`, so the already-voided guard is still evaluated against locked state.
 Guard *precedence* is unchanged; only the reads moved.
 
-**Coverage** — `smoke-po-overflow-variance` cases 8–12, all PASS:
+**Coverage** — `smoke-po-overflow-variance` cases 8–13, all PASS:
 
 | Case | Asserts |
 |---|---|
@@ -224,13 +224,36 @@ result against the table below — some may need fixture work to survive battery
 by-hand run does not give you. Until then, read every PASS in that table as
 "passes standalone", not "passes in CI".
 
+## MIGRATION LEDGER — production
+
+**This repo has no migration ledger table or tool. This section IS the ledger.**
+Nothing else records what has been applied to production. Treat an entry here as
+the authoritative answer to "is this migration live?", and update it in the same
+commit as any migration that ships.
+
+Deploy order for every migration in this family: **migration first, then DLL, then
+app-pool restart.** `deploy.ps1` does NOT run migrations, and its auto-rollback
+restores the DLL, not the schema. On 2026-08-07 a DLL went out against an
+unmigrated schema and `/api/pulls` returned 500 on `Invalid column name 'IsClosed'`
+until the migration was run by hand.
+
+| Migration | Production | Verified |
+|---|---|---|
+| `db/047_receipt_variance_and_line_close.sql` | **APPLIED 2026-08-07** | All six columns confirmed via `COL_LENGTH` from SSMS: `IsClosed`, `ClosedAt`, `ClosedBy`, `ClosedReason` on `dbo.PullItemWindows`; `VarianceAccepted`, `VarianceQty` on `dbo.Receipts`. `ClosedBy` is `uniqueidentifier`, `ClosedReason` is `nvarchar(1000)` — production matches the file as committed. |
+| `db/048_lockhourcap_default_unlocked.sql` | **NOT APPLIED** — dev only | Re-points `DF_Pulls_LockHourCap` from `((1))` to `((0))`. Deliberately not shipped: the default was never what produced locked pulls (see the db/048 section below), so applying it alone changes nothing and the three application sites are the real decision. |
+| `db/049_pull_item_windows_variance_reason_code.sql` | **APPLIED 2026-08-08 17:01 ICT** | `COL_LENGTH('dbo.PullItemWindows','VarianceReasonCode')` returns **64** (bytes; `NVARCHAR(32)` × 2). Post-check reported the column present, nullable and unconstrained, with the db/047 columns intact. Applied ahead of the DLL per §7 — the column is nullable with no default, so the then-live build was unaffected. |
+
+An earlier revision of this section claimed db/047 had **not** been run on
+production. That was stale from 2026-08-06 and wrong from 2026-08-07 onward; the
+PO-overflow work has been live and reading those columns since. Corrected
+2026-08-08 against SSMS. The staleness is recorded rather than quietly overwritten,
+because a "not done" entry that is actually done is the same failure shape as the
+outage above — and it survived precisely because nothing forced this file to be
+touched when the migration ran.
+
 ## Not done
 
-1. `db/047` has not been run on production. Deploy order: **migration first,
-   then DLL, then app-pool restart**. `deploy.ps1` does NOT run migrations, and
-   its auto-rollback restores the DLL, not the schema — verified safe, since
-   the migration is additive and every deployed INSERT names its columns.
-2. **`db/probe-hangfire-workers.sql` has not been run on production.** It is
+1. **`db/probe-hangfire-workers.sql` has not been run on production.** It is
    read-only and answers whether any machine other than the prod web host is
    registered as a Hangfire worker there.
 

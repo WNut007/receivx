@@ -109,6 +109,9 @@ try {
 Step "(2b') Same receive WITH the tick → 409 No PO linked; overflow must not widen without an anchor"
 $before = Q "SELECT COUNT(*) FROM dbo.Receipts WHERE PullItemId='$PI_2900_PCBA';"
 $body = @{ pullItemId=$PI_2900_PCBA; hourOfDay=12; qty=1; varianceAccepted=$true
+           # db/049 — reason validation runs BEFORE the FIFO walk, so without a code this
+           # would 400 on the missing reason instead of reaching the 409 under test.
+           varianceReasonCode='COUNT_MISMATCH'
            note='4c: drained PO, tick accepted' } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
