@@ -46,6 +46,10 @@
 #                   PO line restored + auto-closed PO reopened, forward path intact.
 #   7.  §7.10       Normal in-range receive, box unticked → single pull-linked slice,
 #                   scope label unchanged. Regression guard on the narrow path.
+#   8-13. NEW       The step-8c VarianceQty recompute. See the block above case 8 for
+#                   the invariant; 8 clears to NULL at exactly zero, 9 and 12 and 13
+#                   restate a negative, 10 restates a positive, 11 proves 8c is inert
+#                   where no variance was ever accepted.
 #
 # Cases 4, 6, 8, 9, 11, 13 of the brief are NOT covered here — see the trailer.
 #
@@ -150,6 +154,29 @@ UPDATE dbo.Pulls SET Status = 'pending', FirstReceiptAt = NULL
 DELETE FROM dbo.PurchaseOrderLines WHERE PurchaseOrderId IN
     (SELECT Id FROM dbo.PurchaseOrders WHERE PoNumber IN ('$SEED_PO','$OTHER_PO'));
 DELETE FROM dbo.PurchaseOrders WHERE PoNumber IN ('$SEED_PO','$OTHER_PO');
+"@
+    Sql $q | Out-Null
+}
+
+# Seeds the anchor PO with N lines of $perLine each, all pull-linked. Case 11 needs a
+# multi-row allocation that involves NO variance, and on a lock-by-pull pull the only
+# way to split without the tick is across two lines of the pull's own PO — overflow is
+# gated on variance by design (§4.1), so a second PO would not be reachable unticked.
+function SeedAnchorPoLines($lineCount, $perLine) {
+    $values = (1..$lineCount | ForEach-Object {
+        "(@po, $_, '$ITEM', 'SOV anchor line $_', $perLine, 0, '$VENDOR', 'Western Digital')"
+    }) -join ",`n"
+    $q = @"
+SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
+DECLARE @po UNIQUEIDENTIFIER = NEWID();
+INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, Status, PullExternalRef, CreatedBy)
+VALUES (@po, '$SEED_PO', '$WH_BPI', CAST(DATEADD(day,-30,SYSUTCDATETIME()) AS DATE), 'open', '$PULL_NO',
+        '11111111-1111-1111-1111-000000000001');
+INSERT INTO dbo.PurchaseOrderLines
+    (PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName)
+VALUES
+$values;
 "@
     Sql $q | Out-Null
 }
@@ -409,13 +436,17 @@ $lv = ($live | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() 
 # the two would drift apart if the decrement in step 8 were keyed on the wrong row.
 if ($lv[0] -ne $p6b[1]) { Fail "window ReceivedQty ($($p6b[1])) does not reconcile with live receipts ($($lv[0]))" }
 if ($lv[3] -ne '1')     { Fail "expected exactly 1 live receipt row after the partial cancel, got $($lv[3])" }
-if ($lv[1] -ne '0')     { Fail "SUM(VarianceQty) over live rows should be 0 — the variance carrier was reversed — got $($lv[1])" }
+# Step 8c moved the figure onto the surviving ticked row rather than letting it die with
+# the slice that happened to carry it: 1 received of 400 expected is -399. This assertion
+# read '0' before 8c existed, which was the orphaned state the recompute now prevents.
+if ($lv[1] -ne '-399')  { Fail "SUM(VarianceQty) over live rows should be -399 (live 1 - expected 400), got $($lv[1])" }
 # The surviving overflow row KEEPS VarianceAccepted=1. That flag is provenance of the
 # confirm that wrote the row, not a claim about the window's current state, and §8b
 # depends on every slice carrying it: were it cleared here, a later cancel of this row
-# would no longer reopen the window.
+# would no longer reopen the window. It is also what makes the row eligible to carry the
+# recomputed figure above.
 if ($lv[2] -ne '1')     { Fail "the surviving overflow row should still carry VarianceAccepted=1, got $($lv[2]) row(s)" }
-OK "window reconciles with live receipts (1 = 1); variance carrier gone; surviving row keeps its flag"
+OK "window reconciles with live receipts (1 = 1); figure restated to -399 on the surviving ticked row"
 
 $rev = Sql @"
 SET NOCOUNT ON;
@@ -515,6 +546,244 @@ $closed7 = SqlScalar "SET NOCOUNT ON; SELECT CAST(IsClosed AS VARCHAR) FROM dbo.
 if ($closed7 -ne '0') { Fail "an unticked partial must leave the line open, got IsClosed=$closed7" }
 OK "in-range partial: one pull-linked slice, plain label, line left open"
 
+# ===========================================================================
+# Cases 8-12 — the step-8c variance recompute.
+#
+# VarianceQty describes a decision about a WINDOW ("401 arrived against 400 outstanding")
+# but is stored on one arbitrary slice. Cancel is row-scoped, so before step 8c existed,
+# reversing any other slice left that number describing a receive that no longer happened.
+# Cases 6/6b/6c above assert the IsClosed half of the reversal; these assert the quantity.
+#
+# THE INVARIANT, asserted directly in each case below. For a window carrying at least one
+# live VarianceAccepted row:
+#     SUM(VarianceQty) over live rows of (PullItemId, HourOfDay)
+#         == SUM(QtyReceived) over those rows - window.ExpectedQty
+#     SIGNED — negative when short, positive when over — and NULL only when that
+#     difference is exactly zero.
+# "Live" = not voided (ReversedById) and not itself a reversal (ReversesReceiptId).
+#
+# Where NO live row carries the tick the invariant does not apply and VarianceQty stays
+# NULL everywhere: an ordinary partial is also live < expected, and stamping the figure on
+# a plain row would make every partial read as an accepted variance. Case 11 is that guard.
+# ===========================================================================
+
+# live qty | live SUM(VarianceQty) as text ('NULL' when none) | rows carrying a non-NULL
+# VarianceQty | live row count | live rows carrying VarianceAccepted. The non-NULL COUNT
+# matters on its own: a SUM that happens to be right while two rows each carry half of it
+# would satisfy the arithmetic and still be the bug this fixes.
+function LiveStats($pi) {
+    $r = Sql @"
+SET NOCOUNT ON;
+SELECT CAST(ISNULL(SUM(r.QtyReceived),0) AS VARCHAR)+'|'
+     + ISNULL(CAST(SUM(r.VarianceQty) AS VARCHAR),'NULL')+'|'
+     + CAST(COUNT(r.VarianceQty) AS VARCHAR)+'|'
+     + CAST(COUNT(*) AS VARCHAR)+'|'
+     + CAST(SUM(CASE WHEN r.VarianceAccepted=1 THEN 1 ELSE 0 END) AS VARCHAR)
+FROM dbo.Receipts r
+WHERE r.PullItemId='$pi' AND r.HourOfDay=$HOUR
+  AND r.ReversedById IS NULL AND r.ReversesReceiptId IS NULL;
+"@
+    $p = ($r | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
+    return [pscustomobject]@{ Qty=[int]$p[0]; VarSum=$p[1]; VarRows=[int]$p[2]; Rows=[int]$p[3]
+                              TickedRows=[int]$p[4] }
+}
+
+function WinStats($pi) {
+    $r = Sql @"
+SET NOCOUNT ON;
+SELECT CAST(ReceivedQty AS VARCHAR)+'|'+CAST(ExpectedQty AS VARCHAR)+'|'+CAST(IsClosed AS VARCHAR)
+FROM dbo.PullItemWindows WHERE PullItemId='$pi' AND HourOfDay=$HOUR;
+"@
+    $p = ($r | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
+    return [pscustomobject]@{ Received=[int]$p[0]; Expected=[int]$p[1]; IsClosed=($p[2] -eq '1') }
+}
+
+function CancelSlice($session, $receiptId, $note) {
+    Invoke-RestMethod -Uri "$base/api/receipts/$receiptId/cancel" -Method POST `
+        -Body (@{ reason='miscount'; note=$note } | ConvertTo-Json) `
+        -ContentType 'application/json' -WebSession $session | Out-Null
+}
+
+# Asserts the invariant itself rather than a hardcoded number, so a case that changes its
+# quantities cannot quietly stop testing anything.
+function AssertInvariant($pi, $label) {
+    $l = LiveStats $pi; $w = WinStats $pi
+    $delta = $l.Qty - $w.Expected
+    # Signed: the figure is carried whenever the difference is non-zero AND some live row
+    # holds the tick to carry it on.
+    $applies = ($l.TickedRows -gt 0 -and $delta -ne 0)
+    $expectedSum = if ($applies) { "$delta" } else { 'NULL' }
+    if ($l.VarSum -ne $expectedSum) {
+        Fail "$label — invariant broken: live qty $($l.Qty) - expected $($w.Expected) = $delta with $($l.TickedRows) ticked row(s), so SUM(VarianceQty) should be $expectedSum, got $($l.VarSum)"
+    }
+    $wantRows = if ($applies) { 1 } else { 0 }
+    if ($l.VarRows -ne $wantRows) {
+        Fail "$label — expected exactly $wantRows live row(s) carrying VarianceQty, got $($l.VarRows)"
+    }
+    if ($l.Qty -ne $w.Received) {
+        Fail "$label — window cache $($w.Received) does not reconcile with live receipts $($l.Qty)"
+    }
+    return [pscustomobject]@{ Live=$l; Win=$w; Delta=$delta }
+}
+
+# The pull-status demotion is a SEPARATE, logged defect (cancel's step 9 demotes on status
+# alone instead of recomputing from outstanding windows, the way ReceiveAsync's step 7
+# does). It is reported here rather than asserted green, so the smoke records the real
+# behaviour without blessing it. When step 9 grows the recompute this prints PASS instead,
+# and no assertion has to change.
+function ReportPullStatus($pi, $label) {
+    $s = SqlScalar "SET NOCOUNT ON; SELECT Status FROM dbo.Pulls WHERE PullNumber='$PULL_NO';"
+    $outstanding = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.PullItems pi
+INNER JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
+WHERE pi.PullId = (SELECT Id FROM dbo.Pulls WHERE PullNumber='$PULL_NO')
+  AND pi.Status <> 'canceled' AND piw.IsClosed = 0 AND piw.ExpectedQty > piw.ReceivedQty;
+"@
+    if ($outstanding -eq '0' -and $s -ne 'fully_received') {
+        Write-Host "KNOWN DEFECT ($label): 0 outstanding windows but pull status is '$s' — cancel step 9 demotes on status alone. Logged in db/047_STATUS.md, not fixed here." -ForegroundColor Yellow
+    } else {
+        OK "$label — pull status '$s' with $outstanding outstanding window(s)"
+    }
+}
+
+# ---------------------------------------------------------------------------
+Step '8. 401 ticked -> cancel the OVERFLOW slice only -> variance figure clears'
+Cleanup; SeedAnchorPo 400
+$r8 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
+$s8over = $r8.allocations | Where-Object { $_.isPullLinked -eq $false }
+if (-not $s8over) { Fail "expected an overflow slice in the 401 allocation" }
+$pre8 = AssertInvariant $pi '8 (before cancel)'
+if ($pre8.Delta -ne 1) { Fail "precondition: window should be over by 1, got $($pre8.Delta)" }
+
+CancelSlice $sv $s8over.receiptId 'smoke: reverse overflow slice'
+$a8 = AssertInvariant $pi '8'
+if ($a8.Win.Received -ne 400 -or $a8.Win.Expected -ne 400) { Fail "window should be 400/400, got $($a8.Win.Received)/$($a8.Win.Expected)" }
+if ($a8.Win.IsClosed) { Fail "IsClosed should have cleared, got 1" }
+if ($a8.Live.VarSum -ne 'NULL') { Fail "SUM(VarianceQty) should be NULL at exactly 400/400, got $($a8.Live.VarSum)" }
+OK "window 400/400, IsClosed=0, SUM(VarianceQty)=NULL — the +1 did not survive the slice that carried it"
+ReportPullStatus $pi '8'
+
+# ---------------------------------------------------------------------------
+Step '9. 401 ticked -> cancel the PULL-LINKED slice only -> figure restated to -399 on an OPEN window'
+Cleanup; SeedAnchorPo 400
+$r9 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
+$s9linked = $r9.allocations | Where-Object { $_.isPullLinked -eq $true }
+CancelSlice $sv $s9linked.receiptId 'smoke: reverse pull-linked slice'
+
+$a9 = AssertInvariant $pi '9'
+if ($a9.Live.Qty -ne 1)   { Fail "live SUM(qty) should be 1, got $($a9.Live.Qty)" }
+if ($a9.Win.IsClosed)     { Fail "IsClosed should have cleared, got 1" }
+# Signed rule: the surviving row carried the operator's tick, so it carries the window's
+# current difference — 1 - 400 = -399. The figure tracks the quantities, not whether the
+# window happens to be closed right now; IsClosed is asserted separately, just above.
+if ($a9.Live.VarSum -ne '-399') { Fail "surviving ticked row should carry -399, got $($a9.Live.VarSum)" }
+if ($a9.Live.VarRows -ne 1)     { Fail "expected exactly 1 row carrying the figure, got $($a9.Live.VarRows)" }
+OK "live 1 pc of 400, IsClosed=0, VarianceQty restated to -399 on the surviving ticked row"
+
+# ---------------------------------------------------------------------------
+Step '10. 1,200 ticked across three slices -> cancel the MIDDLE slice -> invariant holds'
+Cleanup; SeedAnchorPo 400
+$r10 = Receive $sv $pi 1200 $true 'Three-way spill; over by 800.'
+if ($r10.allocations.Count -ne 3) { Fail "expected 3 slices for 1,200 (400 anchor + 2 pool lines), got $($r10.allocations.Count)" }
+$pre10 = AssertInvariant $pi '10 (before cancel)'
+if ($pre10.Delta -ne 800) { Fail "precondition: window should be over by 800, got $($pre10.Delta)" }
+
+$mid = $r10.allocations[1]
+CancelSlice $sv $mid.receiptId 'smoke: reverse the middle slice'
+
+$a10 = AssertInvariant $pi '10'
+# Still over after the cancel, so the figure is RESTATED rather than cleared — this is the
+# branch that proves the recompute writes a new value, not merely nulls the old one.
+if ($a10.Delta -le 0) { Fail "expected the window to still be over after cancelling one slice, got delta $($a10.Delta)" }
+if ($a10.Live.VarSum -ne '400') { Fail "SUM(VarianceQty) should be restated to 400, got $($a10.Live.VarSum)" }
+if ($a10.Live.Rows -ne 2)       { Fail "expected 2 live slices remaining, got $($a10.Live.Rows)" }
+$carrierLive = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.Receipts
+WHERE PullItemId='$pi' AND HourOfDay=$HOUR AND VarianceQty IS NOT NULL
+  AND ReversedById IS NULL AND ReversesReceiptId IS NULL AND Id <> '$($mid.receiptId)';
+"@
+if ($carrierLive -ne '1') { Fail "the restated figure should sit on a surviving row, got $carrierLive" }
+OK "800 -> 400 restated onto one surviving slice; live 800 vs expected 400 reconciles"
+
+# ---------------------------------------------------------------------------
+Step '11. Non-variance multi-row receive -> cancel one slice -> VarianceQty stays NULL'
+# Regression guard on the normal path: the recompute runs on EVERY cancel, so it has to be
+# provably inert when no variance was ever accepted.
+Cleanup; SeedAnchorPoLines 2 200
+$r11 = Receive $sv $pi 400 $false 'Ordinary receive, split across two lines of the same PO.'
+if ($r11.allocations.Count -ne 2) { Fail "expected 2 slices across the 2-line anchor PO, got $($r11.allocations.Count)" }
+$pre11 = LiveStats $pi
+if ($pre11.VarRows -ne 0 -or $pre11.VarSum -ne 'NULL') { Fail "no variance was accepted; VarianceQty should be NULL on both rows, got sum=$($pre11.VarSum) rows=$($pre11.VarRows)" }
+$w11 = WinStats $pi
+if ($w11.IsClosed) { Fail "an unticked receive must not close the window" }
+
+CancelSlice $sv $r11.allocations[0].receiptId 'smoke: reverse one slice of a plain receive'
+$a11 = AssertInvariant $pi '11'
+if ($a11.Live.VarSum -ne 'NULL') { Fail "VarianceQty must stay NULL through a non-variance cancel, got $($a11.Live.VarSum)" }
+if ($a11.Live.VarRows -ne 0)     { Fail "no row should have gained a VarianceQty, got $($a11.Live.VarRows)" }
+if ($a11.Win.IsClosed)           { Fail "window must stay open, got IsClosed=1" }
+if ($a11.Live.Qty -ne 200)       { Fail "live qty should be 200 after reversing one 200 slice, got $($a11.Live.Qty)" }
+OK "plain multi-row receive: VarianceQty NULL before and after the cancel, window untouched by 8c"
+
+# ---------------------------------------------------------------------------
+Step '12. Cancelling a PLAIN sibling of a short close recomputes it too'
+# The orphaning is not exclusive to overflow. A closed window whose plain partial is
+# reversed keeps its close but loses the quantity that close was measured against, so 8c
+# has to run even though the cancelled row carries no flag of its own.
+#
+# The window stays CLOSED here (the cancelled row carries no flag, so §8b does not fire),
+# which makes this the case where a stale figure would be least visible: a closed line
+# reading "-100 short" while actually 200 short of 400.
+Cleanup; SeedAnchorPo 400
+$plain = Receive $sv $pi 100 $false 'Plain partial.'
+$short = Receive $sv $pi 200 $true  'That is all that is coming — closing short.'
+if ($short.varianceQty -ne -100) { Fail "precondition: short close should record VarianceQty=-100, got $($short.varianceQty)" }
+$w12pre = WinStats $pi
+if (-not $w12pre.IsClosed) { Fail "precondition: the short close should have closed the window" }
+
+CancelSlice $sv $plain.allocations[0].receiptId 'smoke: reverse the plain partial under a closed window'
+$a12 = AssertInvariant $pi '12'
+# The cancelled row carried no flag, so §8b does not fire and the close correctly stands.
+if (-not $a12.Win.IsClosed) { Fail "cancelling a NON-variance row must not reopen the window, got IsClosed=0" }
+if ($a12.Win.Received -ne 200) { Fail "window should be 200/400 after reversing the 100, got $($a12.Win.Received)" }
+# Restated, not cleared: 200 - 400 = -200 replaces the stale -100.
+if ($a12.Live.VarSum -ne '-200') { Fail "the stale -100 should have been restated to -200, got $($a12.Live.VarSum)" }
+if ($a12.Live.VarRows -ne 1)     { Fail "expected exactly 1 row carrying the figure, got $($a12.Live.VarRows)" }
+OK "closed window recomputed under a plain-sibling cancel: 200/400, still closed, -100 restated to -200"
+
+# ---------------------------------------------------------------------------
+Step '13. Accepted short close split across two slices -> cancel one of its OWN slices'
+# The negative counterpart of case 10, and the multi-row counterpart of case 12: a short
+# close that FIFO split across two PO lines, with one of those slices reversed. Proves the
+# carrier is re-picked among the surviving ticked rows and the figure is restated with its
+# sign intact, rather than being dropped because it is negative.
+Cleanup; SeedAnchorPoLines 2 200
+$r13 = Receive $sv $pi 300 $true 'Only 300 of 400 arrived — closing short.'
+if ($r13.allocations.Count -ne 2) { Fail "expected the 300 to split across the 2-line anchor PO, got $($r13.allocations.Count)" }
+if ($r13.varianceQty -ne -100)    { Fail "precondition: 300 against 400 outstanding is -100, got $($r13.varianceQty)" }
+$pre13 = AssertInvariant $pi '13 (before cancel)'
+if (-not $pre13.Win.IsClosed) { Fail "precondition: the short close should have closed the window" }
+
+# Reverse the slice that does NOT carry the figure, so the restate has to move it.
+$carrier13 = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(Id AS VARCHAR(36)) FROM dbo.Receipts
+WHERE PullItemId='$pi' AND HourOfDay=$HOUR AND VarianceQty IS NOT NULL
+  AND ReversedById IS NULL AND ReversesReceiptId IS NULL;
+"@
+$other13 = $r13.allocations | Where-Object { $_.receiptId -ne $carrier13 } | Select-Object -First 1
+if (-not $other13) { Fail "could not identify the non-carrier slice (carrier=$carrier13)" }
+CancelSlice $sv $other13.receiptId 'smoke: reverse the non-carrier slice of a short close'
+
+$a13 = AssertInvariant $pi '13'
+if ($a13.Delta -ge 0) { Fail "expected the window to still be short, got delta $($a13.Delta)" }
+$want13 = "$($a13.Live.Qty - 400)"
+if ($a13.Live.VarSum -ne $want13) { Fail "surviving ticked row should carry $want13 (live $($a13.Live.Qty) - 400), got $($a13.Live.VarSum)" }
+if ($a13.Live.VarRows -ne 1)      { Fail "expected exactly 1 row carrying the figure, got $($a13.Live.VarRows)" }
+OK "short close restated with its sign: live $($a13.Live.Qty) of 400 carries $want13 on exactly one surviving ticked row"
+
 # ---------------------------------------------------------------------------
 Cleanup
 Write-Host "`nALL CASES PASSED" -ForegroundColor Green
@@ -547,10 +816,21 @@ Write-Host "`nALL CASES PASSED" -ForegroundColor Green
 #
 # This is pre-existing v2 §7.2a behaviour, not something overflow introduced — FIFO
 # has been able to split one confirm across PO lines since v2. Overflow only makes
-# it routine on the variance path. Reviewed and accepted as-is (2026-08-07); the
-# brief's §3.5 "stop and report" was discharged by reporting rather than by a fix.
+# it routine on the variance path. Cancel REMAINS row-scoped; no batch id was added.
 #
 # What that leaves is a reachable half-reversed state, so it is asserted rather than
 # assumed: case 6 (cancel the non-carrier), 6b (cancel the carrier), and 6c (the
 # resulting state reconciles and the operator still has a forward path). If cancel
 # ever becomes confirm-scoped, 6c is the test that should fail first and loudest.
+#
+# WHAT CHANGED AFTER THAT REVIEW
+# ------------------------------
+# Row-scoped cancel was accepted; leaving VarianceQty behind was not. Cases 6/6b/6c
+# only ever asserted the IsClosed half of a partial reversal, and 6c explicitly waved
+# the surviving flag through as "provenance". That was right about VarianceAccepted
+# and wrong about VarianceQty: the flag describes which confirm wrote a row, but the
+# QUANTITY describes a window-level decision, so leaving the original figure on a
+# surviving slice left the ledger asserting an over-delivery that had been reversed.
+# ReceiptService step 8c now recomputes it from the surviving rows on every cancel.
+# Cases 8-12 assert that invariant; 6c's SUM(VarianceQty)=0 assertion was the first
+# hint of it and is now a special case of the general rule.

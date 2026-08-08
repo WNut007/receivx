@@ -102,6 +102,11 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
         'smoke-close-reopen.ps1'
+        # db/047 accept-variance. Only the overflow smoke is wired in here so far; the
+        # other five (smoke-variance-section8 / -outstanding-queries /
+        # -preview-confirm-agreement / -reopen, and smoke-hourcap-6.2's 7a/7b split) are
+        # still run by hand — see db/047_STATUS.md.
+        'smoke-po-overflow-variance.ps1'
     )
 }
 

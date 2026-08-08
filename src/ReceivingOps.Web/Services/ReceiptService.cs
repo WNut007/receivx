@@ -11,8 +11,8 @@ namespace ReceivingOps.Web.Services;
 /// CANONICAL LOCK ACQUISITION ORDER — db/047. Every write path in this class MUST
 /// take locks in this order, and must not take a later lock before an earlier one:
 ///
-///     1. dbo.Receipts             (UPDLOCK, ROWLOCK)  — cancel only; receive inserts
-///     2. dbo.Pulls                (UPDLOCK, ROWLOCK)
+///     1. dbo.Pulls                (UPDLOCK, ROWLOCK)
+///     2. dbo.Receipts             (UPDLOCK, ROWLOCK)  — cancel only; receive inserts
 ///     3. dbo.PullItemWindows      (UPDLOCK, ROWLOCK)
 ///     4. dbo.PurchaseOrderLines   (UPDLOCK, HOLDLOCK, ROWLOCK)
 ///
@@ -22,6 +22,20 @@ namespace ReceivingOps.Web.Services;
 /// because cancel never locked the window. db/047 makes cancel lock the window — to clear
 /// IsClosed — so without a single order the two paths would deadlock under concurrent
 /// receive+cancel on the same SKU (brief §2c, regression test 15).
+///
+/// WHY Pulls MOVED AHEAD OF Receipts (variance-recompute change)
+/// -------------------------------------------------------------
+/// Cancel used to touch exactly one Receipts row, so locking that row before the pull was
+/// harmless. Step 8c now rewrites VarianceQty on the OTHER live rows of the same window,
+/// which makes sibling rows part of cancel's write set. With Receipts locked first, two
+/// operators cancelling two slices of the same confirm deadlock outright: T1 holds slice 1
+/// and needs slice 2 for 8c, T2 holds slice 2 and is queued behind T1 on the Pulls row.
+/// Taking dbo.Pulls first makes that row the single serialization point for every receive
+/// and every cancel on a pull, so the sibling rows cannot be held by anyone else by the
+/// time 8c reaches them. Cancel therefore identifies its pull with an UNLOCKED read first
+/// (Receipts.PullItemId and HourOfDay are immutable on an append-only ledger, so there is
+/// nothing to race), then locks Pulls, then re-reads the target row under UPDLOCK — so the
+/// already-voided guard is still evaluated against locked state.
 /// </summary>
 public class ReceiptService : IReceiptService
 {
@@ -1026,7 +1040,25 @@ public class ReceiptService : IReceiptService
         using var tx = conn.BeginTransaction();
         try
         {
-            // ----- 1. Lock the original receipt + read its PO line -----
+            // ----- 0. Identify the pull WITHOUT locking (see the class summary).
+            // PullItemId and HourOfDay never change on a Receipts row — the table is
+            // append-only apart from ReversedById — so this read cannot go stale in a way
+            // that matters. Everything it decides is re-read under lock below.
+            var ident = await conn.QuerySingleOrDefaultAsync<ReceiptIdentity>(new CommandDefinition(
+                "SELECT PullItemId, HourOfDay FROM dbo.Receipts WHERE Id = @Id;",
+                new { Id = receiptId }, transaction: tx, cancellationToken: ct))
+                ?? throw new NotFoundException("Receipt not found");
+
+            // ----- 1. Lock the parent pull — step 1 of the canonical order, and the
+            // serialization point that lets step 8c write sibling receipt rows safely.
+            var pullCtx = await conn.QuerySingleAsync<PullItemContext>(new CommandDefinition(@"
+                SELECT pi.Id AS PullItemId, pi.ItemCode, p.Id AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId
+                FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
+                INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
+                WHERE  pi.Id = @PullItemId;",
+                new { ident.PullItemId }, transaction: tx, cancellationToken: ct));
+
+            // ----- 2. Lock the original receipt + read its PO line -----
             var orig = await conn.QuerySingleOrDefaultAsync<ReceiptLockRow>(new CommandDefinition(@"
                 SELECT Id, PullItemId, PurchaseOrderId, PurchaseOrderLineId,
                        HourOfDay, QtyReceived, LotBatch, PalletId, BinLocation,
@@ -1036,18 +1068,12 @@ public class ReceiptService : IReceiptService
                 new { Id = receiptId }, transaction: tx, cancellationToken: ct))
                 ?? throw new NotFoundException("Receipt not found");
 
+            // Guard precedence is unchanged from before the lock reorder: the receipt's own
+            // state is judged first, then the pull's. Only the READS moved.
             if (orig.QtyReceived < 0)
                 throw new BusinessException("Cannot cancel a reversal entry");
             if (orig.ReversedById is not null)
                 throw new BusinessException("Receipt is already voided");
-
-            // ----- 2. Lock the parent pull, enforce closed/warehouse rules -----
-            var pullCtx = await conn.QuerySingleAsync<PullItemContext>(new CommandDefinition(@"
-                SELECT pi.Id AS PullItemId, pi.ItemCode, p.Id AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId
-                FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
-                INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
-                WHERE  pi.Id = @PullItemId;",
-                new { orig.PullItemId }, transaction: tx, cancellationToken: ct));
 
             if (string.Equals(pullCtx.PullStatus, "closed", StringComparison.Ordinal))
                 throw new BusinessException("Cannot cancel; pull is closed");
@@ -1155,7 +1181,123 @@ public class ReceiptService : IReceiptService
                     transaction: tx, cancellationToken: ct));
             }
 
+            // ----- 8c. Recompute VarianceQty for the window from the rows that survive.
+            //
+            // VarianceQty describes a DECISION about a window ("401 arrived against 400
+            // outstanding"), but §2c stores it on one arbitrary slice of the confirm that
+            // recorded it. Cancel is scoped to a receipt ROW, so reversing any other slice
+            // used to leave that number behind describing a receive that no longer exists:
+            // cancel the 1-pc overflow slice of a 401 and the surviving 400-row still
+            // claimed VarianceQty = +1 against a window sitting at exactly 400/400.
+            // Nothing reads the column today, which is why that would have gone unnoticed
+            // rather than why it was acceptable.
+            //
+            // THE INVARIANT, restored here on every cancel. For a window carrying at least
+            // one live VarianceAccepted row:
+            //     SUM(VarianceQty) over live rows of (PullItemId, HourOfDay)
+            //         == SUM(QtyReceived) over those rows - window.ExpectedQty
+            //     SIGNED — negative when short, positive when over — and NULL only when
+            //     that difference is exactly zero.
+            //
+            // The carrier qualifier is load-bearing, not a hedge. A window where variance
+            // was never accepted also has a non-zero difference — an ordinary partial is
+            // live < expected — and there is no ticked row to carry it. Stamping the figure
+            // on a plain row would turn every partial into something that reads as an
+            // accepted variance. So where no row carries the tick, VarianceQty stays NULL
+            // on every row and the invariant does not apply.
+            //
+            // It needs no batch/confirm key, because it is a WINDOW-level aggregate: which
+            // row carries the figure is arbitrary by construction, so any surviving
+            // variance row is as good a carrier as the original. That is also why this
+            // runs unconditionally rather than only when the cancelled row was itself a
+            // variance row — cancelling a plain partial that shares a window with a closed
+            // variance receipt moves the same total and orphans the same number.
+            //
+            // Signed rather than overage-only: an over-only rule would make the column mean
+            // different things before and after a cancel touched the window, with nothing in
+            // the data to say which regime a row is in. Derivability (ExpectedQty - live) is
+            // equally true of the positive case, so it cannot be the argument for dropping
+            // one sign and keeping the other. One signed path also replaces a sign test plus
+            // two behaviours.
+            //
+            // Zero-quantity closes are unaffected either way: §2d writes no Receipts row, so
+            // ClosedBy/ClosedAt/ClosedReason remain their sole record.
+            //
+            // Live = neither voided (ReversedById) nor itself a reversal
+            // (ReversesReceiptId); the same definition the window cache reconciles against.
+            // Seeks IX_Receipts_PullItem (PullItemId, HourOfDay) — no new index, and the
+            // sibling rows are safe to write because the Pulls row was locked at step 1.
+            var recompute = await conn.QuerySingleAsync<VarianceRecompute>(new CommandDefinition(@"
+                DECLARE @live INT = (
+                    SELECT ISNULL(SUM(QtyReceived), 0) FROM dbo.Receipts
+                     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay
+                       AND ReversedById IS NULL AND ReversesReceiptId IS NULL);
+
+                DECLARE @expected INT = ISNULL((
+                    SELECT ExpectedQty FROM dbo.PullItemWindows
+                     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay), 0);
+
+                DECLARE @delta INT = @live - @expected;
+
+                -- One carrier, chosen the way the receive path chooses it: the earliest
+                -- surviving slice that carries the operator's tick.
+                DECLARE @carrier UNIQUEIDENTIFIER = (
+                    SELECT TOP (1) Id FROM dbo.Receipts
+                     WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay
+                       AND ReversedById IS NULL AND ReversesReceiptId IS NULL
+                       AND VarianceAccepted = 1
+                     ORDER BY ReceivedAt, Id);
+
+                UPDATE dbo.Receipts
+                   SET VarianceQty = NULL
+                 WHERE PullItemId = @PullItemId AND HourOfDay = @HourOfDay
+                   AND ReversedById IS NULL AND ReversesReceiptId IS NULL
+                   AND VarianceQty IS NOT NULL;
+
+                DECLARE @stamped INT = 0;
+                IF @carrier IS NOT NULL AND @delta <> 0
+                BEGIN
+                    UPDATE dbo.Receipts SET VarianceQty = @delta WHERE Id = @carrier;
+                    SET @stamped = @@ROWCOUNT;
+                END
+
+                SELECT @delta AS Delta, @stamped AS Stamped, @live AS LiveQty, @expected AS ExpectedQty,
+                       CASE WHEN @carrier IS NULL THEN 0 ELSE 1 END AS HasCarrier;",
+                new { orig.PullItemId, orig.HourOfDay },
+                transaction: tx, cancellationToken: ct));
+
+            // A window OVER expected with no surviving ticked row should be unreachable: a
+            // receive above outstanding is refused unless the box is ticked, so live rows can
+            // only exceed ExpectedQty if at least one of them carries the flag. (The negative
+            // case is ordinary — every plain partial is short — so it is not warned on.)
+            // Log rather than throw: failing an operator's correction over a bookkeeping
+            // column would be the worse outcome, and the warning is what makes it findable.
+            if (recompute.Delta > 0 && recompute.HasCarrier == 0)
+            {
+                _logger.LogWarning(
+                    "Variance recompute found no carrier: PullItem {PullItemId} hour {Hour} on pull {PullNumber} " +
+                    "is over by {Delta} ({Live} live vs {Expected} expected) but no live row carries VarianceAccepted=1.",
+                    orig.PullItemId, orig.HourOfDay, pullCtx.PullNumber,
+                    recompute.Delta, recompute.LiveQty, recompute.ExpectedQty);
+            }
+
             // ----- 9. Update Pulls timing + demote fully_received → in_progress -----
+            //
+            // KNOWN DEFECT, LOGGED AND DELIBERATELY NOT FIXED HERE (see db/047_STATUS.md).
+            // This demotes on the STATUS ALONE. ReceiveAsync's step 7 recomputes the pull
+            // from `NOT EXISTS (outstanding window)`; cancel does not, so a cancel that
+            // leaves every window satisfied still drops the pull to in_progress — e.g.
+            // reversing the 1-pc overflow slice of a 401, which lands the window back on
+            // exactly 400/400 with nothing outstanding.
+            //
+            // It is a SEPARATE defect, not a consequence of row-scoped cancel: the demote
+            // is unconditional, so it fires identically whether the confirm wrote one row
+            // or five, and fixing the row-scoping would not touch it. The cause is the
+            // asymmetry between step 7 here and step 7 in ReceiveAsync — cancel never grew
+            // the recompute that the Pull 0000009383 fix added to the receive side.
+            // Left alone because changing pull-status transitions is a behaviour change
+            // with its own blast radius (the pending queue, /Reports, the close gate), and
+            // it is not what this change is for.
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.Pulls
                    SET LastActivityAt = SYSUTCDATETIME(),
@@ -1276,6 +1418,28 @@ public class ReceiptService : IReceiptService
 
         /// <summary>db/047 — when true, reversing this row must reopen the parent window.</summary>
         public bool VarianceAccepted { get; set; }
+    }
+
+    /// <summary>
+    /// The two immutable columns cancel needs before it can decide WHICH pull row to lock.
+    /// Read without a lock on purpose — see the class summary's lock-order note.
+    /// </summary>
+    private sealed class ReceiptIdentity
+    {
+        public Guid PullItemId { get; set; }
+        public byte HourOfDay { get; set; }
+    }
+
+    /// <summary>Outcome of cancel's step 8c variance recompute, for the unreachable-case warning.</summary>
+    private sealed class VarianceRecompute
+    {
+        public int Delta { get; set; }
+        public int Stamped { get; set; }
+        public int LiveQty { get; set; }
+        public int ExpectedQty { get; set; }
+
+        /// <summary>1 when a live row carries VarianceAccepted — i.e. when the invariant applies.</summary>
+        public int HasCarrier { get; set; }
     }
 
     // db/047 — supersedes the old WindowCapRow (Expected/Received only). Carries IsClosed
