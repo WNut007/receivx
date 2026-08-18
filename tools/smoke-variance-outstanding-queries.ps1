@@ -243,12 +243,14 @@ else {
     # future edit that breaks the rule fails here rather than in production.
     $mSettled = [regex]::Match($js, '(?s)function isSettled\(slot\) \{.*?\n  \}')
     $mOut     = [regex]::Match($js, '(?s)function slotOutstanding\(slot\) \{.*?\n  \}')
-    if (-not $mSettled.Success -or -not $mOut.Success) {
-        Bad "could not extract isSettled/slotOutstanding from receiving.js — were they renamed?"
+    $mVar     = [regex]::Match($js, '(?s)function slotVariance\(slot\) \{.*?\n  \}')
+    if (-not $mSettled.Success -or -not $mOut.Success -or -not $mVar.Success) {
+        Bad "could not extract isSettled/slotOutstanding/slotVariance from receiving.js — were they renamed?"
     } else {
         $harness = @"
 $($mSettled.Value)
 $($mOut.Value)
+$($mVar.Value)
 const cases = [
   // the production repro: 790 of 792, closed short with accept-variance
   ['closed-short settled',      isSettled({e:792, r:790, c:true}),        true],
@@ -260,7 +262,27 @@ const cases = [
   ['over-receipt settled',      isSettled({e:100, r:150, c:true}),        true],
   ['unscheduled settled',       isSettled({e:0,   r:0,   c:false}),       true],
   ['nothing received owes all', slotOutstanding({e:500, r:0, c:false}),   500],
+
+  // Variance is signed like Receipts.VarianceQty: negative short, positive
+  // over. Only settled windows carry one — an open partial's gap is work
+  // still owed, not a decision anybody took.
+  ['short close is -2',         slotVariance({e:792, r:790, c:true}),     -2],
+  ['over-receipt is +50',       slotVariance({e:100, r:150, c:true}),     50],
+  ['exact fill is 0',           slotVariance({e:792, r:792, c:false}),    0],
+  ['open partial has none',     slotVariance({e:792, r:790, c:false}),    0],
+  ['unscheduled has none',      slotVariance({e:0,   r:0,   c:false}),    0],
 ];
+
+// Expected = Received - Variance + Outstanding, for every window state. This
+// identity is the whole reason the figure is on the strip: without it the
+// three numbers stop adding up the moment a line is written off, and an
+// operator reads that as a bug.
+for (const s of [{e:792,r:790,c:true}, {e:100,r:150,c:true}, {e:500,r:100,c:false},
+                 {e:792,r:792,c:false}, {e:0,r:0,c:false}]) {
+  const lhs = s.e;
+  const rhs = s.r - slotVariance(s) + slotOutstanding(s);
+  cases.push(['identity ' + JSON.stringify(s), rhs, lhs]);
+}
 let bad = 0;
 for (const [name, got, want] of cases) {
   if (got !== want) { console.log('MISMATCH ' + name + ': got ' + got + ', want ' + want); bad++; }
@@ -273,7 +295,7 @@ console.log(bad === 0 ? 'PREDICATES_OK' : 'PREDICATES_FAIL');
             $nodeOut = & node $tmpJs 2>&1
             if ($LASTEXITCODE -ne 0)            { Bad "node failed to run the predicate harness: $nodeOut" }
             elseif ($nodeOut -match 'MISMATCH') { Bad "predicate mismatch: $($nodeOut -join ' | ')" }
-            elseif ($nodeOut -match 'PREDICATES_OK') { OK "9 predicate cases pass, including 790/792 closed short → settled, 0 outstanding" }
+            elseif ($nodeOut -match 'PREDICATES_OK') { OK "19 predicate cases pass — 790/792 closed short → settled, 0 outstanding, variance -2, and Expected = Received - Variance + Outstanding holds in every state" }
             else                                { Bad "unexpected harness output: $nodeOut" }
         } finally {
             Remove-Item -LiteralPath $tmpJs -ErrorAction SilentlyContinue
@@ -285,7 +307,8 @@ console.log(bad === 0 ? 'PREDICATES_OK' : 'PREDICATES_FAIL');
     $sites = @(
         @{ fn = 'isFullyReceived'; needs = 'isSettled';       what = 'CLOSE PULL SHEET gate' },
         @{ fn = 'itemClass';       needs = 'isSettled';       what = 'Outstanding row filter' },
-        @{ fn = 'updateStats';     needs = 'slotOutstanding'; what = 'period OUTSTANDING header' }
+        @{ fn = 'updateStats';     needs = 'slotOutstanding'; what = 'period OUTSTANDING header' },
+        @{ fn = 'updateStats';     needs = 'slotVariance';    what = 'period VARIANCE figure' }
     )
     foreach ($s in $sites) {
         $body = [regex]::Match($js, "(?s)function $($s.fn)\(.*?\n  \}")
@@ -315,6 +338,28 @@ console.log(bad === 0 ? 'PREDICATES_OK' : 'PREDICATES_FAIL');
     # db/047 §6 — the receive response carries the window's post-tx IsClosed so
     # the client can update without a refetch. Dropping it left a just-closed
     # window reading as pending until the next page load.
+    # The figure needs somewhere to render. A computed value with no element is
+    # the same as no value — and the strip's grid has to make room for it.
+    $viewPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'src\ReceivingOps.Web\Views\Receiving\Index.cshtml'
+    $cssPath  = Join-Path (Split-Path -Parent $PSScriptRoot) 'src\ReceivingOps.Web\wwwroot\css\receiving.css'
+    $view = Get-Content -Raw -LiteralPath $viewPath
+    $css  = Get-Content -Raw -LiteralPath $cssPath
+    if ($view -notmatch 'id="stat-var"' -or $view -notmatch 'id="stat-var-sub"') {
+        Bad "the Receiving strip has no variance figure (stat-var / stat-var-sub)"
+    } elseif ($view -notmatch 'stat-trend muted') {
+        Bad "the variance sub-line is not neutral-styled — it must not read as a warning"
+    } elseif ($css -notmatch 'repeat\(5, minmax\(0, 1fr\)\) auto') {
+        # minmax(0, …) rather than plain 1fr is load-bearing, not tidiness: a
+        # 1fr track floors at min-content, and five stats put the track list's
+        # min-content at ~1045px — the measurement that used to drag the whole
+        # body sideways and take the frozen item column with it.
+        Bad "the progress strip does not reserve 5 compressible columns (repeat(5, minmax(0, 1fr)) auto)"
+    } elseif ($css -notmatch '@media \(max-width: 1080px\)') {
+        Bad "no intermediate reflow band — the 5-stat strip overflows between 840px and ~1045px"
+    } else {
+        OK "variance figure present on the strip, neutral sub-line, 5 compressible columns, 1080px reflow band"
+    }
+
     $confirm = [regex]::Match($js, '(?s)const result = await resp\.json\(\);.*?closeModal\(\);')
     if (-not $confirm.Success) {
         Bad "could not locate the confirmReceipt success path"

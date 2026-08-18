@@ -116,6 +116,28 @@
     return Math.max(0, (slot.e | 0) - (slot.r | 0));
   }
 
+  // The settled difference between what arrived and what was planned, signed
+  // the same way the server signs Receipts.VarianceQty: NEGATIVE short,
+  // POSITIVE over. Only settled windows have one — an open partial's gap is
+  // outstanding work, not a decision anybody made.
+  //
+  // This exists so the strip's figures still reconcile once a line is written
+  // off. Without it the operator sees Expected 1,584 · Received 1,582 ·
+  // Outstanding 0 and has no way to tell whether the missing 2 were written
+  // off deliberately or dropped by a bug — and three numbers that do not add
+  // up, with nothing on screen explaining why, get read as a bug every time.
+  //
+  //     Expected = Received - Variance + Outstanding
+  //
+  // holds for every window: short-closed 792/790 → 792 = 790 - (-2) + 0;
+  // over-received 100/150 → 100 = 150 - 50 + 0; open partial 500/100 →
+  // 500 = 100 - 0 + 400.
+  function slotVariance(slot) {
+    if (!slot || slot.e <= 0) return 0;
+    if (!isSettled(slot)) return 0;
+    return (slot.r | 0) - (slot.e | 0);
+  }
+
   // Visible 4 hours = current period start + 0..3, wrapped at 24
   function currentPeriodHours() {
     const start = parseInt(document.getElementById('period-select').value);
@@ -329,7 +351,7 @@
 
   function updateStats() {
     let exp = 0, rec = 0, pendingWindows = 0, active = 0, canceled = 0, newCount = 0;
-    let outstanding = 0;
+    let outstanding = 0, variance = 0, varianceLines = 0;
     const hours = currentPeriodHours();
     items.forEach(i => {
       if (i.status === 'canceled') { canceled++; return; }
@@ -348,6 +370,8 @@
           // by subtraction once a line has been written off, and that is
           // correct: the difference is the written-off shortfall.
           outstanding += slotOutstanding(i.schedule[h]);
+          const v = slotVariance(i.schedule[h]);
+          if (v !== 0) { variance += v; varianceLines++; }
           if (c.s === 'pending') pendingWindows++;
         }
       });
@@ -361,6 +385,29 @@
     document.getElementById('stat-rec-sub').textContent = `${pct}% of expected`;
     document.getElementById('stat-out').innerHTML = `${outstanding.toLocaleString()} <small>units</small>`;
     document.getElementById('stat-out-sub').textContent = `${pendingWindows} windows pending`;
+
+    // Variance — the written-off (or over-delivered) difference on lines that
+    // are already settled. Deliberately styled like any other figure on the
+    // strip: short and over deliveries happen on nearly every pull here, so
+    // this is a normal outcome being reported, not a problem being flagged.
+    // Signed to match Receipts.VarianceQty — negative short, positive over —
+    // so the number on screen and the number in the audit trail read alike.
+    const varEl = document.getElementById('stat-var');
+    const varSubEl = document.getElementById('stat-var-sub');
+    if (varEl && varSubEl) {
+      const sign = variance > 0 ? '+' : '';   // negatives carry their own '-'
+      varEl.innerHTML = `${sign}${variance.toLocaleString()} <small>units</small>`;
+      varSubEl.textContent =
+        varianceLines === 0
+          ? 'no lines closed off-plan'
+          : variance < 0
+            ? `${varianceLines} line${varianceLines === 1 ? '' : 's'} closed short`
+            : variance > 0
+              ? `${varianceLines} line${varianceLines === 1 ? '' : 's'} over-delivered`
+              // Non-zero line count summing to zero: shorts and overs cancelled
+              // out. Saying "0 units" alone would hide that anything happened.
+              : `${varianceLines} lines off-plan · net zero`;
+    }
 
     document.getElementById('prog-fill').style.width = pct + '%';
     document.getElementById('prog-label').textContent = pct + '%';

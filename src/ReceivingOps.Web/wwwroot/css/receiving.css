@@ -562,7 +562,17 @@
   /* ============ PROGRESS STRIP ============ */
   .progress-strip {
     display: grid;
-    grid-template-columns: repeat(4, 1fr) auto;
+    /* 5 stats: Items · Expected · Received · Outstanding · Variance. Variance
+       joined the strip with db/047 so the figures still reconcile once a line
+       is written off — see the comment in Views/Receiving/Index.cshtml.
+       minmax(0, 1fr), NOT 1fr: a 1fr track floors at its content's min-content
+       width, and the fifth stat pushed the track list's total min-content from
+       ~836px to ~1045px. That is the same measurement that made the strip drag
+       the whole body sideways below 840px (see the media query at the end of
+       this file, whose breakpoint moved to 1024px for this reason). minmax(0,…)
+       lets the tracks compress instead of forcing the .app grid past the
+       viewport. */
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
     gap: 0;
     padding: 0;
     border-bottom: 1px solid var(--border);
@@ -574,6 +584,9 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* Grid items default to min-width:auto, which would let a long value
+       re-widen the track that minmax(0, 1fr) is trying to cap. */
+    min-width: 0;
   }
   .stat-label {
     font-family: var(--font-mono);
@@ -605,6 +618,9 @@
     color: var(--complete);
   }
   .stat-trend.warn { color: var(--pending); }
+  /* Neutral sub-line. The variance figure is a settled fact, not a warning:
+     short and over deliveries happen on nearly every pull here. */
+  .stat-trend.muted { color: var(--text-muted); }
   .progress-bar-host {
     padding: 14px 24px;
     min-width: 300px;
@@ -2529,10 +2545,26 @@
      badge shows in its own frozen c-status column. */
   .info-cell .status-inline { display: none; }
 
+  /* Strip-only intermediate band. db/047's Variance figure took the strip from
+     four stats to five, pushing the desktop track list's min-content from
+     ~836px to ~1045px — back into the range that used to drag the whole body
+     sideways. Five 28px figures plus a 300px progress bar are not legible at
+     this width anyway, so the strip reflows 3-up here.
+
+     Deliberately its own query rather than moving the 840px breakpoint up: that
+     block is the compact-TABLE mode (it hides .c-status, shrinks .c-item,
+     .c-vendor, .hour-btn …), and a laptop at 900px should not lose its status
+     column because a stat card was added. Below 840px the rule further down
+     takes over at 2-up. */
+  @media (max-width: 1080px) {
+    .progress-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .progress-bar-host { grid-column: 1 / -1; }
+  }
+
   @media (max-width: 840px) {
-    /* The stats strip's desktop track list (repeat(4,1fr) auto) has a
-       min-content of ~836px — wider than the whole viewport — which forced
-       the .app grid column past the screen and made the BODY pan
+    /* The stats strip's desktop track list (repeat(4,1fr) auto at the time)
+       had a min-content of ~836px — wider than the whole viewport — which
+       forced the .app grid column past the screen and made the BODY pan
        horizontally, dragging the frozen item column off with it. Reflow to
        a 2×2 stat grid with the progress bar full-width underneath.
        minmax(0,1fr) so a long stat value can't re-widen the track. */

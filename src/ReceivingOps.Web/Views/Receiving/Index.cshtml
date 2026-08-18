@@ -154,6 +154,16 @@
       <span class="stat-value" id="stat-out">5,616 <small>units</small></span>
       <span class="stat-trend warn" id="stat-out-sub">7 windows pending</span>
     </div>
+    @* db/047 — the settled difference between what arrived and what was planned,
+       signed like Receipts.VarianceQty (negative short, positive over). Without
+       it Expected / Received / Outstanding stop reconciling the moment a line is
+       written off, and three numbers that do not add up read as a bug. Muted,
+       not warn: over- and short-delivery are normal outcomes here. *@
+    <div class="stat">
+      <span class="stat-label">Variance · Settled</span>
+      <span class="stat-value" id="stat-var">0 <small>units</small></span>
+      <span class="stat-trend muted" id="stat-var-sub">no lines closed off-plan</span>
+    </div>
     <div class="progress-bar-host">
       <div class="progress-bar-head">
         <span>Period progress</span>
