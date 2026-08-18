@@ -106,11 +106,14 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
         'smoke-close-reopen.ps1'
-        # db/047 accept-variance. Only the overflow smoke is wired in here so far; the
-        # other five (smoke-variance-section8 / -outstanding-queries /
-        # -preview-confirm-agreement / -reopen, and smoke-hourcap-6.2's 7a/7b split) are
-        # still run by hand — see db/047_STATUS.md.
+        # db/047 accept-variance. -outstanding-queries joined the battery on
+        # 2026-08-18 after the client-side copies of the outstanding arithmetic
+        # shipped a bug it would have caught (pull 0000028388: server ready to
+        # close, CLOSE PULL SHEET disabled). FOUR remain hand-run —
+        # smoke-variance-section8 / -preview-confirm-agreement / -reopen, and
+        # smoke-hourcap-6.2's 7a/7b split — see db/047_STATUS.md.
         'smoke-po-overflow-variance.ps1'
+        'smoke-variance-outstanding-queries.ps1'
         'smoke-variance-reason.ps1'          # db/049
     )
 }

@@ -88,6 +88,34 @@
     item.schedule[hour].r = newR;
   }
 
+  // db/047 — THE outstanding rule for this file. A window stops being
+  // outstanding when it is filled OR when it was deliberately closed short;
+  // that is the whole point of IsClosed, and the server has said so in all
+  // five of its §2c queries since db/047 shipped.
+  //
+  // This exists because the client had four independent copies of
+  // `slot.r < slot.e` — the close-pull gate, the period header, the row
+  // filter and the export — and only the cell renderer knew about `slot.c`.
+  // A short-closed line therefore rendered CLOSED while the header beside it
+  // still counted it as work and the CLOSE PULL SHEET button stayed disabled
+  // (pull 0000028388, item 2R53-810288-253, window 19:00, 790/792).
+  //
+  // Anything in this file that asks "is there work left here?" goes through
+  // these two helpers. Adding a fifth transcription of the arithmetic is how
+  // the bug comes back.
+  function isSettled(slot) {
+    if (!slot || slot.e <= 0) return true;      // nothing scheduled is nothing owed
+    return !!slot.c || slot.r >= slot.e;
+  }
+
+  // Units still genuinely expected. Zero for a closed window whatever the
+  // arithmetic says — a short close writes the shortfall off, it does not
+  // leave it owed.
+  function slotOutstanding(slot) {
+    if (isSettled(slot)) return 0;
+    return Math.max(0, (slot.e | 0) - (slot.r | 0));
+  }
+
   // Visible 4 hours = current period start + 0..3, wrapped at 24
   function currentPeriodHours() {
     const start = parseInt(document.getElementById('period-select').value);
@@ -105,7 +133,9 @@
       const slot = item.schedule[h];
       if (!slot || slot.e <= 0) continue;
       hasExpected = true;
-      if (slot.r < slot.e) hasOutstanding = true;
+      // A short-closed line is finished work. Leaving it in the Outstanding
+      // bucket is the worklist-never-empties failure db/047 exists to end.
+      if (!isSettled(slot)) hasOutstanding = true;
     }
     if (!hasExpected) return 'received'; // nothing scheduled in this period
     return hasOutstanding ? 'outstanding' : 'received';
@@ -299,6 +329,7 @@
 
   function updateStats() {
     let exp = 0, rec = 0, pendingWindows = 0, active = 0, canceled = 0, newCount = 0;
+    let outstanding = 0;
     const hours = currentPeriodHours();
     items.forEach(i => {
       if (i.status === 'canceled') { canceled++; return; }
@@ -309,12 +340,19 @@
         if (c.s !== 'empty') {
           exp += c.e;
           rec += c.r;
+          // EXPECTED and RECEIVED stay raw totals — they answer "how much was
+          // planned / how much arrived", and a short close changes neither.
+          // OUTSTANDING is a different question ("how much is still owed"),
+          // so it is summed per window through the IsClosed-aware rule rather
+          // than derived as exp - rec. Those two figures no longer reconcile
+          // by subtraction once a line has been written off, and that is
+          // correct: the difference is the written-off shortfall.
+          outstanding += slotOutstanding(i.schedule[h]);
           if (c.s === 'pending') pendingWindows++;
         }
       });
     });
     const pct = exp > 0 ? Math.round((rec / exp) * 100) : 0;
-    const outstanding = exp - rec;
 
     document.getElementById('stat-items').innerHTML = `${active} <small>SKUs</small>`;
     document.getElementById('stat-items-sub').textContent = `${canceled} canceled · ${newCount} new`;
@@ -328,6 +366,10 @@
     document.getElementById('prog-label').textContent = pct + '%';
   }
 
+  // Client-side mirror of CloseService's §7.4 gate (CloseService.cs:67-74),
+  // which counts windows WHERE IsClosed = 0 AND ExpectedQty > ReceivedQty.
+  // Keeping the two in agreement is the point: the server is the authority,
+  // and a button that refuses to ask it is indistinguishable from a refusal.
   function isFullyReceived() {
     // Scan EVERY hour in EVERY non-canceled row's schedule (whole pull sheet, not just visible period)
     let hasAnyExpected = false;
@@ -336,7 +378,7 @@
       for (const slot of Object.values(i.schedule)) {
         if (slot.e <= 0) continue;
         hasAnyExpected = true;
-        if (slot.r < slot.e) return false;
+        if (!isSettled(slot)) return false;
       }
     }
     return hasAnyExpected;
@@ -1266,7 +1308,30 @@
       }
       const result = await resp.json();   // v2: { allocations[], totalQty, newReceivedQty, fullyReceived }
       const slot = item.schedule[hour];
-      if (slot) slot.r = result.newReceivedQty;
+      if (slot) {
+        slot.r = result.newReceivedQty;
+        // db/047 §6 — the response carries the window's post-transaction
+        // IsClosed precisely so the client can update without a refetch. It
+        // was being dropped, so a just-short-closed window kept `c = false`
+        // until the next page load: the cell rendered as an ordinary partial
+        // and the header counted it as pending, disagreeing with a database
+        // that had already closed it. The reopen path at ~line 1200 has
+        // always written the symmetric `slot.c = false`; only this direction
+        // was missing.
+        //
+        // Guarded on `!== undefined` so an older server build that predates
+        // the field cannot silently flip a closed window back to open.
+        if (result.isClosed !== undefined) slot.c = !!result.isClosed;
+        if (slot.c) {
+          // Close metadata the closed-state modal reads. ClosedAt is not on
+          // the receive response — stamp it locally so the modal has
+          // something to show; the next load replaces it with the server's.
+          slot.ca = slot.ca || new Date().toISOString();
+          slot.cr = body.note || slot.cr || null;
+          slot.rc = body.varianceReasonCode || slot.rc || null;
+          slot.rl = null;   // label is server-owned; blank until the next load
+        }
+      }
       // Drop the cached journal — drawer will refetch lazily on open, picks up the
       // N new receipt rows (one per FIFO allocation slice) with PO context.
       txCache.length = 0;
@@ -1544,10 +1609,14 @@
       hours.forEach(h => {
         const slot = item.schedule[h];
         if (slot.e <= 0) return;
-        const outstanding = Math.max(0, slot.e - slot.r);
+        const outstanding = slotOutstanding(slot);
         const pct = slot.e > 0 ? (slot.r / slot.e) : 0;
+        // 'Closed short' is its own status for the same reason the grid has a
+        // CLOSED cell state: exporting a written-off line as 'Partial' tells
+        // whoever reads the spreadsheet that a delivery is still coming.
         const cellStatus = (item.status === 'canceled') ? 'Canceled'
                          : (slot.r >= slot.e) ? 'Complete'
+                         : slot.c ? 'Closed short'
                          : (slot.r > 0) ? 'Partial' : 'Pending';
         detail.push({
           'Pull #': pullId,
@@ -1571,15 +1640,22 @@
 
     // ---- Sheet 2: Summary (one row per item with totals across all hours) ----
     const summary = items.map(item => {
-      let exp = 0, rec = 0, windows = 0;
+      let exp = 0, rec = 0, windows = 0, outstanding = 0, settled = 0;
       Object.values(item.schedule).forEach(s => {
-        if (s.e > 0) { exp += s.e; rec += s.r; windows++; }
+        if (s.e > 0) {
+          exp += s.e; rec += s.r; windows++;
+          outstanding += slotOutstanding(s);
+          if (isSettled(s)) settled++;
+        }
       });
-      const outstanding = Math.max(0, exp - rec);
       const pct = exp > 0 ? Math.round((rec/exp)*100) : 0;
+      // 'Fully received' is reserved for actually receiving everything. An
+      // item whose windows are all settled but not all filled is 'Closed
+      // short' — settled, not delivered in full.
       const itemStatus = (item.status === 'canceled') ? 'Canceled'
                        : (exp === 0) ? 'No schedule'
                        : (rec >= exp) ? 'Fully received'
+                       : (settled === windows) ? 'Closed short'
                        : (rec > 0) ? 'Outstanding' : 'Pending';
       return {
         'Pull #': pullId,

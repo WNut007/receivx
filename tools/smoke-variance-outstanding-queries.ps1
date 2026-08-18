@@ -1,4 +1,4 @@
-# Smoke: db/047 — the five outstanding / pending queries honour IsClosed = 0
+# Smoke: db/047 — every outstanding / pending computation honours IsClosed = 0
 #
 # Brief §2c lists five parallel copies of the outstanding arithmetic. They are
 # deliberately NOT consolidated into a shared helper in this change, so each one
@@ -11,6 +11,15 @@
 #   Q3  ReceiptService  :413 count       — ReceiveResult.FullyReceived honours it
 #   Q4  PullRepository  :42-45           — WindowsPending badge drops on close
 #   Q5  CloseService    :67-72           — a short-closed pull can still be closed
+#   Q6  receiving.js                     — the browser's own gate, header, filter
+#                                          and export (added 2026-08-18)
+#
+# §2c's enumeration of "five copies" counted SERVER copies. The browser had
+# four more, and nothing tested them: Q1-Q5 all stop at the API boundary, and
+# Q5 in particular proves the close gate by POSTing /close directly, which no
+# operator ever does. Pull 0000028388 shipped with the server ready to close
+# and the button disabled. Q6 covers the client side; if a seventh copy of the
+# arithmetic appears anywhere, it needs its own case here.
 #
 # Each case creates its own PL-VQ-* fixture so the cases are order-independent
 # and can be run individually while debugging.
@@ -208,10 +217,119 @@ try {
 }
 
 # ---------------------------------------------------------------------------
+# Q6 — the SIXTH copy of the outstanding arithmetic, and the one that shipped
+# the bug: the Receiving console's own gate.
+#
+# Q1-Q5 all stop at the API boundary. Q5 proves the server lets a short-closed
+# pull close — by POSTing /close directly, which no operator ever does. The
+# browser never got a test, and the browser had four more copies of
+# `slot.r < slot.e`: the close-pull gate, the period header, the row filter
+# and the export. On pull 0000028388 (item 2R53-810288-253, window 19:00,
+# 790/792 closed short) the server was ready to close and the button stayed
+# disabled, because isFullyReceived() had never heard of IsClosed.
+#
+# Two parts, because source-greps alone are how the first four copies stayed
+# wrong: first EXECUTE the shipped predicates against the real repro numbers,
+# then assert every call site routes through them.
+Case 'Q6 — receiving.js outstanding predicates honour IsClosed (executed, not grepped)'
+
+$jsPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'src\ReceivingOps.Web\wwwroot\js\receiving.js'
+if (-not (Test-Path $jsPath)) { Bad "receiving.js not found at $jsPath" }
+else {
+    $js = Get-Content -Raw -LiteralPath $jsPath
+
+    # Lift the two helpers straight out of the shipped file and run them in
+    # node. This executes the real code — not a re-implementation of it — so a
+    # future edit that breaks the rule fails here rather than in production.
+    $mSettled = [regex]::Match($js, '(?s)function isSettled\(slot\) \{.*?\n  \}')
+    $mOut     = [regex]::Match($js, '(?s)function slotOutstanding\(slot\) \{.*?\n  \}')
+    if (-not $mSettled.Success -or -not $mOut.Success) {
+        Bad "could not extract isSettled/slotOutstanding from receiving.js — were they renamed?"
+    } else {
+        $harness = @"
+$($mSettled.Value)
+$($mOut.Value)
+const cases = [
+  // the production repro: 790 of 792, closed short with accept-variance
+  ['closed-short settled',      isSettled({e:792, r:790, c:true}),        true],
+  ['closed-short owes nothing', slotOutstanding({e:792, r:790, c:true}),  0],
+  ['open partial not settled',  isSettled({e:792, r:790, c:false}),       false],
+  ['open partial owes 2',       slotOutstanding({e:792, r:790, c:false}), 2],
+  ['exact fill settled',        isSettled({e:792, r:792, c:false}),       true],
+  ['exact fill owes nothing',   slotOutstanding({e:792, r:792, c:false}), 0],
+  ['over-receipt settled',      isSettled({e:100, r:150, c:true}),        true],
+  ['unscheduled settled',       isSettled({e:0,   r:0,   c:false}),       true],
+  ['nothing received owes all', slotOutstanding({e:500, r:0, c:false}),   500],
+];
+let bad = 0;
+for (const [name, got, want] of cases) {
+  if (got !== want) { console.log('MISMATCH ' + name + ': got ' + got + ', want ' + want); bad++; }
+}
+console.log(bad === 0 ? 'PREDICATES_OK' : 'PREDICATES_FAIL');
+"@
+        $tmpJs = Join-Path $env:TEMP "vq-predicates-$([guid]::NewGuid().ToString('N')).js"
+        try {
+            Set-Content -LiteralPath $tmpJs -Value $harness -Encoding UTF8
+            $nodeOut = & node $tmpJs 2>&1
+            if ($LASTEXITCODE -ne 0)            { Bad "node failed to run the predicate harness: $nodeOut" }
+            elseif ($nodeOut -match 'MISMATCH') { Bad "predicate mismatch: $($nodeOut -join ' | ')" }
+            elseif ($nodeOut -match 'PREDICATES_OK') { OK "9 predicate cases pass, including 790/792 closed short → settled, 0 outstanding" }
+            else                                { Bad "unexpected harness output: $nodeOut" }
+        } finally {
+            Remove-Item -LiteralPath $tmpJs -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Call sites. The predicates being right is worthless if a surface computes
+    # its own answer — which is exactly what happened.
+    $sites = @(
+        @{ fn = 'isFullyReceived'; needs = 'isSettled';       what = 'CLOSE PULL SHEET gate' },
+        @{ fn = 'itemClass';       needs = 'isSettled';       what = 'Outstanding row filter' },
+        @{ fn = 'updateStats';     needs = 'slotOutstanding'; what = 'period OUTSTANDING header' }
+    )
+    foreach ($s in $sites) {
+        $body = [regex]::Match($js, "(?s)function $($s.fn)\(.*?\n  \}")
+        # Strip // comments before hunting for bare arithmetic: these functions
+        # now carry comments that quote the very expressions being banned, and
+        # a check that fails on its own explanation teaches people to delete
+        # the explanation.
+        $code = ($body.Value -split "`n" | ForEach-Object { ($_ -replace '//.*$', '') }) -join "`n"
+        if (-not $body.Success)                 { Bad "could not locate $($s.fn)() in receiving.js" }
+        elseif ($code -notmatch $s.needs)       { Bad "$($s.what): $($s.fn)() does not call $($s.needs)()" }
+        elseif ($code -match 'slot\.r < slot\.e' -or $code -match '\bexp - rec\b') {
+            Bad "$($s.what): $($s.fn)() still carries a bare outstanding term"
+        }
+        else                                    { OK "$($s.what) routes through $($s.needs)()" }
+    }
+
+    # The export is the fourth copy; it must use the helper and it must not
+    # label a written-off line as work still coming.
+    if ($js -notmatch "const outstanding = slotOutstanding\(slot\)") {
+        Bad "export detail sheet does not use slotOutstanding()"
+    } elseif ($js -notmatch "'Closed short'") {
+        Bad "export does not distinguish a closed-short line from a Partial"
+    } else {
+        OK "export uses slotOutstanding() and labels closed-short lines"
+    }
+
+    # db/047 §6 — the receive response carries the window's post-tx IsClosed so
+    # the client can update without a refetch. Dropping it left a just-closed
+    # window reading as pending until the next page load.
+    $confirm = [regex]::Match($js, '(?s)const result = await resp\.json\(\);.*?closeModal\(\);')
+    if (-not $confirm.Success) {
+        Bad "could not locate the confirmReceipt success path"
+    } elseif ($confirm.Value -notmatch 'result\.isClosed') {
+        Bad "confirmReceipt drops result.isClosed — a just-short-closed window stays 'pending' until refresh"
+    } else {
+        OK "confirmReceipt applies result.isClosed to the cached slot"
+    }
+}
+
+# ---------------------------------------------------------------------------
 Cleanup
 Write-Host ""
 if ($script:fail -eq 0) {
-    Write-Host "ALL PASS — $($script:pass) assertions across the five outstanding queries." -ForegroundColor Green
+    Write-Host "ALL PASS — $($script:pass) assertions across the six outstanding computations." -ForegroundColor Green
     exit 0
 } else {
     Write-Host "FAILED — $($script:fail) failed, $($script:pass) passed." -ForegroundColor Red
