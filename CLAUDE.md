@@ -81,7 +81,9 @@ range under `UPDLOCK + ROWLOCK` for a global PoNumber duplicate
 re-check (PoNumber is globally UNIQUE per db/010 — a WH filter
 would miss cross-warehouse races), groups rows by PoNumber, and
 INSERTs one PurchaseOrder + N PurchaseOrderLines per group inside
-ONE transaction with rollback on any error (Q3=A atomic). State
+ONE transaction with rollback on any error (Q3=A atomic) — **that
+sentence describes v3.2 as shipped and is no longer true of Stage 2;
+see `## Corrections to this file` → "Stage 2 atomicity"**. State
 machine: `validating → validation_failed | validated → queued →
 running → succeeded | failed`. Schema decisions: `PullId=NULL`
 on imported POs (the spec's "PullId = PRS_ID" idea conflicted with
@@ -615,6 +617,50 @@ admin (retires `tools/add-pull-item.ps1` as primary path) + Hour Cap
 preserved. 29/29 smoke battery green at v2.1.3 tip. See
 `docs/migration/v1-to-v2.md` for the v2 runbook + rollback steps; v2.1
 spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
+
+## Corrections to this file
+
+A ledger, not an eraser. Claims in the status blocks above were true when
+written and are kept as written; where the code has since moved, the
+correction is recorded here with what actually happens now. Same treatment
+as `db/047_STATUS.md`. Do not delete the original claim — a reader who
+remembers the old behaviour needs to see that it changed.
+
+### Stage 2 atomicity (PO import) — recorded 2026-08-18
+
+**Stale claim** (v3.2 status block, ~line 84): Stage 2 "INSERTs one
+PurchaseOrder + N PurchaseOrderLines per group inside ONE transaction with
+rollback on any error (Q3=A atomic)".
+
+**What Stage 2 actually does** on `feat/digital-signature`
+(`PoImportJob.ImportGroupsAsync`, and documented in that class's own XML
+docs):
+
+- **One transaction per PO group**, not one per file. Each `PoNumber`
+  group commits independently.
+- **Duplicates are skipped, not failed.** A pre-read collects existing
+  `PoNumber`s; a group whose number already exists is recorded in
+  `PoImportLog.PosSkipped` / `SkippedPoNumbers` (db/046) and the run still
+  reports `succeeded` (ActionType `po-import-partial` when anything was
+  skipped). A lost race is caught as SQL 2627/2601 and skipped the same
+  way — `UQ_PurchaseOrders_PoNumber` is the sole authority on duplicates,
+  and the pre-read is an optimisation, not the guarantee.
+- **A failure part-way through leaves earlier POs committed.** The failing
+  group rolls back and the run is marked failed, but POs that committed
+  before it are real rows. Operator recovery is to re-upload: the landed
+  POs now skip as duplicates.
+- There is deliberately **no upsert-into-existing path** — merging a
+  re-uploaded file into a PO that may already carry receipts would put
+  `ReceivedQty` and `OrderedQty` into conflict.
+
+**Q3=A still holds where it was actually decided — Stage 1 validation.**
+One bad row rejects the whole file before anything is written; there is no
+partial accept of a workbook that failed validation. The change is to what
+happens *after* the operator confirms a file that already passed.
+
+**WIP synthesis follows the same rule** (v3.6): a WIP pull sheet is
+created, repaired, or skipped as one unit inside that sheet's own
+transaction — pull, items, windows and PO commit or roll back together.
 
 ## Stack
 - .NET 8 LTS, C# 12

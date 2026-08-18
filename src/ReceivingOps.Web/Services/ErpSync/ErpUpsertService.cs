@@ -1,5 +1,6 @@
 using Dapper;
 using ReceivingOps.Web.Data;
+using ReceivingOps.Web.Services.PoImport;
 
 namespace ReceivingOps.Web.Services.ErpSync;
 
@@ -106,7 +107,7 @@ public class ErpUpsertService : IErpUpsertService
         // this belt-and-braces, but local-process concurrency isn't the
         // only path (a future warm-trigger from 10.4 could overlap).
         var existing = await conn.QuerySingleOrDefaultAsync<ExistingPull?>(new CommandDefinition(@"
-            SELECT Id, Status, WarehouseId
+            SELECT Id, Status, WarehouseId, Origin
             FROM   dbo.Pulls WITH (UPDLOCK, ROWLOCK)
             WHERE  PullNumber = @PullNumber;",
             new { pull.PullNumber }, transaction: tx, cancellationToken: ct));
@@ -150,7 +151,7 @@ public class ErpUpsertService : IErpUpsertService
 
         var preItemsAdded = result.ItemsAdded;
         var preItemsCanceled = result.ItemsCanceled;
-        await UpdatePullAsync(conn, tx, pull, existing.Id, result, ct);
+        await UpdatePullAsync(conn, tx, pull, existing.Id, existing.Origin, result, runId, actorName, srcTag, ct);
         var deltaAdded = result.ItemsAdded - preItemsAdded;
         var deltaCanceled = result.ItemsCanceled - preItemsCanceled;
         await _audit.WriteSystemAsync(conn, tx, actorName, "etl-update", "Pull",
@@ -241,7 +242,8 @@ public class ErpUpsertService : IErpUpsertService
     // ------------------------------------------------------------------
     private async Task UpdatePullAsync(
         System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
-        PullDraft pull, Guid pullId, ErpUpsertResult result, CancellationToken ct)
+        PullDraft pull, Guid pullId, string? pullOrigin, ErpUpsertResult result,
+        Guid runId, string actorName, string srcTag, CancellationToken ct)
     {
         // 1. Pull header — only PullDate is mutable from ETL. WarehouseId
         // intentionally NOT updated even if the caller passes a different
@@ -343,6 +345,9 @@ public class ErpUpsertService : IErpUpsertService
         // 3. Items in DB but missing from draft → flip to 'canceled'. Spec
         // §2.5: never DELETE (receipts may FK the row). Skip items that
         // are ALREADY canceled to avoid noise + keep the count meaningful.
+        var isSynthesised = string.Equals(
+            pullOrigin, WipPullSynthesis.OriginPoImport, StringComparison.Ordinal);
+
         foreach (var orphan in existing.Where(e =>
                      !draftCodes.Contains(e.ItemCode) &&
                      !string.Equals(e.Status, "canceled", StringComparison.Ordinal)))
@@ -351,6 +356,42 @@ public class ErpUpsertService : IErpUpsertService
                 UPDATE dbo.PullItems SET Status = 'canceled' WHERE Id = @Id;",
                 new { Id = orphan.Id }, transaction: tx, cancellationToken: ct));
             result.ItemsCanceled++;
+
+            // db/050 — detection only, never a behaviour change.
+            //
+            // When the ERP finally does feed a pull the PO import synthesised,
+            // this takeover is mostly graceful: PullDate is refreshed, item
+            // metadata is overwritten with the same values, windows are
+            // diffed with ExpectedQty clamped so receipts can't be orphaned.
+            // The one hole is right here. The ERP draft knows nothing about
+            // the synthetic PO, so an item the feed omits is canceled while
+            // its PO line keeps whatever ReceivedQty has already been booked
+            // against it — a canceled pull item with live received quantity
+            // behind it, visible to nobody until somebody reconciles. Same
+            // shape as the orphaned VarianceQty (7c15ef9).
+            //
+            // The takeover is deliberately NOT blocked or altered: the ERP is
+            // the source of truth for planning, and refusing its update would
+            // trade a silent inconsistency for a stuck sync. What was missing
+            // was the trail. Only synthesised pulls pay for this query.
+            if (!isSynthesised) continue;
+
+            var received = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+                SELECT SUM(pol.ReceivedQty)
+                FROM   dbo.PurchaseOrderLines pol
+                INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+                WHERE  (po.PullId = @PullId OR po.PullExternalRef = @PullNumber)
+                  AND  pol.ItemCode = @ItemCode;",
+                new { PullId = pullId, pull.PullNumber, orphan.ItemCode },
+                transaction: tx, cancellationToken: ct)) ?? 0;
+
+            await _audit.WriteSystemAsync(conn, tx, actorName, "etl-cancel-synth", "Pull",
+                pull.PullNumber,
+                $"[run {runId}]{srcTag} ERP feed omitted item {orphan.ItemCode} on pull " +
+                $"{pull.PullNumber}, which the PO import synthesised (Origin=" +
+                $"{WipPullSynthesis.OriginPoImport}). The item is now canceled; its purchase-order " +
+                $"line(s) still carry ReceivedQty={received}. Nothing was blocked or rolled back — " +
+                "this row exists so the mismatch is findable before someone reconciles.", ct);
         }
     }
 
@@ -407,7 +448,10 @@ public class ErpUpsertService : IErpUpsertService
     // ------------------------------------------------------------------
     // Dapper materialization shapes (private)
     // ------------------------------------------------------------------
-    private sealed record ExistingPull(Guid Id, string Status, Guid WarehouseId);
+    // Origin (db/050): NULL for ERP-fed and hand-created pulls; 'po-import' for
+    // pulls the WIP synthesis built. Read here so the cancel path can tell the
+    // difference — see the etl-cancel-synth audit in UpdatePullAsync.
+    private sealed record ExistingPull(Guid Id, string Status, Guid WarehouseId, string? Origin);
     private sealed record ExistingItem(Guid Id, string ItemCode, string Status);
     private sealed record ExistingWindow(Guid Id, byte HourOfDay, int ExpectedQty, int ReceivedQty);
 }

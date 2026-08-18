@@ -169,6 +169,8 @@
                 summaryCells +
             '</div>';
 
+        renderWipSummary(data.wip);
+
         const errs = data.validationErrorsPreview || [];
         if (errs.length === 0) {
             previewErrors.innerHTML = '';
@@ -201,6 +203,82 @@
                 '<span class="imports-summary-label">' + escapeHtml(label) + '</span>' +
                 '<span class="imports-summary-value">' + (value ?? 0) + '</span>' +
             '</div>';
+    }
+
+    // -----------------------------------------------------------------------
+    // WIP synthesis summary
+    //
+    // For pull sheets whose storer code contains WIP the ERP never sends a
+    // Receive feed, so the import builds the pull and its PO itself. This
+    // panel is the only checkpoint before those rows commit — the operator
+    // has to see how many, and whether each sheet is new, a repair of a
+    // sheet whose PO landed earlier, or already done. Thai, because the
+    // people reading it are.
+    // -----------------------------------------------------------------------
+    function renderWipSummary(wip) {
+        const host = document.getElementById('imports-wip-summary');
+        if (!host) return;
+
+        if (!wip || !wip.pullCount) {
+            host.hidden = true;
+            host.innerHTML = '';
+            return;
+        }
+
+        const willCreate = (wip.createCount || 0) + (wip.repairCount || 0);
+        const lines = [];
+
+        if (willCreate > 0) {
+            lines.push(
+                'จะสร้าง pull และ PO ให้อัตโนมัติสำหรับ <strong>' + willCreate + '</strong> ใบ ' +
+                '(<strong>' + (wip.itemCount || 0) + '</strong> รายการ · ' +
+                '<strong>' + fmt(wip.windowCount || 0) + '</strong> ช่วงเวลา · ' +
+                '<strong>' + fmt(wip.totalQty || 0) + '</strong> ชิ้น)');
+        }
+        if (wip.repairCount) {
+            lines.push('ใน ' + willCreate + ' ใบนี้ มี <strong>' + wip.repairCount +
+                '</strong> ใบที่เคยนำเข้า PO ไว้แล้วแต่ยังไม่มี pull — ระบบจะสร้างเฉพาะ pull ให้ ' +
+                'โดยไม่แก้ไข PO เดิม');
+        }
+        if (wip.skipCount) {
+            lines.push('<strong>' + wip.skipCount + '</strong> ใบมี pull อยู่แล้ว — ระบบจะข้ามไป ไม่สร้างซ้ำ');
+        }
+
+        const rows = (wip.pulls || []).map(p =>
+            '<li>' +
+                '<code>' + escapeHtml(p.pullNumber) + '</code>' +
+                '<span class="imports-wip-action ' + escapeHtml(p.action) + '">' +
+                    escapeHtml(actionLabel(p.action)) +
+                '</span>' +
+                '<span class="imports-wip-detail">' +
+                    escapeHtml(p.vendorCode || '') + ' · ' +
+                    (p.itemCount || 0) + ' รายการ · ' + fmt(p.totalQty || 0) + ' ชิ้น' +
+                '</span>' +
+            '</li>').join('');
+
+        const listedAll = (wip.pulls || []).length >= wip.pullCount;
+        const listHeader = listedAll
+            ? 'ใบที่ตรวจพบ (' + wip.pullCount + ')'
+            : 'แสดง ' + (wip.pulls || []).length + ' จาก ' + wip.pullCount + ' ใบ';
+
+        host.hidden = false;
+        host.innerHTML =
+            '<div class="imports-wip">' +
+                '<h4><i class="bi bi-magic"></i> พบใบ WIP ที่ ERP ไม่ได้ส่งข้อมูลรับของมาให้</h4>' +
+                '<p class="imports-wip-lead">' + lines.join('<br>') + '</p>' +
+                '<h5>' + escapeHtml(listHeader) + '</h5>' +
+                '<ul class="imports-wip-list">' + rows + '</ul>' +
+            '</div>';
+    }
+
+    function actionLabel(action) {
+        if (action === 'create') return 'สร้างใหม่';
+        if (action === 'repair') return 'เติม pull ที่ขาด';
+        return 'ข้าม (มีอยู่แล้ว)';
+    }
+
+    function fmt(n) {
+        return Number(n || 0).toLocaleString('en-US');
     }
 
     // -----------------------------------------------------------------------

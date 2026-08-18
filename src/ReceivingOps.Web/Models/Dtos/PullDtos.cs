@@ -26,6 +26,14 @@ public class PullSummary
     // v2.x Phase 7.1 — free-text reference (vendor invoice / delivery batch ID).
     // Pull-level; editable post-create. Surfaces on the DO render + Reports list.
     public string? ReferenceNumber { get; set; }
+
+    // db/050 — provenance. NULL for ERP-fed and hand-created pulls (the
+    // overwhelming majority); 'po-import' for pulls the WIP synthesis built
+    // from an Excel import, because the ERP sends no Receive feed for WIP
+    // storer codes. Surfaced in the drawer so a pull carrying a PO nobody in
+    // procurement issued explains itself.
+    public string? Origin { get; set; }
+
     public bool IsReopened { get; set; }
 
     public int TotalExpected { get; set; }

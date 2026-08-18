@@ -28,6 +28,7 @@ public class PullRepository : IPullRepository
                 p.LockPoByPull,
                 p.LockHourCap,
                 p.ReferenceNumber,                 -- v2.x Phase 7.1: per-pull reference (vendor invoice)
+                p.Origin,                          -- db/050: 'po-import' when the WIP synthesis built this pull; NULL otherwise
                 ISNULL(vp.TotalExpected,  0) AS TotalExpected,
                 ISNULL(vp.TotalReceived,  0) AS TotalReceived,
                 ISNULL(vp.ActiveItemCount, 0) +
@@ -372,6 +373,7 @@ public class PullRepository : IPullRepository
             LockPoByPull = summary.LockPoByPull,
             LockHourCap = summary.LockHourCap,
             ReferenceNumber = summary.ReferenceNumber,
+            Origin = summary.Origin,                    // db/050 — drawer provenance row
             TotalExpected = summary.TotalExpected,
             TotalReceived = summary.TotalReceived,
             ItemCount = summary.ItemCount,

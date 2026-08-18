@@ -155,14 +155,28 @@ public class PoImportJob
                     "The file may have been replaced or moved after Stage 1 validation.");
             }
 
+            // ---- WIP synthesis plan --------------------------------------------
+            // Same planner Stage 1 previewed with, re-run on the re-parsed
+            // file so the commit cannot diverge from what was shown. Guard
+            // rails re-checked here too: Stage 1 validated the file that was
+            // uploaded, and this is the file that is on disk now.
+            var wipPlan = WipPullSynthesis.Build(parse.Rows);
+            if (wipPlan.Errors.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"WIP synthesis re-validation failed: {wipPlan.Errors.Count} error(s). " +
+                    $"First: {wipPlan.Errors[0].Message}");
+            }
+
             // ---- Import: new POs land, duplicates skip --------------------------
             int posInserted, linesInserted;
             List<string> skipped;
+            WipRunTotals wipTotals;
             using (var conn = _factory.Create())
             {
                 conn.Open();
-                (posInserted, linesInserted, skipped) =
-                    await ImportGroupsAsync(conn, log, parse.Rows);
+                (posInserted, linesInserted, skipped, wipTotals) =
+                    await ImportGroupsAsync(conn, log, parse.Rows, wipPlan, safeActor, runId);
             }
 
             sw.Stop();
@@ -180,11 +194,14 @@ public class PoImportJob
             await _audit.WriteSystemAsync(
                 safeActor, actionType, "PoImportLog", runId.ToString(),
                 $"Imported {posInserted} PO(s) / {linesInserted} line(s) from {log.FileName} " +
-                $"in {elapsedMs}ms; skipped {skipped.Count} duplicate PO(s){FormatSkipped(skipped)}");
+                $"in {elapsedMs}ms; skipped {skipped.Count} duplicate PO(s){FormatSkipped(skipped)}" +
+                wipTotals.AuditSuffix());
 
             _logger.LogInformation(
-                "PoImport {RunId} succeeded: {Pos} POs, {Lines} lines, {Skipped} skipped in {Elapsed}ms",
-                runId, posInserted, linesInserted, skipped.Count, elapsedMs);
+                "PoImport {RunId} succeeded: {Pos} POs, {Lines} lines, {Skipped} skipped, " +
+                "WIP created={WipCreated} repaired={WipRepaired} skipped={WipSkipped} in {Elapsed}ms",
+                runId, posInserted, linesInserted, skipped.Count,
+                wipTotals.PullsCreated, wipTotals.PullsRepaired, wipTotals.PullsSkipped, elapsedMs);
         }
         catch (Exception ex)
         {
@@ -217,8 +234,9 @@ public class PoImportJob
     // Per-PO import loop. Splitting this out keeps RunAsync's control flow
     // (status transitions + audit + logging) separate from the SQL itself.
     // -------------------------------------------------------------------
-    private async Task<(int posInserted, int linesInserted, List<string> skipped)> ImportGroupsAsync(
-        IDbConnection conn, Models.Dtos.PoImportLogRow log, List<PoImportRow> rows)
+    private async Task<(int posInserted, int linesInserted, List<string> skipped, WipRunTotals wip)> ImportGroupsAsync(
+        IDbConnection conn, Models.Dtos.PoImportLogRow log, List<PoImportRow> rows,
+        WipSynthesisPlan wipPlan, string actorName, Guid runId)
     {
         // Group by PoNumber preserving file order. The OrderBy on the first
         // row's index gives stable PO ordering for both audit and for
@@ -258,10 +276,28 @@ public class PoImportJob
 
         int posInserted = 0, linesInserted = 0;
         var skipped = new List<string>();
+        var wip = new WipRunTotals();
 
         foreach (var group in groups)
         {
             var firstRow = group.First().Row;
+
+            // WIP pull sheets take the synthesis path instead of the ordinary
+            // PO build: their PO lines are grouped 1:1 with the windows the
+            // operator receives against, and the pull side is created in the
+            // same transaction. The ordinary duplicate pre-filter does not
+            // apply — "PO exists" is not automatically a skip here; a PO
+            // whose pull was never created is the stuck state this exists to
+            // repair.
+            var wipSheet = wipPlan.Find(group.Key);
+            if (wipSheet is not null)
+            {
+                var (poCount, lineCount) = await SynthesiseWipSheetAsync(
+                    conn, log, wipSheet, wip, actorName, runId);
+                posInserted += poCount;
+                linesInserted += lineCount;
+                continue;
+            }
 
             if (existing.Contains(group.Key))
             {
@@ -302,7 +338,105 @@ public class PoImportJob
             }
         }
 
-        return (posInserted, linesInserted, skipped);
+        return (posInserted, linesInserted, skipped, wip);
+    }
+
+    // -------------------------------------------------------------------
+    // One WIP pull sheet: pull + items + windows (+ PO and its grouped lines
+    // unless the PO is already there), all inside ONE transaction. A
+    // half-built pull with no PO, or a PO with no pull, is worse than a
+    // failed import — so this either lands whole or not at all.
+    //
+    // Returns what to add to the run's PO/line counters: a repair creates no
+    // PO and no lines, so it contributes (0, 0).
+    // -------------------------------------------------------------------
+    private async Task<(int poCount, int lineCount)> SynthesiseWipSheetAsync(
+        IDbConnection conn, Models.Dtos.PoImportLogRow log, WipPullPlan plan,
+        WipRunTotals totals, string actorName, Guid runId)
+    {
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            // Re-classify HERE, under UPDLOCK, inside the transaction. Stage
+            // 1's preview was read-only and advisory; between the preview and
+            // this moment another import (or the ERP) may have created the
+            // pull. This read is the authority.
+            var states = await WipSynthesisWriter.ClassifyAsync(
+                conn, tx, new[] { plan.PullNumber }, lockRows: true);
+            var action = states.TryGetValue(plan.PullNumber, out var st)
+                ? st.Action
+                : WipSheetAction.Create;
+
+            if (action == WipSheetAction.Skip)
+            {
+                // Nothing was written, so roll the (empty) transaction back
+                // and record the skip standalone — the same shape
+                // ErpUpsertService uses for its closed-pull skip.
+                tx.Rollback();
+                totals.PullsSkipped++;
+                await _audit.WriteSystemAsync(
+                    actorName, "pull-synth-skip", "Pull", plan.PullNumber,
+                    $"[run {runId}] WIP pull sheet already exists — nothing written. " +
+                    "Re-importing the same export is expected and must not double anything.");
+                _logger.LogInformation(
+                    "PoImport {RunId} — WIP pull {PullNumber} already exists; skipping synthesis.",
+                    log.RunId, plan.PullNumber);
+                return (0, 0);
+            }
+
+            var outcome = await WipSynthesisWriter.ApplyAsync(
+                conn, tx, plan, action, log.WarehouseId, log.UploadedByUserId);
+
+            // Audit INSIDE the transaction so the trail commits or rolls back
+            // with the rows it describes (ErpUpsertService's etl-create rule).
+            // This is the record that answers "why does this pull have a PO
+            // nobody in procurement remembers issuing" three months from now.
+            var isRepair = action == WipSheetAction.Repair;
+            await _audit.WriteSystemAsync(
+                conn, tx, actorName,
+                isRepair ? "pull-synth-repair" : "pull-synthesized",
+                "Pull", plan.PullNumber,
+                $"[run {runId}] " +
+                (isRepair
+                    ? "Repaired WIP pull sheet — the PO was already imported but no pull existed; " +
+                      "built the pull side only and left the existing PO and its lines untouched. "
+                    : "Synthesised WIP pull sheet from the PO import — no ERP Receive feed exists for WIP storer codes. ") +
+                $"items={outcome.ItemsCreated}, windows={outcome.WindowsCreated}, " +
+                $"qty={outcome.TotalQty}, vendor={plan.VendorCodeRaw ?? "(none)"}, " +
+                $"po={(outcome.PurchaseOrderId is null ? "(pre-existing)" : $"created with {outcome.LinesCreated} line(s)")}, " +
+                $"file={log.FileName}");
+
+            tx.Commit();
+
+            if (isRepair) totals.PullsRepaired++; else totals.PullsCreated++;
+            totals.ItemsCreated += outcome.ItemsCreated;
+            totals.WindowsCreated += outcome.WindowsCreated;
+            totals.QtyPlanned += outcome.TotalQty;
+
+            _logger.LogInformation(
+                "PoImport {RunId} — WIP pull {PullNumber} {Action}: {Items} item(s), {Windows} window(s), {Qty} unit(s).",
+                log.RunId, plan.PullNumber, isRepair ? "repaired" : "created",
+                outcome.ItemsCreated, outcome.WindowsCreated, outcome.TotalQty);
+
+            return (outcome.PurchaseOrderId is null ? 0 : 1, outcome.LinesCreated);
+        }
+        catch (SqlException ex) when (ex.Number is 2627 or 2601)
+        {
+            // Lost a race against a concurrent import that created the same
+            // pull or PO between the UPDLOCK read and the insert. Same
+            // outcome as a classified skip — this file has nothing to add.
+            tx.Rollback();
+            totals.PullsSkipped++;
+            _logger.LogInformation(ex,
+                "PoImport {RunId} — WIP pull {PullNumber} hit a unique violation (concurrent import); skipping.",
+                log.RunId, plan.PullNumber);
+            return (0, 0);
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
     }
 
     // -------------------------------------------------------------------

@@ -127,6 +127,8 @@
       signatureSvg:  s.signatureSvg || null,
       // v2.x Phase 7.1 — vendor invoice / delivery-batch ID. Editable post-create.
       referenceNumber: s.referenceNumber || null,
+      // db/050 — 'po-import' when the WIP synthesis built this pull, null otherwise.
+      origin:        s.origin || null,
     };
   }
 
@@ -537,6 +539,24 @@
         ? `<span class="lock-mode-pill hcap-strict"><i class="bi bi-clock-fill"></i> Strict</span>`
         : `<span class="lock-mode-pill hcap-loose"><i class="bi bi-clock"></i> Loose (over-receive allowed)</span>`;
     }
+    // db/050 — provenance. For WIP storer codes the ERP sends no Receive feed,
+    // so the PO import builds the pull and its PO itself. Without this row the
+    // only answer to "who issued this PO?" is the audit trail, which is not
+    // where anyone looks first.
+    const originRow = document.getElementById('d-origin-row');
+    const originEl = document.getElementById('d-origin');
+    if (originRow && originEl) {
+      if (p.origin === 'po-import') {
+        originRow.hidden = false;
+        originEl.innerHTML =
+          `<span class="lock-mode-pill hcap-loose" title="Created by the PO Excel import because the ERP sends no Receive feed for WIP storer codes. The purchase order was created by the same import.">` +
+          `<i class="bi bi-magic"></i> Synthesised from PO import</span>`;
+      } else {
+        originRow.hidden = true;
+        originEl.textContent = '—';
+      }
+    }
+
     const linkedLinkEl = document.getElementById('d-linked-pos-link');
     const linkedEl = document.getElementById('d-linked-pos');
     if (linkedEl && linkedLinkEl) {
