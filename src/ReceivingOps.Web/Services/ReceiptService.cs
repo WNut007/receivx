@@ -96,7 +96,7 @@ public class ReceiptService : IReceiptService
         using var conn = _factory.Create();
 
         var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
-            SELECT pi.Id AS PullItemId, pi.ItemCode,
+            SELECT pi.Id AS PullItemId, pi.ItemCode, pi.VendorCode,
                    p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
                    p.LockPoByPull, p.LockHourCap
             FROM   dbo.PullItems pi
@@ -226,7 +226,12 @@ public class ReceiptService : IReceiptService
 
         // Not ticked. Only advertise the tick when it would actually have covered the
         // quantity — pointing at a remedy that still fails is worse than the bare fact.
-        var anchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks: false, pullCtx, ct);
+        // Error-message path: ask the same question the walk would ask, so the
+        // advice offered matches what a retry would actually do.
+        var msgVendorScoped = !string.IsNullOrWhiteSpace(pullCtx.VendorCode)
+            && await AnyVendorMatchedLineAsync(conn, transaction, withLocks: false, pullCtx, ct);
+        var anchor = await ReadPullVendorAnchorAsync(
+            conn, transaction, withLocks: false, pullCtx, msgVendorScoped, ct);
         if (anchor is not null)
         {
             var wide = await ReadVendorWideAvailableAsync(conn, transaction, pullCtx, anchor, ct);
@@ -394,6 +399,48 @@ public class ReceiptService : IReceiptService
 
         const string pullMatch = "(po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
 
+        // Storer grain — the second half of the fix, and the half that
+        // actually stops the liability landing on the wrong supplier.
+        //
+        // Graining pull items by (ItemCode, VendorCode) stops the ERP merging
+        // two storers into one row, but on its own it changes nothing here:
+        // this walk matched on ItemCode alone, so receiving against COI-5732's
+        // item would still consume whichever line sorted first — including
+        // COI-84600's. Measured on one day's export: 107 (pull, SKU) pairs
+        // span two storers, 2,500,523 units, and the two storers have
+        // SEPARATE purchase orders. Tidier rows with the same mis-allocation
+        // would look like a fix and not be one.
+        //
+        // Applied ONLY when the pull item carries a vendor AND that vendor
+        // actually has a candidate line. Both halves are load-bearing.
+        //
+        // A NULL VendorCode means a historical merged row (§4.3 "left alone"
+        // data) or a hand-created item; those keep today's behaviour exactly.
+        //
+        // The second half was found the hard way. A hard vendor filter looked
+        // safe on the measurement "items whose only open lines carry a NULL
+        // vendor" — zero rows. That was the wrong question. The population that
+        // breaks is items whose lines carry a DIFFERENT non-null vendor:
+        // measured 593 open pull items on the dev DB, real ERP storer codes
+        // (HSABP3, 90179, 84380), where the pull's storer has no line of its
+        // own but other storers' lines exist. Filtering those to nothing turns
+        // "receive it against the pool, as today" into "Insufficient PO
+        // capacity. Need 500, have 0" — making live items unreceivable, which
+        // is the opposite of leaving historical data alone. smoke-phase-4a
+        // caught it.
+        //
+        // So: when the item's storer HAS a line, scope hard to it — no leakage,
+        // including on the overflow path. When it has none, fall back to the
+        // pre-change behaviour and walk the whole SKU pool. The mis-allocation
+        // this exists to stop is "two storers each with their own PO"; an item
+        // whose storer has no PO at all was never that case.
+        var vendorScoped = false;
+        if (!string.IsNullOrWhiteSpace(pullCtx.VendorCode))
+        {
+            vendorScoped = await AnyVendorMatchedLineAsync(
+                conn, transaction, withLocks, pullCtx, ct);
+        }
+
         // Overflow only means anything inside lock-by-pull mode. Mode A is already
         // warehouse-wide, and adding a vendor filter there would be a behaviour change
         // nobody asked for (§4.1).
@@ -402,7 +449,7 @@ public class ReceiptService : IReceiptService
         string? vendorAnchor = null;
         if (overflow)
         {
-            vendorAnchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks, pullCtx, ct);
+            vendorAnchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks, pullCtx, vendorScoped, ct);
 
             // No anchor means no pull-linked line to take a vendor from. Do NOT widen on a
             // guess: fall back to today's narrow scope so the caller raises the existing
@@ -421,6 +468,11 @@ public class ReceiptService : IReceiptService
               AND  po.Status      = 'open'
               AND  pol.ItemCode   = @ItemCode
               AND  pol.OrderedQty > pol.ReceivedQty";
+
+        // Storer scope, in BOTH lock modes: a warehouse-wide pull mis-attributing
+        // stock across storers is the same defect as a pull-locked one.
+        // Skipped entirely when the item has no vendor (see above).
+        if (vendorScoped) sql += $" AND {VendorMatchSql("pol.VendorCode", "@ItemVendorCode")}";
 
         // The row-restricting predicate stays INSIDE the locked scan on both paths. On the
         // normal path that keeps the UPDLOCK+HOLDLOCK range exactly as narrow as it is
@@ -451,10 +503,84 @@ public class ReceiptService : IReceiptService
                 pullCtx.PullId,
                 PullNumberStr = pullCtx.PullNumber,
                 VendorAnchor  = vendorAnchor,
+                ItemVendorCode = pullCtx.VendorCode,
             },
             transaction: transaction,
             cancellationToken: ct));
     }
+
+    /// <summary>
+    /// Does this pull item's storer have any candidate PO line of its own?
+    ///
+    /// <para>Decides whether the vendor filter applies at all. When the answer
+    /// is yes, the walk is scoped hard to that storer and cannot leak onto
+    /// another supplier's purchase order. When it is no — the item's storer has
+    /// no line here, but other storers' lines exist for the same SKU — the
+    /// filter is skipped entirely and the walk behaves exactly as it did before
+    /// storer grain. 593 open pull items on the dev DB are in that second
+    /// bucket; filtering them to nothing made them unreceivable.</para>
+    ///
+    /// <para>Scope mirrors the main walk's, including the lock-by-pull
+    /// restriction, and takes the same hints so the answer cannot shift
+    /// underneath the read that follows.</para>
+    /// </summary>
+    private static async Task<bool> AnyVendorMatchedLineAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction? transaction,
+        bool withLocks,
+        PullItemContext pullCtx,
+        CancellationToken ct)
+    {
+        var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
+        var pullTerm = pullCtx.LockPoByPull
+            ? " AND (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)"
+            : "";
+
+        var hit = await conn.ExecuteScalarAsync<int?>(new CommandDefinition($@"
+            SELECT TOP 1 1
+            FROM   dbo.PurchaseOrderLines pol {hints}
+            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+            WHERE  po.WarehouseId = @WarehouseId
+              AND  po.Status      = 'open'
+              AND  pol.ItemCode   = @ItemCode
+              AND  pol.OrderedQty > pol.ReceivedQty{pullTerm}
+              AND  {VendorMatchSql("pol.VendorCode", "@ItemVendorCode")};",
+            new
+            {
+                pullCtx.WarehouseId,
+                pullCtx.ItemCode,
+                pullCtx.PullId,
+                PullNumberStr = pullCtx.PullNumber,
+                ItemVendorCode = pullCtx.VendorCode,
+            },
+            transaction: transaction, cancellationToken: ct));
+
+        return hit.HasValue;
+    }
+
+    /// <summary>
+    /// Cross-format vendor match. <c>PurchaseOrderLines.VendorCode</c> holds the
+    /// PREFIXED ERP code (<c>COI-5732</c>); <c>PullItems.VendorCode</c> holds the
+    /// STRIPPED form (<c>5732</c>) written from <c>BPI_PRS.VENDOR</c> verbatim.
+    ///
+    /// <para>Written the obvious way — <c>pol.VendorCode = @V</c> — this matches
+    /// ZERO rows and fails silently: the operator sees "no capacity anywhere"
+    /// while the code looks like it works. That near-miss has already happened
+    /// twice on this codebase, which is why the comparison is centralised here
+    /// instead of transcribed at each site.</para>
+    ///
+    /// <para>Matches exact, or prefixed-with-a-hyphen. No assumption about
+    /// prefix length beyond the separator, so <c>COI-</c> and <c>WDT-</c> both
+    /// work and a stripped value that itself contains a hyphen
+    /// (<c>V-FORTIS</c>) still matches itself exactly. Both operands are
+    /// parameters — the caller passes column and parameter NAMES, never
+    /// values.</para>
+    /// </summary>
+    private static string VendorMatchSql(string poLineColumn, string param) => $@"(
+                   {poLineColumn} = {param}
+                   OR (RIGHT({poLineColumn}, LEN({param})) = {param}
+                       AND SUBSTRING({poLineColumn}, LEN({poLineColumn}) - LEN({param}), 1) = '-')
+              )";
 
     // §4.1 — the vendor the pull is actually transacting with, taken from the pull-linked
     // PO line(s) themselves.
@@ -474,9 +600,24 @@ public class ReceiptService : IReceiptService
         System.Data.IDbTransaction? transaction,
         bool withLocks,
         PullItemContext pullCtx,
+        bool vendorScoped,
         CancellationToken ct)
     {
         var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
+
+        // Storer grain — the anchor has to belong to the item's own storer.
+        // Without this, a pull carrying the same SKU from two storers picks
+        // whichever line sorts first as the anchor, and overflow then widens
+        // to the WRONG supplier's other POs — turning a mis-allocation inside
+        // one pull into a mis-allocation across the warehouse. Same NULL rule
+        // as the main walk: no vendor on the item, no extra term.
+        // Same fallback rule as the main walk: only scope the anchor when the
+        // item's storer actually has a line here. Otherwise this is one of the
+        // 593 fallback items and the pre-change anchor behaviour applies.
+        var vendorTerm = vendorScoped
+            ? $" AND {VendorMatchSql("pol.VendorCode", "@ItemVendorCode")}"
+            : "";
+
         return await conn.ExecuteScalarAsync<string?>(new CommandDefinition($@"
             SELECT TOP 1 pol.VendorCode
             FROM   dbo.PurchaseOrderLines pol {hints}
@@ -486,7 +627,7 @@ public class ReceiptService : IReceiptService
               AND  pol.ItemCode   = @ItemCode
               AND  pol.OrderedQty > pol.ReceivedQty
               AND  (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)
-              AND  pol.VendorCode IS NOT NULL
+              AND  pol.VendorCode IS NOT NULL{vendorTerm}
             ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;",
             new
             {
@@ -494,6 +635,7 @@ public class ReceiptService : IReceiptService
                 pullCtx.ItemCode,
                 pullCtx.PullId,
                 PullNumberStr = pullCtx.PullNumber,
+                ItemVendorCode = pullCtx.VendorCode,
             },
             transaction: transaction,
             cancellationToken: ct));
@@ -560,7 +702,7 @@ public class ReceiptService : IReceiptService
         {
             // ----- 1. Lock the parent pull row + read its current status (incl. LockPoByPull + LockHourCap) -----
             var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
-                SELECT pi.Id AS PullItemId, pi.ItemCode,
+                SELECT pi.Id AS PullItemId, pi.ItemCode, pi.VendorCode,
                        p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
                        p.LockPoByPull, p.LockHourCap
                 FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
@@ -1014,7 +1156,7 @@ public class ReceiptService : IReceiptService
         {
             // ----- 1. Lock the parent pull (canonical step 2) -----
             var pullCtx = await conn.QuerySingleOrDefaultAsync<PullItemContext>(new CommandDefinition(@"
-                SELECT pi.Id AS PullItemId, pi.ItemCode,
+                SELECT pi.Id AS PullItemId, pi.ItemCode, pi.VendorCode,
                        p.Id  AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId,
                        p.LockPoByPull, p.LockHourCap
                 FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
@@ -1125,7 +1267,7 @@ public class ReceiptService : IReceiptService
             // ----- 1. Lock the parent pull — step 1 of the canonical order, and the
             // serialization point that lets step 8c write sibling receipt rows safely.
             var pullCtx = await conn.QuerySingleAsync<PullItemContext>(new CommandDefinition(@"
-                SELECT pi.Id AS PullItemId, pi.ItemCode, p.Id AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId
+                SELECT pi.Id AS PullItemId, pi.ItemCode, pi.VendorCode, p.Id AS PullId, p.PullNumber, p.Status AS PullStatus, p.WarehouseId
                 FROM   dbo.Pulls p WITH (UPDLOCK, ROWLOCK)
                 INNER JOIN dbo.PullItems pi ON pi.PullId = p.Id
                 WHERE  pi.Id = @PullItemId;",
@@ -1449,6 +1591,14 @@ public class ReceiptService : IReceiptService
     {
         public Guid PullItemId { get; set; }
         public string ItemCode { get; set; } = "";
+
+        // Storer grain. PullItems.VendorCode holds the STRIPPED ERP form
+        // ('5732'); PurchaseOrderLines.VendorCode holds the PREFIXED form
+        // ('COI-5732'). Any comparison across the two must normalise — see
+        // VendorMatchSql. NULL on historical merged rows and on hand-created
+        // items, where the FIFO walk keeps its pre-storer-grain behaviour.
+        public string? VendorCode { get; set; }
+
         public Guid PullId { get; set; }
         public string PullNumber { get; set; } = "";
         public string PullStatus { get; set; } = "";

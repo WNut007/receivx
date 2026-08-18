@@ -213,22 +213,37 @@ public static class WipPullSynthesis
                 VendorName = wipRows.Select(r => r.VendorName).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
             };
 
-            // Item grain = SKU. Window / PO-line grain = (SKU, ROUND).
-            // 36 of the 48 production (sheet, SKU) pairs arrive as several
-            // rows differing only by pallet — PullItemWindows is unique on
-            // (PullItemId, HourOfDay), so those MUST be summed, not inserted
-            // row by row.
+            // Item grain = (SKU, STORER). Window / PO-line grain =
+            // (SKU, STORER, ROUND).
+            //
+            // 36 of the 48 production (sheet, SKU) pairs arrive as several rows
+            // differing only by pallet — PullItemWindows is unique on
+            // (PullItemId, HourOfDay), so those MUST be summed, not inserted row
+            // by row. What must NOT be summed is two different storers: they
+            // hold separate purchase orders, and merging them loses the only
+            // fact that says whose goods arrived.
+            //
+            // The §4.1 guard above still refuses a WIP sheet carrying more than
+            // one storer, so on today's data this key can never split anything —
+            // measured: 25 WIP sheets, all single-storer. The two are
+            // complementary rather than redundant: the guard says "this shape is
+            // unexpected, have a human look at it", the key says "if it ever
+            // does arrive, do not silently merge it". Neither is a substitute
+            // for the other, and the key costs nothing while the guard stands.
             foreach (var itemGroup in wipRows
-                         .GroupBy(r => r.ItemCode, StringComparer.Ordinal)
+                         .GroupBy(r => new WipItemKey(r.ItemCode, r.VendorCode))
                          .OrderBy(g => g.Min(r => r.RowNumber)))
             {
                 var sample = itemGroup.OrderBy(r => r.RowNumber).First();
                 var item = new WipItemPlan
                 {
-                    ItemCode = itemGroup.Key,
+                    ItemCode = itemGroup.Key.ItemCode,
                     Description = sample.Description,
-                    VendorCodeRaw = pull.VendorCodeRaw,
-                    VendorName = pull.VendorName,
+                    // From the group key, not the pull: with the guard removed
+                    // or a future multi-storer sheet allowed, the pull-level
+                    // vendor would be whichever storer was seen first.
+                    VendorCodeRaw = itemGroup.Key.VendorCode ?? pull.VendorCodeRaw,
+                    VendorName = sample.VendorName ?? pull.VendorName,
                 };
 
                 foreach (var hourGroup in itemGroup
@@ -323,4 +338,25 @@ public class WipWindowPlan
 
     /// <summary>First row of the group in file order — supplies PO-line ERP metadata.</summary>
     public PoImportRow Sample { get; set; } = new();
+}
+
+/// <summary>
+/// Identity of a synthesised pull item: SKU **and storer**.
+///
+/// <para>Mirrors <c>ErpSync.ItemKey</c> deliberately rather than sharing it —
+/// this side keys on the RAW prefixed STORER CODE straight out of the
+/// workbook (<c>COI-WIPBP1</c>), while the ETL side keys on the stripped ERP
+/// form (<c>WIPBP1</c>). Sharing one type would invite someone to compare the
+/// two keys across the boundary, which is exactly the silent-zero-match the
+/// vendor formats keep causing.</para>
+/// </summary>
+public readonly record struct WipItemKey(string ItemCode, string? VendorCode)
+{
+    public bool Equals(WipItemKey other) =>
+        string.Equals(ItemCode, other.ItemCode, StringComparison.Ordinal) &&
+        string.Equals(VendorCode, other.VendorCode, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() => HashCode.Combine(
+        ItemCode is null ? 0 : StringComparer.Ordinal.GetHashCode(ItemCode),
+        VendorCode is null ? 0 : StringComparer.OrdinalIgnoreCase.GetHashCode(VendorCode));
 }

@@ -95,6 +95,10 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # Shares the WIPTEST-% namespace with nothing else; purges it on entry
         # and exit. Requires db/050 (Origin on Pulls + PurchaseOrders).
         'smoke-wip-pull-synthesis.ps1'
+        # Drives tools/ErpUpsertHarness, which executes the real Transform +
+        # UpsertAsync against the dev DB with no ERP host. Build it first:
+        # dotnet build tools/ErpUpsertHarness.
+        'smoke-storer-grain.ps1'
         # Shares smoke-phase-12-7's P127TEST-% fixture namespace. Both purge
         # the prefix on entry and exit; they must not run concurrently.
         'smoke-po-import-skip-duplicates.ps1'

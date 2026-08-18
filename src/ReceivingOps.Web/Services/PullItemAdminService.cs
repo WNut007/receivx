@@ -37,12 +37,26 @@ public class PullItemAdminService : IPullItemAdminService
             RefuseClosed(pull);
 
             // Natural-key duplicate check. No DB UNIQUE — the app is the enforcement layer.
-            var dup = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
-                "SELECT 1 FROM dbo.PullItems WITH (UPDLOCK, HOLDLOCK) WHERE PullId = @PullId AND ItemCode = @ItemCode;",
-                new { PullId = pullId, req.ItemCode }, transaction: tx, cancellationToken: ct));
+            //
+            // The key is (PullId, ItemCode, VendorCode): storer is part of item
+            // identity. One pull sheet routinely carries the same SKU from two
+            // storers with separate purchase orders, and since the ETL now
+            // creates both rows, refusing an operator the same thing by hand
+            // would leave the manual path unable to express what the automatic
+            // one produces. NULL VendorCode is its own bucket — two rows with no
+            // storer still collide, which is the pre-storer-grain behaviour for
+            // hand-created items.
+            var dup = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+                SELECT 1 FROM dbo.PullItems WITH (UPDLOCK, HOLDLOCK)
+                WHERE  PullId = @PullId
+                  AND  ItemCode = @ItemCode
+                  AND  ((VendorCode IS NULL AND @VendorCode IS NULL) OR VendorCode = @VendorCode);",
+                new { PullId = pullId, req.ItemCode, req.VendorCode }, transaction: tx, cancellationToken: ct));
             if (dup.HasValue)
                 throw new BusinessException(
-                    $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}.");
+                    string.IsNullOrWhiteSpace(req.VendorCode)
+                        ? $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}."
+                        : $"Item '{req.ItemCode}' from storer '{req.VendorCode}' already exists on pull {pull.PullNumber}.");
 
             var nextSort = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
                 "SELECT ISNULL(MAX(SortOrder), 0) + 1 FROM dbo.PullItems WHERE PullId = @PullId;",

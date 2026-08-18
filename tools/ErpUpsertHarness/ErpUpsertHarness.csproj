@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ReceivingOps.Tools.ErpUpsertHarness</RootNamespace>
+    <!-- The web project is a web SDK app; referencing it pulls its FrameworkReference
+         too, which is what lets this console host resolve ILogger + the ETL services. -->
+    <AssemblyName>ErpUpsertHarness</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ReceivingOps.Web\ReceivingOps.Web.csproj" />
+  </ItemGroup>
+
+</Project>

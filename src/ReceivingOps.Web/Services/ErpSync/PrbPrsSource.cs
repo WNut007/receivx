@@ -98,11 +98,22 @@ public class PrbPrsSource : IErpSource
             // NOT part of item identity. (Previously this synthesized
             // "SKU-TRIAL_ID", which broke the §7.15 FIFO match against the
             // bare-SKU PO lines and left receives blocked.)
+            // Storer grain: the key is (ItemCode, VendorCode), NOT ItemCode alone.
+            // One pull sheet routinely carries the same SKU from two storers —
+            // 107 such (pull, SKU) pairs in a single day, 2,500,523 units — and the
+            // two storers hold SEPARATE purchase orders. Grouping on SKU alone kept
+            // whichever VENDOR sorted first, summed both quantities into one item,
+            // and left receiving unable to say whose goods arrived. Nothing errored;
+            // the second storer was simply gone before anything was written.
+            //
+            // ItemCode itself STAYS the bare SKU (see the note above) — only the
+            // grouping key widens, so the §7.15 FIFO match against bare-SKU PO lines
+            // is untouched. VendorCode stays the stripped ERP form on PullItems.
             foreach (var itemGroup in pullGroup
                 .Where(r => !string.IsNullOrWhiteSpace(r.SKU))
-                .GroupBy(r => NormalizeItemCode(r.SKU!)))
+                .GroupBy(r => new ItemKey(NormalizeItemCode(r.SKU!), NullIfBlank(r.VENDOR))))
             {
-                if (string.IsNullOrWhiteSpace(itemGroup.Key))
+                if (string.IsNullOrWhiteSpace(itemGroup.Key.ItemCode))
                 {
                     skipped += itemGroup.Count();
                     continue;
@@ -111,11 +122,15 @@ public class PrbPrsSource : IErpSource
                 var sample = itemGroup.First();
                 var item = new PullItemDraft
                 {
-                    ItemCode = itemGroup.Key,
+                    ItemCode = itemGroup.Key.ItemCode,
                     Description = !string.IsNullOrWhiteSpace(sample.DESCR)
                         ? sample.DESCR!
                         : sample.SKU ?? "(no description)",
-                    VendorCode = NullIfBlank(sample.VENDOR),
+                    // From the KEY, not the sample: the group is now storer-scoped,
+                    // so every row in it carries this vendor. Reading the sample
+                    // again would work but would re-introduce the "first row wins"
+                    // shape that caused the defect.
+                    VendorCode = itemGroup.Key.VendorCode,
                     Remark = NullIfBlank(sample.REMARK),
                     ProductFamily = NullIfBlank(sample.PRODUCT_FAMILY),
                     FromSubInventory = NullIfBlank(sample.FROM_SUB),

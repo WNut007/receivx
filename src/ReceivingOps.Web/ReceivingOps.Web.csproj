@@ -8,6 +8,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- BpiPrsSource.Transform and its BpiPrsRow shape are internal, and their
+         own comments say they are "exposed internal so smokes can exercise
+         them with hand-crafted rows (no live ERP required)" — but nothing could
+         actually reach them from outside the assembly, so nothing ever did.
+         tools/ErpUpsertHarness is that caller: the storer-grain grouping fix
+         lives in Transform, and the ERP host is unreachable without VPN. -->
+    <InternalsVisibleTo Include="ErpUpsertHarness" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="Dapper" Version="2.1.79" />
     <PackageReference Include="FastReport.OpenSource" Version="2026.2.1" />

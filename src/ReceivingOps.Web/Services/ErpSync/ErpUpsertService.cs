@@ -259,11 +259,32 @@ public class ErpUpsertService : IErpUpsertService
 
         // 2. Items — fetch what's currently on the pull so we can diff.
         var existing = (await conn.QueryAsync<ExistingItem>(new CommandDefinition(@"
-            SELECT Id, ItemCode, Status
+            SELECT Id, ItemCode, VendorCode, Status
             FROM   dbo.PullItems WITH (UPDLOCK)
             WHERE  PullId = @PullId;",
             new { PullId = pullId }, transaction: tx, cancellationToken: ct))).AsList();
-        var existingByCode = existing.ToDictionary(e => e.ItemCode, StringComparer.Ordinal);
+
+        // Keyed by (ItemCode, VendorCode), not ItemCode. ToDictionary on the
+        // SKU alone THROWS ArgumentException the moment a pull legitimately
+        // holds two storers' rows for one SKU — killing the whole ETL run for
+        // that pull. It never fired only because the source collapsed the two
+        // upstream; graining the source without fixing this line would have
+        // started failing on the ~40% of pull sheets that carry more than one
+        // storer.
+        //
+        // Historical merged rows have a vendor too (whichever one won), so
+        // they key cleanly. A row whose VendorCode is NULL keys as
+        // (SKU, null) and still matches a draft item with no vendor.
+        var existingByKey = new Dictionary<ItemKey, ExistingItem>();
+        foreach (var e in existing)
+        {
+            var key = new ItemKey(e.ItemCode, e.VendorCode);
+            // Defensive: pre-change data can hold two rows that collapse to the
+            // same key only if the same storer was written twice, which the old
+            // grouping made impossible. First wins, and the duplicate is treated
+            // as an orphan below rather than throwing mid-run.
+            if (!existingByKey.ContainsKey(key)) existingByKey[key] = e;
+        }
 
         // SortOrder for new items continues past the current max so the
         // drawer items grid doesn't get reshuffled on every ETL run.
@@ -271,12 +292,17 @@ public class ErpUpsertService : IErpUpsertService
             SELECT ISNULL(MAX(SortOrder), 0) + 1 FROM dbo.PullItems WHERE PullId = @PullId;",
             new { PullId = pullId }, transaction: tx, cancellationToken: ct));
 
-        var draftCodes = new HashSet<string>(StringComparer.Ordinal);
+        // Storer-grained too. On the SKU alone, storer A surviving in the draft
+        // keeps the SKU in this set, so storer B's withdrawn row is never
+        // cancelled and lingers as live outstanding on the operator's worklist
+        // forever — a phantom that no amount of receiving clears.
+        var draftKeys = new HashSet<ItemKey>();
         foreach (var item in pull.Items)
         {
-            draftCodes.Add(item.ItemCode);
+            var draftKey = new ItemKey(item.ItemCode, item.VendorCode);
+            draftKeys.Add(draftKey);
 
-            if (existingByCode.TryGetValue(item.ItemCode, out var ex))
+            if (existingByKey.TryGetValue(draftKey, out var ex))
             {
                 // Existing item — update ERP-sourced fields. Status is
                 // intentionally NOT touched: an operator may have set it
@@ -349,7 +375,7 @@ public class ErpUpsertService : IErpUpsertService
             pullOrigin, WipPullSynthesis.OriginPoImport, StringComparison.Ordinal);
 
         foreach (var orphan in existing.Where(e =>
-                     !draftCodes.Contains(e.ItemCode) &&
+                     !draftKeys.Contains(new ItemKey(e.ItemCode, e.VendorCode)) &&
                      !string.Equals(e.Status, "canceled", StringComparison.Ordinal)))
         {
             await conn.ExecuteAsync(new CommandDefinition(@"
@@ -376,22 +402,48 @@ public class ErpUpsertService : IErpUpsertService
             // was the trail. Only synthesised pulls pay for this query.
             if (!isSynthesised) continue;
 
-            var received = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+            // Storer-scoped, and this is a CROSS-FORMAT comparison: the orphan's
+            // VendorCode is the STRIPPED ERP form ('5732') while
+            // PurchaseOrderLines.VendorCode is PREFIXED ('COI-5732'). Written as
+            // plain equality it matches nothing and the audit reports 0 — worse
+            // than no audit, because a zero reads as "nothing outstanding".
+            // Matched either-form via the same rule ReceiptService uses.
+            //
+            // Without the vendor term at all, this sums EVERY storer's lines for
+            // the SKU and reports a figure that belongs to no one. This audit
+            // exists precisely to make a mismatch findable; a wrong number here
+            // is worse than none.
+            //
+            // NULL vendor on the orphan → no term, today's whole-SKU sum. That
+            // is the honest answer for a row that never carried a storer.
+            var vendorTerm = string.IsNullOrWhiteSpace(orphan.VendorCode)
+                ? ""
+                : @" AND (pol.VendorCode = @VendorCode
+                          OR (RIGHT(pol.VendorCode, LEN(@VendorCode)) = @VendorCode
+                              AND SUBSTRING(pol.VendorCode, LEN(pol.VendorCode) - LEN(@VendorCode), 1) = '-'))";
+
+            var received = await conn.ExecuteScalarAsync<int?>(new CommandDefinition($@"
                 SELECT SUM(pol.ReceivedQty)
                 FROM   dbo.PurchaseOrderLines pol
                 INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
                 WHERE  (po.PullId = @PullId OR po.PullExternalRef = @PullNumber)
-                  AND  pol.ItemCode = @ItemCode;",
-                new { PullId = pullId, pull.PullNumber, orphan.ItemCode },
+                  AND  pol.ItemCode = @ItemCode{vendorTerm};",
+                new { PullId = pullId, pull.PullNumber, orphan.ItemCode, orphan.VendorCode },
                 transaction: tx, cancellationToken: ct)) ?? 0;
+
+            var storerLbl = string.IsNullOrWhiteSpace(orphan.VendorCode)
+                ? "(no storer recorded)"
+                : orphan.VendorCode;
 
             await _audit.WriteSystemAsync(conn, tx, actorName, "etl-cancel-synth", "Pull",
                 pull.PullNumber,
-                $"[run {runId}]{srcTag} ERP feed omitted item {orphan.ItemCode} on pull " +
+                $"[run {runId}]{srcTag} ERP feed omitted item {orphan.ItemCode} " +
+                $"[storer {storerLbl}] on pull " +
                 $"{pull.PullNumber}, which the PO import synthesised (Origin=" +
-                $"{WipPullSynthesis.OriginPoImport}). The item is now canceled; its purchase-order " +
-                $"line(s) still carry ReceivedQty={received}. Nothing was blocked or rolled back — " +
-                "this row exists so the mismatch is findable before someone reconciles.", ct);
+                $"{WipPullSynthesis.OriginPoImport}). The item is now canceled; that storer's " +
+                $"purchase-order line(s) still carry ReceivedQty={received}. Nothing was blocked " +
+                "or rolled back — this row exists so the mismatch is findable before someone " +
+                "reconciles.", ct);
         }
     }
 
@@ -452,6 +504,7 @@ public class ErpUpsertService : IErpUpsertService
     // pulls the WIP synthesis built. Read here so the cancel path can tell the
     // difference — see the etl-cancel-synth audit in UpdatePullAsync.
     private sealed record ExistingPull(Guid Id, string Status, Guid WarehouseId, string? Origin);
-    private sealed record ExistingItem(Guid Id, string ItemCode, string Status);
+    // VendorCode joins the shape so the diff can key on (ItemCode, VendorCode).
+    private sealed record ExistingItem(Guid Id, string ItemCode, string? VendorCode, string Status);
     private sealed record ExistingWindow(Guid Id, byte HourOfDay, int ExpectedQty, int ReceivedQty);
 }

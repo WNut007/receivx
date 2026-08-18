@@ -81,3 +81,41 @@ public class PullItemWindowDraft
     public byte HourOfDay { get; set; }
     public int ExpectedQty { get; set; }
 }
+
+/// <summary>
+/// Identity of a pull item: SKU **and storer**, never SKU alone.
+///
+/// <para>One pull sheet routinely carries the same SKU from two storers —
+/// 107 such (pull, SKU) pairs in a single day's export, 298 rows,
+/// 2,500,523 units, 196 of 504 pull sheets carrying more than one storer.
+/// The two storers hold separate purchase orders, so merging them loses the
+/// only fact that says whose goods arrived and whose PO should be
+/// consumed.</para>
+///
+/// <para><b>This is not the TrialId case.</b> ItemCode was once synthesised
+/// as <c>SKU-TRIAL_ID</c>, which broke the §7.15 FIFO match against
+/// bare-SKU PO lines; that fix was correct and stands. Trial id is lot
+/// metadata with no purchase order of its own. Vendor has a PO, a
+/// liability, and its own line in the PO import — it is part of identity.
+/// Hence the KEY widens while <c>PullItemDraft.ItemCode</c> stays the bare
+/// SKU.</para>
+///
+/// <para>A record struct so equality is by value and null vendors group
+/// together rather than each landing in their own bucket. Comparison is
+/// Ordinal on both parts: these are machine codes, and a culture-aware
+/// compare could merge two storers that differ only by case in a locale
+/// nobody tested.</para>
+/// </summary>
+public readonly record struct ItemKey(string ItemCode, string? VendorCode)
+{
+    public bool Equals(ItemKey other) =>
+        string.Equals(ItemCode, other.ItemCode, StringComparison.Ordinal) &&
+        string.Equals(VendorCode, other.VendorCode, StringComparison.Ordinal);
+
+    public override int GetHashCode() => HashCode.Combine(
+        ItemCode is null ? 0 : StringComparer.Ordinal.GetHashCode(ItemCode),
+        VendorCode is null ? 0 : StringComparer.Ordinal.GetHashCode(VendorCode));
+
+    public override string ToString() =>
+        VendorCode is null ? ItemCode : $"{ItemCode} @ {VendorCode}";
+}
