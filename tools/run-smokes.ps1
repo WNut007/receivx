@@ -91,6 +91,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-12-6-nav-entry.ps1'
         'smoke-phase-12-7-integration.ps1'
         'smoke-phase-12-8-import-ui.ps1'
+        'smoke-import-template.ps1'
         # Shares smoke-phase-12-7's P127TEST-% fixture namespace. Both purge
         # the prefix on entry and exit; they must not run concurrently.
         'smoke-po-import-skip-duplicates.ps1'

@@ -39,10 +39,23 @@
                     <i class="bi bi-cloud-upload imports-dropzone-icon"></i>
                     <p class="imports-dropzone-primary">Drop your PO Excel workbook here</p>
                     <p class="imports-dropzone-secondary">.xls or .xlsx · max 50 MB</p>
-                    <button type="button" class="btn btn-outline-secondary" id="imports-browse-btn">
-                        <i class="bi bi-folder2-open"></i> Browse files…
-                    </button>
+                    <div class="imports-dropzone-actions">
+                        <button type="button" class="btn btn-outline-secondary" id="imports-browse-btn">
+                            <i class="bi bi-folder2-open"></i> Browse files…
+                        </button>
+                        @* Secondary to Browse files… on purpose — uploading is the
+                           main action; the template is a reference an operator opens
+                           to check their export's header row against. *@
+                        <a class="btn btn-link imports-template-link" id="imports-template-link"
+                           href="/api/imports/po/template" download>
+                            <i class="bi bi-file-earmark-arrow-down"></i> ดาวน์โหลดเทมเพลต
+                        </a>
+                    </div>
                 </div>
+
+                <p class="imports-source-hint" id="imports-source-hint">
+                    ไฟล์ที่อัปโหลดคือรายงาน <code>xxwdt0061_stock_shipped</code> ที่ export จาก ERP แล้วอัปโหลดทั้งไฟล์โดยไม่ต้องแก้ไข
+                </p>
 
                 <div id="imports-preview-panel" class="imports-panel" hidden>
                     <div class="imports-panel-head">

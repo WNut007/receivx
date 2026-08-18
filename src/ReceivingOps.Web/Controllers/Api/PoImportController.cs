@@ -198,6 +198,23 @@ public class PoImportController : ControllerBase
     }
 
     // -----------------------------------------------------------------
+    // GET /api/imports/po/template
+    //
+    // The blank workbook an operator compares their ERP export against.
+    // Generated per request from PoImportReader's own RequiredHeaders +
+    // the column list rather than served from wwwroot: a committed .xlsx
+    // would go stale the first time the required set changed, and it would
+    // go stale silently. Route sits above {runId:guid} for readability —
+    // the GUID constraint already stops "template" binding to it.
+    // -----------------------------------------------------------------
+    [HttpGet("template")]
+    public IActionResult Template()
+    {
+        var bytes = PoImportTemplateBuilder.Build();
+        return File(bytes, PoImportTemplateBuilder.ContentType, PoImportTemplateBuilder.FileName);
+    }
+
+    // -----------------------------------------------------------------
     // GET /api/imports/po/{runId}
     // -----------------------------------------------------------------
     [HttpGet("{runId:guid}")]

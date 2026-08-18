@@ -19,6 +19,9 @@
 
     const fileInput       = document.getElementById('imports-file-input');
     const browseBtn       = document.getElementById('imports-browse-btn');
+    // Helper line under the dropzone — travels with the dropzone so it isn't
+    // left hanging over the preview/status panels.
+    const sourceHint      = document.getElementById('imports-source-hint');
     const previewPanel    = document.getElementById('imports-preview-panel');
     const previewFilename = document.getElementById('imports-preview-filename');
     const previewSummary  = document.getElementById('imports-preview-summary');
@@ -125,6 +128,7 @@
 
     function showUploading(name) {
         dropzone.hidden = true;
+        if (sourceHint) sourceHint.hidden = true;
         previewPanel.hidden = true;
         statusPanel.hidden = false;
         statusActions.hidden = true;
@@ -356,6 +360,7 @@
         confirmBtn.hidden = false;
         confirmBtn.disabled = false;
         dropzone.hidden = false;
+        if (sourceHint) sourceHint.hidden = false;
     }
 
     // -----------------------------------------------------------------------

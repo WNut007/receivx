@@ -29,8 +29,14 @@ public class PoImportReader : IPoImportReader
     /// <summary>
     /// Headers that MUST be present in the sheet. Anything else is optional —
     /// missing optional headers just leave the corresponding row fields null.
+    ///
+    /// <para><c>internal</c> rather than <c>private</c> so
+    /// <see cref="PoImportTemplateBuilder"/> can mark the required columns of
+    /// the downloadable template from this exact array. A second copy of the
+    /// four names would be the stale-static-template problem in a smaller
+    /// box.</para>
     /// </summary>
-    private static readonly string[] RequiredHeaders = new[]
+    internal static readonly string[] RequiredHeaders = new[]
     {
         "PULL SHEET ID / PRS NO",
         "SKU",
