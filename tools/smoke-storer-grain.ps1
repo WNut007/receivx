@@ -331,9 +331,38 @@ INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, D
 VALUES (NEWID(), '$poBId', 3, 'SG-SKU-3', 'other storer line', 200, 0, 'COI-84600');
 "@ | Out-Null
 
-$orphanRec = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -WebSession $sv -ContentType 'application/json' `
-    -Body (@{ pullItemId=$itemOrphan; hourOfDay=9; qty=30; varianceAccepted=$false; note='fallback smoke' } | ConvertTo-Json)
-if ($orphanRec.totalQty -ne 30) { Fail "fallback receive totalQty=$($orphanRec.totalQty), expected 30" }
+$fallbackBroken = @'
+THE VENDOR FILTER HAS BEEN MADE UNCONDITIONAL, AND LIVE ITEMS ARE NOW UNRECEIVABLE.
+
+A pull item whose storer has no open PO line of its own must fall back to the whole
+SKU pool and receive exactly as it did before storer grain. It cannot receive at all
+right now.
+
+593 open pull items on the dev DB are in this state (516 pulls, 39 storers, real ERP
+codes: 5732, WIPBP3, 70262, HSABP3 ...). Making the filter unconditional refuses every
+one of them with "Insufficient PO capacity. Need N, have 0" — turning working receives
+into a dead end, which is the opposite of leaving historical data alone (§4.3).
+
+The two conditions in ReadOpenPoLinesAsync are BOTH load-bearing:
+  1. the item carries a VendorCode, AND
+  2. that storer actually has a candidate line (AnyVendorMatchedLineAsync)
+
+Dropping (2) is the "simplification" this case exists to stop. If the intent is to
+enforce the boundary everywhere, the 593 items need their own purchase orders first —
+see docs/defect-storer-without-po-line.md, which carries the query and the procurement
+question that has to be answered before this behaviour may change.
+'@
+
+try {
+    $orphanRec = Invoke-RestMethod -Uri "$base/api/receipts" -Method POST -WebSession $sv -ContentType 'application/json' `
+        -Body (@{ pullItemId=$itemOrphan; hourOfDay=9; qty=30; varianceAccepted=$false; note='fallback smoke' } | ConvertTo-Json)
+} catch {
+    $detail = $_.ErrorDetails.Message
+    Fail "$fallbackBroken`n  Server said: $detail"
+}
+if ($orphanRec.totalQty -ne 30) {
+    Fail "$fallbackBroken`n  Receive returned totalQty=$($orphanRec.totalQty), expected 30."
+}
 OK 'storer with no line of its own falls back to the SKU pool — receivable, exactly as before the change'
 
 # ---------------------------------------------------------------------------
