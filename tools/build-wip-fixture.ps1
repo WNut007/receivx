@@ -130,7 +130,29 @@ foreach ($r in $rounds) {
 Write-Fixture 'po-import-wip-rounds.xlsx' $roundRows
 
 # ---------------------------------------------------------------------------
-# 3-5. Guard rails (§4.1). Each has ZERO occurrences in production; the point
+# 3. Overflow pair. Two WIP sheets sharing a storer code AND a SKU, so each
+#    gets its own synthesised pull + PO carrying an open line for the same
+#    (vendor, item, warehouse).
+#
+#    That is precisely what variance overflow needs: ReadOpenPoLinesAsync
+#    anchors on the pull-linked PO line's VendorCode (the prefixed form — it
+#    deliberately does NOT fall back to PullItems.VendorCode) and then widens
+#    to other open lines matching that vendor + item, pull-linked first. So an
+#    over-receipt of 150 against WIPTEST-0006's window of 100 takes 100 from
+#    its own PO and spills 50 onto WIPTEST-0007's line.
+#
+#    Quantities are deliberately unequal (100 vs 500) so the allocation split
+#    can only come out one way.
+# ---------------------------------------------------------------------------
+Write-Fixture 'po-import-wip-overflow.xlsx' @(
+    @{ Pull='WIPTEST-0006'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
+       Sku='WIPSKU-OF'; Desc='overflow target'; Qty=100; Round='07:00'; Pallet='B0000000OF1'; SrcPo='' },
+    @{ Pull='WIPTEST-0007'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
+       Sku='WIPSKU-OF'; Desc='overflow source'; Qty=500; Round='07:00'; Pallet='B0000000OF2'; SrcPo='' }
+)
+
+# ---------------------------------------------------------------------------
+# 4-6. Guard rails (§4.1). Each has ZERO occurrences in production; the point
 #      is that if one ever appears a human looks at it instead of the importer
 #      guessing a merge rule.
 # ---------------------------------------------------------------------------

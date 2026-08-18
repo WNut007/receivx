@@ -715,6 +715,17 @@ transaction — pull, items, windows and PO commit or roll back together.
     silently accepted here — though never reachable from the product, because
     `receiving.js:752` clamped every pull to outstanding regardless of the
     lock.
+  - **WIP-synthesised pulls are created with `LockHourCap = false`** (the PO
+    import's WIP path, `WipSynthesisWriter.InsertPullAsync`). Everything else
+    on those pulls follows `ErpUpsertService` — status `pending`,
+    `LockPoByPull = 1` — but the cap is the one value the importer genuinely
+    chooses rather than inherits: `ErpUpsertService` hard-codes `true` on
+    every ERP-fed pull as a blanket default, and a synthesised window's
+    `ExpectedQty` is a summed `OPEN QTY` from a planning spreadsheet, not a
+    counted quantity. Strict would leave WIP goods receivable short but never
+    over, on goods where over-delivery is the norm — the tick cannot override
+    a strict cap. **Do not "restore symmetry" by flipping this to true**;
+    `smoke-wip-pull-synthesis.ps1` §2 and §6b fail if it moves.
   - **A short close is unaffected by the lock on both settings.** A cap
     constrains how much may arrive, not how little.
   - `smoke-hourcap-6.2.ps1` case 7 asserts the pre-db/047 loose-pull

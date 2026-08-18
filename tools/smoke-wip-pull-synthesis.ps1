@@ -18,8 +18,10 @@
 #   3. End-to-end receive against a synthesised pull — the test that proves
 #      the feature: FIFO finds the synthetic PO line under LockPoByPull,
 #      PurchaseOrderLines.ReceivedQty updates, the window fills
-#   4. Variance short-close with a reason code closes the line; the strict
-#      hour cap a synthesised pull inherits refuses an over-receipt (409)
+#   4. Both variance directions, because both happen on these goods:
+#      a short close with a reason code, and an over-receipt with the tick +
+#      a reason code allocating 100 pull-linked + 50 into overflow on another
+#      open line for the same vendor. Unticked over-receipt still 400s.
 #   5. Non-WIP sheets in the same file are unaffected — PO with per-row
 #      lines, no pull
 #   6. Mixed WIP/non-WIP sheet → validation error, nothing committed
@@ -182,8 +184,17 @@ FROM dbo.Pulls p WHERE p.PullNumber = 'WIPTEST-0001';
     $parts = $pullRow.Trim() -split '\|'
     $pullId = $parts[0]
     if ($parts[1] -ne 'pending')     { Fail "pull status='$($parts[1])', expected 'pending' (ErpUpsertService's default)" }
+    # LockPoByPull = 1 keeps FIFO scoped to this pull's PO — and keeps variance
+    # overflow meaningful, since overflow only widens inside lock-by-pull mode.
     if ($parts[2] -ne '1')           { Fail "LockPoByPull=$($parts[2]), expected 1" }
-    if ($parts[3] -ne '1')           { Fail "LockHourCap=$($parts[3]), expected 1" }
+    # LockHourCap = 0 on purpose, and NOT copied from the ETL's blanket true.
+    # A synthesised window's ExpectedQty is a summed OPEN QTY out of a planning
+    # file, not a counted quantity; with the cap strict an over-receipt is
+    # refused outright and the accept-variance tick cannot override it (§7.1),
+    # which would leave WIP goods receivable short but never over. If this ever
+    # flips back to 1, the two over-receive cases below start failing — that is
+    # the intended alarm, not incidental coupling.
+    if ($parts[3] -ne '0')           { Fail "LockHourCap=$($parts[3]), expected 0 — WIP pulls must be able to take an over-receipt" }
     if ($parts[4] -ne 'po-import')   { Fail "Origin='$($parts[4])', expected 'po-import'" }
 
     $itemCount = [int](SqlScalar "SET NOCOUNT ON; SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.PullItems WHERE PullId='$pullId';")
@@ -205,7 +216,7 @@ SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.PullItemWindows w
   INNER JOIN dbo.PullItems pi ON pi.Id = w.PullItemId WHERE pi.PullId = '$pullId';
 "@)
     if ($winCount -ne 3) { Fail "windows=$winCount, expected 3" }
-    OK "pull pending/locked/locked, Origin=po-import, 3 items, 3 windows, 9-row SKU summed to 900"
+    OK "pull pending · LockPoByPull=1 · LockHourCap=0 · Origin=po-import · 3 items · 3 windows · 9-row SKU summed to 900"
 
     # ------------------------------------------------------------------
     Step "3. Assertion 2 + 12 — synthetic PO, grouped lines, vendor format on both sides"
@@ -278,22 +289,10 @@ WHERE pi.Id = '$itemB' AND w.HourOfDay = 8;
     OK "received 250/250 — FIFO found the synthetic PO line under LockPoByPull, both caches updated"
 
     # ------------------------------------------------------------------
-    Step "6. Assertion 4 — variance close, and the strict hour cap a synthesised pull inherits"
+    Step "6. Assertion 4a — short close with a reason code"
     $itemC = ItemId 'WIPTEST-0001' 'WIPSKU-C'
 
-    # A synthesised pull carries LockHourCap = 1 (ErpUpsertService's default,
-    # matched deliberately). Per the §7.1 invariant the tick does NOT buy a
-    # way past a strict hour cap, so an over-receipt is refused outright —
-    # variance overflow is unreachable on these pulls by construction.
-    $overStatus = 0
-    try {
-        Receive $sup $itemC 19 60 $true 'OVER_DELIVERY' 'smoke: over-receive attempt' | Out-Null
-    } catch {
-        $overStatus = [int]$_.Exception.Response.StatusCode
-    }
-    if ($overStatus -ne 409) { Fail "over-receive on a strict-hour-cap pull returned $overStatus, expected 409" }
-
-    # A short close is unaffected by the lock on either setting: a cap
+    # A short close is unaffected by the hour-cap setting either way: a cap
     # constrains how much may arrive, not how little.
     $short = Receive $sup $itemC 19 30 $true 'SHORT_DELIVERY' 'smoke: short close on synthesised pull'
     if ($short.totalQty -ne 30) { Fail "short close totalQty=$($short.totalQty), expected 30" }
@@ -307,7 +306,81 @@ FROM dbo.PullItemWindows w WHERE w.PullItemId = '$itemC' AND w.HourOfDay = 19;
     if ($winC -ne '30/1/SHORT_DELIVERY') {
         Fail "window after short close = '$winC', expected '30/1/SHORT_DELIVERY'"
     }
-    OK "over-receive refused 409 (strict hour cap) · short close 30/40 recorded with SHORT_DELIVERY, line closed"
+    OK "short close 30/40 recorded with SHORT_DELIVERY, line closed"
+
+    # ------------------------------------------------------------------
+    Step "6b. Assertion 4b — over-receipt with variance ticked, allocating into overflow"
+    # The case the feature exists for: over-delivery is the norm on these
+    # goods. Two WIP sheets share a storer code and a SKU, so each gets its own
+    # synthesised pull + PO with an open line for the same (vendor, item,
+    # warehouse) — the shape variance overflow widens into.
+    $ov = Upload $sup 'po-import-wip-overflow.xlsx'
+    if ($ov.status -ne 'validated')   { Fail "overflow fixture status='$($ov.status)'" }
+    if ($ov.wip.pullCount -ne 2)      { Fail "overflow fixture wip.pullCount=$($ov.wip.pullCount), expected 2" }
+    ConfirmAndWait $sup $ov.runId 'overflow' | Out-Null
+
+    $itemOf = ItemId 'WIPTEST-0006' 'WIPSKU-OF'
+    if (-not $itemOf) { Fail "WIPSKU-OF pull item not found on WIPTEST-0006" }
+
+    # Loose does NOT mean unchecked. Per the db/047 amendment an over-receipt
+    # on a loose pull still requires the operator's explicit tick; without it
+    # the server refuses with 400 OVER_RECEIPT_NOT_ACCEPTED rather than
+    # silently recording the larger figure.
+    $unticked = 0
+    $untickedCode = ''
+    try {
+        Receive $sup $itemOf 7 150 $false $null 'smoke: over-receive without the tick' | Out-Null
+    } catch {
+        $unticked = [int]$_.Exception.Response.StatusCode
+        # PowerShell 7 surfaces the body on ErrorDetails, not through the
+        # response stream (which is already consumed by then).
+        if ($_.ErrorDetails.Message -match 'OVER_RECEIPT_NOT_ACCEPTED') {
+            $untickedCode = 'OVER_RECEIPT_NOT_ACCEPTED'
+        }
+    }
+    if ($unticked -ne 400) { Fail "unticked over-receipt returned $unticked, expected 400 (loose pull still needs the tick)" }
+    if ($untickedCode -ne 'OVER_RECEIPT_NOT_ACCEPTED') { Fail "unticked over-receipt did not carry OVER_RECEIPT_NOT_ACCEPTED" }
+
+    # Ticked + reason code: 150 against a window of 100. 100 comes off this
+    # pull's own PO line, 50 overflows onto WIPTEST-0007's line for the same
+    # vendor + item. Every unit still lands on a real PO line.
+    $over = Receive $sup $itemOf 7 150 $true 'OVER_DELIVERY' 'smoke: over-receive with the tick'
+    if ($over.totalQty -ne 150) { Fail "over-receive totalQty=$($over.totalQty), expected 150" }
+
+    $linked   = @($over.allocations | Where-Object { $_.isPullLinked -eq $true })
+    $overflow = @($over.allocations | Where-Object { $_.isPullLinked -eq $false })
+    if ($linked.Count -lt 1)   { Fail "no pull-linked allocation — FIFO did not consume the synthetic PO line first" }
+    if ($overflow.Count -lt 1) { Fail "no overflow allocation — the extra 50 did not reach the other open PO line" }
+    $linkedQty   = ($linked   | Measure-Object -Property qty -Sum).Sum
+    $overflowQty = ($overflow | Measure-Object -Property qty -Sum).Sum
+    if ($linkedQty -ne 100)   { Fail "pull-linked allocation=$linkedQty, expected 100 (the line's full OrderedQty)" }
+    if ($overflowQty -ne 50)  { Fail "overflow allocation=$overflowQty, expected 50" }
+
+    $polOwn = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(pol.ReceivedQty AS VARCHAR) FROM dbo.PurchaseOrderLines pol
+  INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+WHERE po.PoNumber = 'WIPTEST-0006' AND pol.ItemCode = 'WIPSKU-OF';
+"@
+    $polOther = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(pol.ReceivedQty AS VARCHAR) FROM dbo.PurchaseOrderLines pol
+  INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+WHERE po.PoNumber = 'WIPTEST-0007' AND pol.ItemCode = 'WIPSKU-OF';
+"@
+    if ($polOwn -ne '100')  { Fail "WIPTEST-0006 PO line ReceivedQty=$polOwn, expected 100" }
+    if ($polOther -ne '50') { Fail "WIPTEST-0007 PO line ReceivedQty=$polOther, expected 50 — overflow did not land" }
+
+    $winOf = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(w.ExpectedQty AS VARCHAR) + '/' + CAST(w.ReceivedQty AS VARCHAR)
+     + '/' + CAST(w.IsClosed AS VARCHAR) + '/' + ISNULL(w.VarianceReasonCode,'(null)')
+FROM dbo.PullItemWindows w WHERE w.PullItemId = '$itemOf' AND w.HourOfDay = 7;
+"@
+    if ($winOf -ne '100/150/1/OVER_DELIVERY') {
+        Fail "window after over-receive = '$winOf', expected '100/150/1/OVER_DELIVERY'"
+    }
+    OK "over-receive 150/100 accepted on the tick: 100 pull-linked + 50 overflow, both PO lines updated, line closed with OVER_DELIVERY"
 
     # ------------------------------------------------------------------
     Step "7. Assertions 6-8 — guard rails reject the file and commit nothing"
@@ -480,10 +553,20 @@ WHERE ActionType = 'pull-synthesized' AND EntityId = 'WIPTEST-0001';
     # line carrying live ReceivedQty behind it, silently. The takeover is
     # deliberately NOT blocked; what was missing was the trail.
     #
-    # The live ETL needs the ERP host (unreachable without VPN, and 10.7 skips
-    # for the same reason), so this covers what can be covered locally: the
-    # source wiring, and — the part a compile cannot prove — that the
+    # UNVERIFIED END-TO-END, ON PURPOSE. The live path needs an ETL run
+    # against the ERP host at 103.13.229.21, which is unreachable without VPN
+    # — smoke-phase-10-7 skips for the same reason. What is covered here is
+    # the source wiring plus, the part a compile cannot prove, that the
     # ReceivedQty lookup is valid SQL against the real schema.
+    #
+    # What would actually verify it, from a machine that can reach the ERP:
+    #   1. Synthesise a WIP pull from a fixture import (steps 1-3 above).
+    #   2. Point a sync at a source whose feed carries that PullNumber but
+    #      OMITS one of its SKUs — the omission is what triggers the cancel.
+    #   3. Trigger the sync (POST /api/admin/erp-sync/trigger).
+    #   4. Expect: the item flips to Status='canceled', its PO line keeps its
+    #      ReceivedQty, and dbo.AuditLog carries one 'etl-cancel-synth' row
+    #      naming the pull, the item, and that surviving quantity.
     $upsertSrc = Get-Content -Raw (Join-Path $repoRoot 'src\ReceivingOps.Web\Services\ErpSync\ErpUpsertService.cs')
     foreach ($token in 'SELECT Id, Status, WarehouseId, Origin', 'etl-cancel-synth', 'OriginPoImport') {
         if ($upsertSrc -notmatch [regex]::Escape($token)) {

@@ -140,20 +140,47 @@ public static class WipSynthesisWriter
         IDbConnection conn, IDbTransaction tx, WipPullPlan plan,
         Guid warehouseId, Guid? createdBy, CancellationToken ct)
     {
-        // Defaults deliberately copied from ErpUpsertService.InsertPullAsync —
-        // status 'pending', LockPoByPull = 1, LockHourCap = 1 — so a
-        // synthesised pull behaves exactly like an ERP-fed one on the
-        // receiving console. The one deviation is CreatedBy: the ETL writes
-        // NULL because it has no signed-in user, whereas an import always
-        // has the uploader, and attributing the row is strictly better than
-        // a NULL that means "we could not say".
+        // Status 'pending' and LockPoByPull = 1 follow
+        // ErpUpsertService.InsertPullAsync, so a synthesised pull behaves like
+        // an ERP-fed one on the receiving console and FIFO stays scoped to
+        // this pull's PO (which it resolves through either PullId or
+        // PullExternalRef, both set below).
+        //
+        // LockHourCap = 0 — DELIBERATELY NOT the ETL's value.
+        //
+        // ErpUpsertService hard-codes LockHourCap = 1 on every pull it
+        // creates. That is a blanket default applied to thousands of rows, not
+        // a judgement about any one of them. These pulls we build ourselves,
+        // so this is the first time the value is genuinely chosen, and the
+        // honest answer is different: a synthesised window's ExpectedQty is a
+        // SUM of OPEN QTY out of a planning spreadsheet, not a counted
+        // quantity anybody stood in front of. Pinning receipts to it exactly
+        // has nothing behind it.
+        //
+        // The consequence matters more than the reasoning. With the cap strict
+        // (§7.1) an over-receipt is refused outright and the accept-variance
+        // tick does NOT override it — so a WIP pull could be received short
+        // but never over, on goods where over-delivery is the norm. Building
+        // the pull only to refuse the quantity that actually arrived would fix
+        // "nothing to receive against" by shipping "can receive, but not the
+        // real amount".
+        //
+        // Loose does not mean unchecked: per db/047 an over-receipt here still
+        // requires the operator's explicit tick (untick → 400
+        // OVER_RECEIPT_NOT_ACCEPTED) plus a reason code, and the PO cap
+        // remains the hard limit — overflow lands the extra units on another
+        // open PO line for the same vendor rather than inventing capacity.
+        //
+        // CreatedBy also deviates from the ETL: it writes NULL because it has
+        // no signed-in user, whereas an import always has the uploader, and
+        // attributing the row beats a NULL that means "we could not say".
         return conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
             INSERT INTO dbo.Pulls
                    (Id, PullNumber, WarehouseId, PullDate, Status,
                     LockPoByPull, LockHourCap, CreatedBy, Origin)
             OUTPUT INSERTED.Id
             VALUES (NEWID(), @PullNumber, @WarehouseId, @PullDate, 'pending',
-                    1, 1, @CreatedBy, @Origin);",
+                    1, 0, @CreatedBy, @Origin);",
             new
             {
                 plan.PullNumber,
