@@ -120,7 +120,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # close, CLOSE PULL SHEET disabled). FOUR remain hand-run —
         # smoke-variance-section8 / -preview-confirm-agreement / -reopen, and
         # smoke-hourcap-6.2's 7a/7b split — see db/047_STATUS.md.
-        'smoke-po-overflow-variance.ps1'
+        'smoke-over-receipt-own-po.ps1'
         'smoke-variance-outstanding-queries.ps1'
         'smoke-variance-reason.ps1'          # db/049
     )

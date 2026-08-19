@@ -128,6 +128,26 @@ VALUES (@po, 1, '$ITEM', 'VRC anchor line', $ordered, 0, '$VENDOR', 'Western Dig
 "@ | Out-Null
 }
 
+# Same anchor, N lines of $perLine. An over-receipt stays on the pull's own PO, so this
+# is the only way a receive splits into more than one slice on a lock-by-pull pull —
+# case 10 needs a multi-slice allocation to prove the reason code is not duplicated.
+function SeedAnchorPoLines($lineCount, $perLine) {
+    $values = (1..$lineCount | ForEach-Object {
+        "(@po, $_, '$ITEM', 'VRC anchor line $_', $perLine, 0, '$VENDOR', 'Western Digital')"
+    }) -join ",`n"
+    Sql @"
+SET NOCOUNT ON; SET QUOTED_IDENTIFIER ON;
+DECLARE @po UNIQUEIDENTIFIER = NEWID();
+INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, Status, PullExternalRef, CreatedBy)
+VALUES (@po, '$SEED_PO', '$WH_BPI', CAST(DATEADD(day,-30,SYSUTCDATETIME()) AS DATE), 'open', '$PULL_NO',
+        '11111111-1111-1111-1111-000000000001');
+INSERT INTO dbo.PurchaseOrderLines
+    (PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName)
+VALUES
+$values;
+"@ | Out-Null
+}
+
 function Login {
     $body = @{ username='sadmin'; password='admin'; warehouseId=$WH_BPI; remember=$false } | ConvertTo-Json
     $sv = $null
@@ -315,10 +335,12 @@ OK "zero close: no ledger row, code is the sole structured record"
 
 # ---------------------------------------------------------------------------
 Step '10. Multi-slice over-receipt + code -> code stored ONCE on the window'
-# 401 against a 400 anchor spills onto the shared vendor pool -> two receipt rows. The
-# code is window-grain, so it must appear once regardless of how many rows the FIFO walk
-# wrote. This is exactly the duplication that made a receipt-grain column the wrong shape.
-Cleanup; SeedAnchorPo 400
+# RE-SEEDED for brief-over-receipt-own-po. This used to receive 401 against a single
+# 400 anchor and rely on the spill onto the shared vendor pool for its second row. An
+# over-receipt no longer leaves the pull's own PO, so the multi-slice shape now comes
+# from two lines of that PO — which is what the case was always about: the code is
+# window-grain and must appear once however many rows the FIFO walk wrote.
+Cleanup; SeedAnchorPoLines 2 200
 $r10 = Receive $sv $pi 401 $true $null 'COUNT_MISMATCH'
 if ($r10.allocations.Count -ne 2) { Fail "expected 2 slices, got $($r10.allocations.Count)" }
 $w10 = Win $pi
@@ -330,15 +352,19 @@ SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.PullItemWindows
 WHERE PullItemId='$pi' AND VarianceReasonCode IS NOT NULL;
 "@
 if ($codeRows -ne '1') { Fail "the code should exist on exactly 1 window row, got $codeRows" }
-OK "2 receipt rows, 1 window, 1 code — no per-slice duplication to orphan later"
+# Both slices are the pull's own; the second carries the 1-pc excess past its OrderedQty.
+if ($r10.allocations[1].overReceivedQty -ne 1) { Fail "the last slice should report overReceivedQty 1, got $($r10.allocations[1].overReceivedQty)" }
+OK '2 receipt rows on the pull own PO, 1 window, 1 code — no per-slice duplication to orphan later'
 
 # ---------------------------------------------------------------------------
 Step '11. Cancel a slice -> code cleared alongside ClosedBy/ClosedAt/ClosedReason'
 # §4.4. A reopened window carrying a stale code is the same defect class as the orphaned
 # VarianceQty fixed in 7c15ef9: the window would still claim a decision that no longer
-# holds. Cancelling the OVERFLOW slice (not the carrier) is the harder direction.
-$slice2 = $r10.allocations | Where-Object { $_.isPullLinked -eq $false } | Select-Object -First 1
-if (-not $slice2) { Fail "case 11 precondition: no overflow slice to cancel" }
+# holds. Cancelling the NON-CARRIER slice (the second, whose VarianceQty is NULL) is the
+# harder direction — it used to be identified as the overflow slice by isPullLinked,
+# which is gone along with the spill it described.
+$slice2 = $r10.allocations[1]
+if (-not $slice2) { Fail "case 11 precondition: no second slice to cancel" }
 Invoke-RestMethod -Uri "$base/api/receipts/$($slice2.receiptId)/cancel" -Method POST `
     -Body (@{ reason='miscount'; note='smoke: reverse overflow slice' } | ConvertTo-Json) `
     -ContentType 'application/json' -WebSession $sv | Out-Null

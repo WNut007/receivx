@@ -171,147 +171,261 @@ public class ReceiptService : IReceiptService
                 Scope            = pullCtx.LockPoByPull ? "pull-locked" : "warehouse-wide",
             };
 
-        // §6.1 — preview must widen on exactly the same condition confirm does, or the
-        // modal shows a failure the server would not have raised and the Confirm button
-        // stays disabled on a receive that would have succeeded.
-        var openLines = (await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false,
-                                                    pullCtx,
-                                                    varianceAccepted: previewVariance,
-                                                    allowOverflow: previewVariance, ct)).AsList();
+        // §6.1 — preview must apply exactly the same rule confirm does, or the modal shows
+        // a failure the server would not have raised and the Confirm button stays disabled
+        // on a receive that would have succeeded.
+        var lineSet = await ReadOpenPoLinesAsync(conn, transaction: null, withLocks: false, pullCtx, ct);
+        var openLines = lineSet.Lines;
 
         if (pullCtx.LockPoByPull && openLines.Count == 0)
             throw new BusinessException(
                 "No PO linked to this pull. Procurement must link a PO before receiving.");
 
         var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
-        if (totalAvailable < qty)
-            throw new BusinessException(await BuildCapacityMessageAsync(
-                conn, transaction: null, pullCtx, qty, totalAvailable, previewVariance, ct));
+        var overage = ResolveOverage(pullCtx, openLines, lineSet.VendorScoped,
+                                     qty, totalAvailable, previewVariance);
 
-        var plan = BuildAllocationPlan(openLines, qty);
+        var plan = BuildAllocationPlan(openLines, qty, overage);
+        AssertPlanIsSane(plan, qty, pullCtx, lineSet.VendorScoped);
 
         return new ReceivePreviewResult
         {
-            Allocations      = plan,
+            Allocations = plan.Select(p => new AllocationResult
+            {
+                PurchaseOrderId     = p.Line.PurchaseOrderId,
+                PoNumber            = p.Line.PoNumber,
+                PurchaseOrderLineId = p.Line.PurchaseOrderLineId,
+                PoLineNumber        = p.Line.LineNumber,
+                Qty                 = p.Take,
+                // §4.5 — the operator ticking variance on 501 against 500 should see that
+                // the extra unit lands on this pull's own PO line, stated plainly. Over-
+                // delivery is the norm at this site, so it is a figure, not a warning.
+                OverReceivedQty     = Math.Max(0, p.Line.ReceivedQty + p.Take - p.Line.OrderedQty),
+                // ReceiptId stays Guid.Empty for preview — no row inserted.
+            }).ToList(),
             TotalAllocatable = totalAvailable,
             Shortage         = 0,
-            Scope            = ScopeLabel(pullCtx, plan.Any(a => !a.IsPullLinked), "warehouse-wide"),
+            Scope            = ScopeLabel(pullCtx, "warehouse-wide"),
         };
     }
 
-    // §5.2 — the capacity refusal states a remedy, not just a fact. The old text
-    // ("Insufficient PO capacity. Need 401, have 400 pcs.") was a dead end: true, and no
-    // help. Which sentence the operator gets depends on whether widening is available to
-    // them, so the message is composed from the mode rather than templated once.
-    //
-    // No PO numbers appear here. The allocation preview already shows them, but a refusal
-    // is not an allocation and has no reason to name POs this pull is not linked to.
-    private async Task<string> BuildCapacityMessageAsync(
-        System.Data.IDbConnection conn,
-        System.Data.IDbTransaction? transaction,
+    /// <summary>
+    /// How much of <paramref name="qty"/> exceeds what the candidate lines can absorb, once
+    /// the excess has been authorised. Zero when the quantity fits.
+    ///
+    /// <para>Without the variance tick an over-capacity request is refused exactly as
+    /// before, same message. With it, <see cref="ResolveOverageLine"/> decides whether the
+    /// excess may be recorded at all and throws the actionable refusal if not.</para>
+    /// </summary>
+    private static int ResolveOverage(
         PullItemContext pullCtx,
+        IReadOnlyList<PoLineAvailability> openLines,
+        bool vendorScoped,
         int qty,
         int totalAvailable,
-        bool variance,
-        CancellationToken ct)
+        bool variance)
     {
-        // Mode A is already warehouse-wide — there is nothing wider left to offer.
-        if (!pullCtx.LockPoByPull)
-            return $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.";
+        if (totalAvailable >= qty) return 0;
 
-        if (variance)
-            return $"Insufficient PO capacity. Need {qty} pcs; only {totalAvailable} pcs remain across all " +
-                   $"open POs for this vendor and item at this warehouse. " +
-                   $"Procurement must open or link another PO.";
+        // Not ticked — unchanged refusal, unchanged message.
+        //
+        // Mode A is also unchanged and still refuses here. The over-receipt rule is scoped
+        // to lock-by-pull, where "the pull's own PO line" is a set the code can name; Mode A
+        // is warehouse-wide FIFO and has no such line. 173 of 12,605 open pulls are Mode A.
+        // OPEN ITEM, deferred rather than decided: whether over-receipt should reach them at
+        // all is a question for the warehouse, not a gap to be closed by inference here.
+        if (!variance || !pullCtx.LockPoByPull)
+            throw new BusinessException(
+                $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.");
 
-        // Not ticked. Only advertise the tick when it would actually have covered the
-        // quantity — pointing at a remedy that still fails is worse than the bare fact.
-        // Error-message path: ask the same question the walk would ask, so the
-        // advice offered matches what a retry would actually do.
-        var msgVendorScoped = !string.IsNullOrWhiteSpace(pullCtx.VendorCode)
-            && await AnyVendorMatchedLineAsync(conn, transaction, withLocks: false, pullCtx, ct);
-        var anchor = await ReadPullVendorAnchorAsync(
-            conn, transaction, withLocks: false, pullCtx, msgVendorScoped, ct);
-        if (anchor is not null)
-        {
-            var wide = await ReadVendorWideAvailableAsync(conn, transaction, pullCtx, anchor, ct);
-            if (wide >= qty)
-                return $"The PO linked to this pull has {totalAvailable} pcs left, short of the {qty} pcs entered. " +
-                       $"Tick 'accept variance' to draw the remaining {qty - totalAvailable} pcs from other " +
-                       $"open POs for the same vendor.";
-        }
+        // No line to put anything on — unchanged refusal (brief §4.2 case 2).
+        if (openLines.Count == 0)
+            throw new BusinessException(
+                "No PO linked to this pull. Procurement must link a PO before receiving.");
 
-        return $"Insufficient PO capacity. Need {qty}, have {totalAvailable} pcs.";
+        ResolveOverageLine(pullCtx, openLines, vendorScoped, qty, totalAvailable);
+        return qty - totalAvailable;
     }
 
-    // Total open capacity for the anchored vendor across this item + warehouse.
-    // Deliberately lock-free: it runs only on a refusal path, to compose an error string,
-    // inside a transaction that is about to roll back.
-    private static async Task<int> ReadVendorWideAvailableAsync(
-        System.Data.IDbConnection conn,
-        System.Data.IDbTransaction? transaction,
-        PullItemContext pullCtx,
-        string vendorAnchor,
-        CancellationToken ct)
-        => await conn.ExecuteScalarAsync<int>(new CommandDefinition(@"
-            SELECT ISNULL(SUM(pol.OrderedQty - pol.ReceivedQty), 0)
-            FROM   dbo.PurchaseOrderLines pol
-            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
-            WHERE  po.WarehouseId = @WarehouseId
-              AND  po.Status      = 'open'
-              AND  pol.ItemCode   = @ItemCode
-              AND  pol.OrderedQty > pol.ReceivedQty
-              AND  pol.VendorCode = @VendorAnchor;",
-            new
-            {
-                pullCtx.WarehouseId,
-                pullCtx.ItemCode,
-                VendorAnchor = vendorAnchor,
-            },
-            transaction: transaction,
-            cancellationToken: ct));
-
-    // §5.1 — three states, decided from the plan that was actually built and never from
-    // the request flag. A 401-unit receive against a pull PO that happened to have 500
-    // remaining is not an overflow, and labelling it as one would make the audit trail
-    // lie in the direction of alarm.
+    // §5.1 — two states. The third ("pull-locked + variance overflow") went with the
+    // overflow walk: a receive can no longer draw on a PO this pull is not linked to, so
+    // there is no widened state left to label.
     //
     // modeALabel differs by surface and that is deliberate: the audit message has always
     // read "warehouse-wide FIFO" while the preview's wire value has always read
     // "warehouse-wide". Both are asserted by existing smokes (phase-4b and phase-4a), so
     // the difference is preserved rather than tidied into one string.
-    private static string ScopeLabel(PullItemContext pullCtx, bool overflowed, string modeALabel)
-        => !pullCtx.LockPoByPull ? modeALabel
-         : overflowed            ? "pull-locked + variance overflow"
-         :                         "pull-locked";
+    private static string ScopeLabel(PullItemContext pullCtx, string modeALabel)
+        => pullCtx.LockPoByPull ? "pull-locked" : modeALabel;
 
     // ----- helpers shared by Preview (no locks) and Receive (UPDLOCK + HOLDLOCK in 4b) -----
 
-    private static List<AllocationResult> BuildAllocationPlan(IReadOnlyList<PoLineAvailability> lines, int qty)
+    /// <summary>
+    /// May the excess be recorded, and on which line? Returns the line that absorbs it.
+    /// Throws the refusal the operator should act on when it may not.
+    ///
+    /// <para><b>The overage lands on a line belonging to the pull item's own storer, or it
+    /// is refused.</b> There is no fallback to the shared pool on this path. Allocation
+    /// WITHIN capacity is unchanged and still falls back (see
+    /// <see cref="AnyVendorMatchedLineAsync"/>) — that fallback exists so the storer-
+    /// without-a-PO-line population stays receivable, and it still does. What must not
+    /// fall back is pushing a line PAST its OrderedQty: that is a claim that a specific
+    /// supplier over-delivered, and making it against a storer who did not deliver the
+    /// goods is the mis-allocation fa8a0e2 removed, re-entered through a different door.
+    /// Receiving across storers is not acceptable, confirmed directly with the warehouse.</para>
+    ///
+    /// <para>Measured on the dev DB, 2026-08-19, items on open pulls: 35,284 carry a storer
+    /// that has a candidate line and are unaffected; 629 have a storer whose line is absent
+    /// while other storers' lines exist — those are the ones this refuses, and they are the
+    /// live counterpart of the 593 recorded in <c>docs/defect-storer-without-po-line.md</c>;
+    /// 2,943 carry no storer at all; 12,152 have no open line for the SKU at all and were
+    /// already refused before this change.</para>
+    /// </summary>
+    private static PoLineAvailability ResolveOverageLine(
+        PullItemContext pullCtx,
+        IReadOnlyList<PoLineAvailability> openLines,
+        bool vendorScoped,
+        int qty,
+        int totalAvailable)
     {
-        var allocations = new List<AllocationResult>();
-        var remaining = qty;
+        var excess = qty - totalAvailable;
+
+        // No storer on the pull item. These are historical rows the ERP merged before it
+        // grained by (SKU, storer), plus hand-created items. There is no supplier to
+        // attribute the over-delivery to — less certainty than the fallback case, not more
+        // — so this refuses too, with its own message. Deliberately NOT the "procurement
+        // must raise a PO" text: there is no storer to raise one against, and sending
+        // someone to purchasing with nothing to ask for is worse than a plain refusal.
+        if (string.IsNullOrWhiteSpace(pullCtx.VendorCode))
+            throw new BusinessException(
+                $"Cannot record {excess} pcs beyond the {totalAvailable} pcs ordered: this line has no " +
+                "storer recorded, so an over-delivery cannot be attributed to a supplier. The line " +
+                "predates the split of pull items by storer and was merged from several. Receive up to " +
+                $"{totalAvailable} pcs, and ask planning to re-issue the line with its storer if the " +
+                "excess needs recording.",
+                "OVER_RECEIPT_NO_STORER");
+
+        // Storer known, but it has no candidate line here — the fallback walked other
+        // storers' lines to fill the order, which is allowed, and would now be asked to
+        // push one of THEM past its ordered quantity, which is not.
+        if (!vendorScoped)
+            throw new BusinessException(
+                $"Cannot record {excess} pcs beyond the {totalAvailable} pcs ordered: storer " +
+                $"{pullCtx.VendorCode} has no purchase order on this pull, and the excess cannot be " +
+                "recorded against another supplier's order. Procurement must raise a purchase order " +
+                $"for storer {pullCtx.VendorCode} before the excess can be recorded. Receiving up to " +
+                $"{totalAvailable} pcs still works in the meantime.",
+                "OVER_RECEIPT_NO_STORER_PO");
+
+        // Vendor-scoped: every candidate line belongs to the item's own storer, so the last
+        // line walked is own-storer by construction. Last-walked is the natural fall-out of
+        // the FIFO loop and is deterministic given the ORDER BY, which is what matters —
+        // openLines is ordered (OrderDate, PoNumber, LineNumber) and every line is filled
+        // before the excess exists at all.
+        return openLines[^1];
+    }
+
+    /// <summary>
+    /// FIFO walk. Fills each line to its OrderedQty in order; any <paramref name="overage"/>
+    /// is added to the LAST line walked, pushing its ReceivedQty past OrderedQty.
+    ///
+    /// <para>One implementation, used by both Preview and Receive. They previously carried
+    /// separate copies of this loop, which is precisely where a plan bug could make the two
+    /// disagree — and with the DB cap relaxed by db/051 the plan is now the only thing
+    /// deciding what gets written.</para>
+    /// </summary>
+    private static List<(PoLineAvailability Line, int Take)> BuildAllocationPlan(
+        IReadOnlyList<PoLineAvailability> lines, int qty, int overage)
+    {
+        var plan = new List<(PoLineAvailability Line, int Take)>();
+        var remaining = qty - overage;
         foreach (var line in lines)
         {
             var lineRemaining = line.OrderedQty - line.ReceivedQty;
             var take = Math.Min(lineRemaining, remaining);
             if (take > 0)
             {
-                allocations.Add(new AllocationResult
-                {
-                    PurchaseOrderId     = line.PurchaseOrderId,
-                    PoNumber            = line.PoNumber,
-                    PurchaseOrderLineId = line.PurchaseOrderLineId,
-                    PoLineNumber        = line.LineNumber,
-                    Qty                 = take,
-                    IsPullLinked        = line.IsPullLinked,
-                    // ReceiptId stays Guid.Empty for preview — no row inserted.
-                });
+                plan.Add((line, take));
                 remaining -= take;
             }
             if (remaining == 0) break;
         }
-        return allocations;
+
+        if (overage > 0)
+        {
+            // An overage exists only when every line was filled, so the plan is non-empty
+            // and its last entry is the last line walked.
+            var last = plan.Count - 1;
+            plan[last] = (plan[last].Line, plan[last].Take + overage);
+        }
+
+        return plan;
+    }
+
+    /// <summary>
+    /// Guard A — the plan is the sole author of truth once db/051 relaxes CK_POL_Caps, and
+    /// a bad plan would otherwise be written silently. This is a programming-error check,
+    /// not a user-facing one, so it throws <see cref="InvalidOperationException"/>.
+    ///
+    /// <para>The storer check is the point of it: keeping §4.3 here rather than leaving it
+    /// implied by how the candidate query happened to be built means a future edit to that
+    /// SQL cannot quietly reopen cross-storer over-receipt.</para>
+    /// </summary>
+    private static void AssertPlanIsSane(
+        IReadOnlyList<(PoLineAvailability Line, int Take)> plan,
+        int qty,
+        PullItemContext pullCtx,
+        bool vendorScoped)
+    {
+        var allocated = plan.Sum(p => p.Take);
+        if (allocated != qty)
+            throw new InvalidOperationException(
+                $"Allocation plan does not conserve quantity: allocated {allocated}, requested {qty}.");
+
+        if (plan.Any(p => p.Take <= 0))
+            throw new InvalidOperationException(
+                "Allocation plan contains a non-positive slice.");
+
+        var over = plan.Where(p => p.Line.ReceivedQty + p.Take > p.Line.OrderedQty).ToList();
+        if (over.Count > 1)
+            throw new InvalidOperationException(
+                $"Allocation plan pushes {over.Count} lines past OrderedQty; at most one may absorb the overage.");
+
+        if (over.Count == 1)
+        {
+            if (!ReferenceEquals(over[0].Line, plan[^1].Line))
+                throw new InvalidOperationException(
+                    "The over-received line is not the last line walked.");
+
+            if (!vendorScoped || string.IsNullOrWhiteSpace(pullCtx.VendorCode))
+                throw new InvalidOperationException(
+                    "An over-receipt was planned without the walk being scoped to the item's own storer (§4.3).");
+
+            if (!VendorMatches(over[0].Line.VendorCode, pullCtx.VendorCode))
+                throw new InvalidOperationException(
+                    $"The over-received line's storer ({over[0].Line.VendorCode ?? "null"}) is not the pull " +
+                    $"item's storer ({pullCtx.VendorCode}) (§4.3).");
+        }
+    }
+
+    /// <summary>
+    /// C# counterpart of <see cref="VendorMatchSql"/> — exact, or prefixed-with-a-hyphen.
+    ///
+    /// <para>Case-INSENSITIVE on purpose, mirroring the database collation
+    /// (SQL_Latin1_General_CP1_CI_AS) rather than the Ordinal rule ItemKey uses. This
+    /// verifies what the query already selected, so it must not be stricter than the query:
+    /// an Ordinal compare here would throw on a row SQL matched case-insensitively, turning
+    /// a working receive into a 500.</para>
+    /// </summary>
+    private static bool VendorMatches(string? poLineVendor, string? itemVendor)
+    {
+        if (string.IsNullOrWhiteSpace(poLineVendor) || string.IsNullOrWhiteSpace(itemVendor))
+            return false;
+        if (string.Equals(poLineVendor, itemVendor, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return poLineVendor.Length > itemVendor.Length
+            && poLineVendor.EndsWith(itemVendor, StringComparison.OrdinalIgnoreCase)
+            && poLineVendor[poLineVendor.Length - itemVendor.Length - 1] == '-';
     }
 
     // v2.1 Phase 6.2 — enforce per-hour cap when pull.LockHourCap = true.
@@ -380,23 +494,32 @@ public class ReceiptService : IReceiptService
     // over-delivered units already have purchase-order cover; it just sits on a
     // different line. This is a matching problem, not an unpurchased-goods problem,
     // so every unit still lands on a real PO line and CK_POL_Caps is never stressed.
-    private static async Task<IEnumerable<PoLineAvailability>> ReadOpenPoLinesAsync(
+    /// <summary>
+    /// The candidate PO lines for this receive, in FIFO order, plus whether the walk was
+    /// scoped to the pull item's own storer.
+    ///
+    /// <para>The overflow walk that used to widen this set to vendor+item+warehouse on the
+    /// variance tick is GONE. Under lock-by-pull the candidate set is the pull-linked lines
+    /// and nothing else, variance or not — an over-receipt now stays on those lines rather
+    /// than spilling onto another pull's purchase order.</para>
+    ///
+    /// <para><c>VendorScoped</c> travels with the lines because the over-receipt rule
+    /// depends on it: the overage may only be recorded against a line belonging to the
+    /// item's own storer, and that is exactly the condition under which this walk applied
+    /// the vendor predicate. Returning it beats re-deriving it at the call site, where it
+    /// could drift from what the query actually did.</para>
+    /// </summary>
+    private readonly record struct OpenLineSet(
+        List<PoLineAvailability> Lines,
+        bool VendorScoped);
+
+    private static async Task<OpenLineSet> ReadOpenPoLinesAsync(
         System.Data.IDbConnection conn,
         System.Data.IDbTransaction? transaction,
         bool withLocks,
         PullItemContext pullCtx,
-        bool varianceAccepted,
-        bool allowOverflow,
         CancellationToken ct)
     {
-        // §4.1 — allowOverflow may never outrun the operator's tick. A caller that widens
-        // the PO scope without variance accepted is a programming error, not a user error:
-        // fail loudly here rather than quietly draw on another pull's PO in production.
-        if (allowOverflow && !varianceAccepted)
-            throw new InvalidOperationException(
-                "ReadOpenPoLinesAsync: allowOverflow requires varianceAccepted. " +
-                "Overflow is gated on the operator's tick (§4.1).");
-
         const string pullMatch = "(po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
 
         // Storer grain — the second half of the fix, and the half that
@@ -441,27 +564,10 @@ public class ReceiptService : IReceiptService
                 conn, transaction, withLocks, pullCtx, ct);
         }
 
-        // Overflow only means anything inside lock-by-pull mode. Mode A is already
-        // warehouse-wide, and adding a vendor filter there would be a behaviour change
-        // nobody asked for (§4.1).
-        var overflow = allowOverflow && pullCtx.LockPoByPull;
-
-        string? vendorAnchor = null;
-        if (overflow)
-        {
-            vendorAnchor = await ReadPullVendorAnchorAsync(conn, transaction, withLocks, pullCtx, vendorScoped, ct);
-
-            // No anchor means no pull-linked line to take a vendor from. Do NOT widen on a
-            // guess: fall back to today's narrow scope so the caller raises the existing
-            // "No PO linked to this pull" error rather than silently draining the warehouse.
-            if (vendorAnchor is null) overflow = false;
-        }
-
         var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
         var sql = $@"
             SELECT pol.Id AS PurchaseOrderLineId, pol.PurchaseOrderId, po.PoNumber, po.OrderDate,
-                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty,
-                   CAST(CASE WHEN {pullMatch} THEN 1 ELSE 0 END AS BIT) AS IsPullLinked
+                   pol.LineNumber, pol.OrderedQty, pol.ReceivedQty, pol.VendorCode
             FROM   dbo.PurchaseOrderLines pol {hints}
             INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
             WHERE  po.WarehouseId = @WarehouseId
@@ -474,27 +580,14 @@ public class ReceiptService : IReceiptService
         // Skipped entirely when the item has no vendor (see above).
         if (vendorScoped) sql += $" AND {VendorMatchSql("pol.VendorCode", "@ItemVendorCode")}";
 
-        // The row-restricting predicate stays INSIDE the locked scan on both paths. On the
-        // normal path that keeps the UPDLOCK+HOLDLOCK range exactly as narrow as it is
-        // today (§4.2); filtering after the fact would lock the whole warehouse pool to
-        // return one line.
-        var tier = "";
-        if (pullCtx.LockPoByPull)
-        {
-            if (overflow)
-            {
-                sql += " AND pol.VendorCode = @VendorAnchor";
-                tier  = $"CASE WHEN {pullMatch} THEN 0 ELSE 1 END, ";
-            }
-            else
-            {
-                sql += $" AND {pullMatch}";
-            }
-        }
+        // The row-restricting predicate stays INSIDE the locked scan. That keeps the
+        // UPDLOCK+HOLDLOCK range exactly as narrow as the rows actually being consumed;
+        // filtering after the fact would lock the whole warehouse pool to return one line.
+        if (pullCtx.LockPoByPull) sql += $" AND {pullMatch}";
 
-        sql += $" ORDER BY {tier}po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
+        sql += " ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;";
 
-        return await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(
+        var lines = await conn.QueryAsync<PoLineAvailability>(new CommandDefinition(
             sql,
             new
             {
@@ -502,11 +595,12 @@ public class ReceiptService : IReceiptService
                 pullCtx.ItemCode,
                 pullCtx.PullId,
                 PullNumberStr = pullCtx.PullNumber,
-                VendorAnchor  = vendorAnchor,
                 ItemVendorCode = pullCtx.VendorCode,
             },
             transaction: transaction,
             cancellationToken: ct));
+
+        return new OpenLineSet(lines.AsList(), vendorScoped);
     }
 
     /// <summary>
@@ -582,64 +676,6 @@ public class ReceiptService : IReceiptService
                        AND SUBSTRING({poLineColumn}, LEN({poLineColumn}) - LEN({param}), 1) = '-')
               )";
 
-    // §4.1 — the vendor the pull is actually transacting with, taken from the pull-linked
-    // PO line(s) themselves.
-    //
-    // PullItems.VendorCode is deliberately NOT a fallback. The two columns hold different
-    // formats on live data: PurchaseOrderLines carries the prefixed ERP code ('COI-HSABP1',
-    // 14,554 of 14,623 non-null rows) while PullItems carries the bare form ('HSABP1', 0 of
-    // 47,813 prefixed). Anchoring on PullItems would compare the two and match nothing —
-    // widening to an empty set, which reads to the operator as "no capacity anywhere" while
-    // looking like a working feature from the code. The divergence is left as-is; reconciling
-    // the two encodings is an ERP-semantics question, not something to guess at here.
-    //
-    // Read under the same hints as the main walk when locking, so the anchor rows are held
-    // from here on and cannot shift beneath the widened read that follows.
-    private static async Task<string?> ReadPullVendorAnchorAsync(
-        System.Data.IDbConnection conn,
-        System.Data.IDbTransaction? transaction,
-        bool withLocks,
-        PullItemContext pullCtx,
-        bool vendorScoped,
-        CancellationToken ct)
-    {
-        var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
-
-        // Storer grain — the anchor has to belong to the item's own storer.
-        // Without this, a pull carrying the same SKU from two storers picks
-        // whichever line sorts first as the anchor, and overflow then widens
-        // to the WRONG supplier's other POs — turning a mis-allocation inside
-        // one pull into a mis-allocation across the warehouse. Same NULL rule
-        // as the main walk: no vendor on the item, no extra term.
-        // Same fallback rule as the main walk: only scope the anchor when the
-        // item's storer actually has a line here. Otherwise this is one of the
-        // 593 fallback items and the pre-change anchor behaviour applies.
-        var vendorTerm = vendorScoped
-            ? $" AND {VendorMatchSql("pol.VendorCode", "@ItemVendorCode")}"
-            : "";
-
-        return await conn.ExecuteScalarAsync<string?>(new CommandDefinition($@"
-            SELECT TOP 1 pol.VendorCode
-            FROM   dbo.PurchaseOrderLines pol {hints}
-            INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
-            WHERE  po.WarehouseId = @WarehouseId
-              AND  po.Status      = 'open'
-              AND  pol.ItemCode   = @ItemCode
-              AND  pol.OrderedQty > pol.ReceivedQty
-              AND  (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)
-              AND  pol.VendorCode IS NOT NULL{vendorTerm}
-            ORDER BY po.OrderDate ASC, po.PoNumber ASC, pol.LineNumber ASC;",
-            new
-            {
-                pullCtx.WarehouseId,
-                pullCtx.ItemCode,
-                pullCtx.PullId,
-                PullNumberStr = pullCtx.PullNumber,
-                ItemVendorCode = pullCtx.VendorCode,
-            },
-            transaction: transaction,
-            cancellationToken: ct));
-    }
 
     // ============================================================================
     // §7.2a / §3.5 atomic FIFO receive (lock-aware)
@@ -856,16 +892,19 @@ public class ReceiptService : IReceiptService
             // operator needs it.
             var plan = new List<(PoLineAvailability Line, int Take)>();
 
+            // Needed after the block: the audit label names the over-received line, and the
+            // per-slice UPDATE has to know which slice is allowed past OrderedQty.
+            var overage = 0;
+
             if (!closeOnly)
             {
-                // §4.1/§4.2 — the widened UPDLOCK+HOLDLOCK range (up to every open line for
-                // this vendor+item+warehouse) is taken ONLY on the variance path, which is
-                // operator-initiated and rare per unit time. The normal path's lock footprint
-                // is unchanged.
-                var openLines = (await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true,
-                                                           pullCtx,
-                                                           varianceAccepted: variance,
-                                                           allowOverflow: variance, ct)).AsList();
+                // The UPDLOCK+HOLDLOCK range is the pull's own candidate lines and nothing
+                // wider, on every path. The variance tick no longer widens it — the overflow
+                // walk that did is gone, so the lock footprint is now the same with the tick
+                // as without it.
+                var lineSet      = await ReadOpenPoLinesAsync(conn, transaction: tx, withLocks: true, pullCtx, ct);
+                var openLines    = lineSet.Lines;
+                var vendorScoped = lineSet.VendorScoped;
 
                 // §3.5 strict mode: pull is locked but no PO is linked → procurement must act
                 if (pullCtx.LockPoByPull && openLines.Count == 0)
@@ -873,23 +912,16 @@ public class ReceiptService : IReceiptService
                         "No PO linked to this pull. Procurement must link a PO before receiving.");
 
                 var totalAvailable = openLines.Sum(l => l.OrderedQty - l.ReceivedQty);
-                if (totalAvailable < req.Qty)
-                    throw new BusinessException(await BuildCapacityMessageAsync(
-                        conn, tx, pullCtx, req.Qty, totalAvailable, variance, ct));
 
-                // ----- 3. Build the allocation plan (FIFO walk) -----
-                var remaining = req.Qty;
-                foreach (var line in openLines)
-                {
-                    var lineRemaining = line.OrderedQty - line.ReceivedQty;
-                    var take = Math.Min(lineRemaining, remaining);
-                    if (take > 0)
-                    {
-                        plan.Add((line, take));
-                        remaining -= take;
-                    }
-                    if (remaining == 0) break;
-                }
+                // ----- 3. Build the allocation plan (FIFO walk, + any authorised overage) -----
+                overage = ResolveOverage(pullCtx, openLines, vendorScoped,
+                                         req.Qty, totalAvailable, variance);
+                plan = BuildAllocationPlan(openLines, req.Qty, overage);
+
+                // Guard A — see AssertPlanIsSane. With CK_POL_Caps relaxed by db/051 the
+                // plan is the only thing deciding what gets written, so it is checked before
+                // a single row is inserted rather than trusted.
+                AssertPlanIsSane(plan, req.Qty, pullCtx, vendorScoped);
             }
 
             // ----- 4. Insert one Receipts row per allocation slice + update PO line cache -----
@@ -935,12 +967,32 @@ public class ReceiptService : IReceiptService
                         VarianceQty      = sliceVarianceQty,
                     }, transaction: tx, cancellationToken: ct));
 
-                await conn.ExecuteAsync(new CommandDefinition(@"
+                // Guard B — db/051 dropped the OrderedQty ceiling from CK_POL_Caps, so this
+                // statement carries it instead, and carries it as the PLAN's intent rather
+                // than as a blanket rule: the cap still binds on every line except the one
+                // slice designated to absorb the overage. Written bare, a plan bug here
+                // would write a wrong quantity in silence — the same failure mode the brief
+                // rejects OverReceivedQty for, and accepting it one layer down would be
+                // incoherent.
+                var isOverageSlice = overage > 0 && ReferenceEquals(line, plan[^1].Line);
+                var rows = await conn.ExecuteAsync(new CommandDefinition(@"
                     UPDATE dbo.PurchaseOrderLines
                        SET ReceivedQty = ReceivedQty + @Take
-                     WHERE Id = @LineId;",
-                    new { Take = take, LineId = line.PurchaseOrderLineId },
+                     WHERE Id = @LineId
+                       AND (@AllowOver = 1 OR ReceivedQty + @Take <= OrderedQty);",
+                    new { Take = take, LineId = line.PurchaseOrderLineId, AllowOver = isOverageSlice },
                     transaction: tx, cancellationToken: ct));
+
+                // Exactly one row, always. Zero means the predicate refused the write — a
+                // plan that would have pushed a line past its ordered quantity without being
+                // the designated slice. The transaction rolls back rather than committing a
+                // Receipts row whose PO-line cache was never updated.
+                if (rows != 1)
+                    throw new InvalidOperationException(
+                        $"PO line update affected {rows} rows, expected 1 " +
+                        $"(line {line.PurchaseOrderLineId}, take {take}, overage slice: {isOverageSlice}). " +
+                        "The allocation plan would have exceeded OrderedQty on a line not designated " +
+                        "to absorb the overage.");
 
                 allocations.Add(new AllocationResult
                 {
@@ -950,7 +1002,7 @@ public class ReceiptService : IReceiptService
                     PurchaseOrderLineId = line.PurchaseOrderLineId,
                     PoLineNumber        = line.LineNumber,
                     Qty                 = take,
-                    IsPullLinked        = line.IsPullLinked,
+                    OverReceivedQty     = Math.Max(0, line.ReceivedQty + take - line.OrderedQty),
                 });
             }
 
@@ -1056,7 +1108,19 @@ public class ReceiptService : IReceiptService
 
             // ----- 8. Audit (one summary row, with §3.5 scope label) -----
             var summary  = string.Join(" + ", plan.Select(p => $"{p.Take}@{p.Line.PoNumber}"));
-            var scopeLbl = ScopeLabel(pullCtx, plan.Any(p => !p.Line.IsPullLinked), "warehouse-wide FIFO");
+            var scopeLbl = ScopeLabel(pullCtx, "warehouse-wide FIFO");
+
+            // §4.4 — an over-receipt names the line it landed on and by how much. The
+            // allocation summary above already names every PO consumed, but "500@PO-1"
+            // reads identically whether the line was ordered at 500 or at 499; without
+            // this the one fact that makes the receive unusual is absent from the trail.
+            var overLbl = "";
+            if (overage > 0)
+            {
+                var overLine = plan[^1].Line;
+                overLbl = $" Over-receipt: {overage} pcs beyond OrderedQty {overLine.OrderedQty} " +
+                          $"on {overLine.PoNumber} line {overLine.LineNumber}.";
+            }
 
             // db/049 §5 — record the CODE, and that a note exists, not the note itself. The
             // note is already stored verbatim on the window's ClosedReason; pasting it here
@@ -1068,7 +1132,7 @@ public class ReceiptService : IReceiptService
                 : $" Reason: {reasonCode}{(string.IsNullOrWhiteSpace(req.Note) ? "" : " (note recorded)")}.";
 
             await _audit.WriteAsync(conn, tx, "receive", "Receipt", $"pi={req.PullItemId}",
-                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}.{reasonLbl}", ct);
+                $"Received {req.Qty} pcs of {pullCtx.ItemCode} at hour {req.HourOfDay}. Scope: {scopeLbl}. Allocated: {summary}.{overLbl}{reasonLbl}", ct);
 
             // ----- 9. Compute response fields before commit -----
             // db/047 §6 — the caller gets the recomputed outstanding and the window's
@@ -1621,9 +1685,11 @@ public class ReceiptService : IReceiptService
         public int OrderedQty { get; set; }
         public int ReceivedQty { get; set; }
 
-        // §5.1 — projected on every read so the audit scope label can be decided from the
-        // allocation that actually happened rather than from the request flag.
-        public bool IsPullLinked { get; set; }
+        // §4.3 — projected so AssertPlanIsSane can verify in code that an over-received line
+        // belongs to the pull item's own storer, rather than trusting that the candidate
+        // query filtered correctly. A later edit to that SQL cannot silently reopen
+        // cross-storer over-receipt while this check stands.
+        public string? VendorCode { get; set; }
     }
 
     private sealed class ReceiptLockRow

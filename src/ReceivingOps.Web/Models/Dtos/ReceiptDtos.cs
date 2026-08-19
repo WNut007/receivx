@@ -58,12 +58,15 @@ public class AllocationResult
     public int Qty { get; set; }
 
     /// <summary>
-    /// False when this slice was drawn from a PO that is not linked to the pull —
-    /// a variance overflow allocation (§4.1). The modal marks these so the operator
-    /// sees they are drawing on another PO before confirming, not after.
-    /// Always true on the normal path and in warehouse-wide (Mode A) receives.
+    /// How much of this slice lands beyond the PO line's OrderedQty. Zero on every slice
+    /// but the last, and zero on any receive that fits within the ordered quantity.
+    ///
+    /// <para>Replaces IsPullLinked, which flagged a slice drawn from a PO the pull was not
+    /// linked to. That can no longer happen — an over-receipt stays on the pull's own line
+    /// rather than spilling onto another purchase order — so the flag had nothing left to
+    /// report. What the operator needs to see instead is the overage itself.</para>
     /// </summary>
-    public bool IsPullLinked { get; set; } = true;
+    public int OverReceivedQty { get; set; }
 }
 
 /// <summary>
@@ -110,9 +113,9 @@ public class ReceivePreviewResult
     public List<AllocationResult> Allocations { get; set; } = new();
     public int TotalAllocatable { get; set; }    // SUM of remaining across all visible lines for this (warehouse,item) under the active scope
     public int Shortage { get; set; }            // always 0 on success in v2 — kept for transitional UI compatibility
-    // "warehouse-wide" | "pull-locked" | "pull-locked + variance overflow"
-    // The third value means at least one slice of the plan came from a PO line that is
-    // NOT linked to this pull (§5.1). Decided from the plan, never from the request flag.
+    // "warehouse-wide" | "pull-locked"
+    // The third value ("pull-locked + variance overflow") went with the overflow walk: a
+    // receive can no longer draw on a PO this pull is not linked to (§5.1).
     public string Scope { get; set; } = "warehouse-wide";
 }
 

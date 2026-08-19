@@ -662,6 +662,32 @@ happens *after* the operator confirms a file that already passed.
 created, repaired, or skipped as one unit inside that sheet's own
 transaction — pull, items, windows and PO commit or roll back together.
 
+### smoke-hourcap-6.2 case 7 "fails by design" — recorded 2026-08-19
+
+**Stale claim** (v2 invariants, LockHourCap bullet, ~line 731):
+"`smoke-hourcap-6.2.ps1` case 7 asserts the pre-db/047 loose-pull behaviour
+(unticked over-receipt → 200) and now fails by design. Cases 1-6 and 8 pass
+unmodified."
+
+**What is true now:** the smoke passes in full. Measured 2026-08-19 on
+`feat/digital-signature` at `dc9f001`, standalone run, exit 0.
+
+Both halves of the claim have moved:
+
+- **It does not fail.** Case 7 was rewritten when db/047 landed, and again by
+  brief rev 11 ("the tick is the escape on every pull"). The file's own header
+  records both moves and the numbers behind the second: 11,588 of 11,594 open
+  pulls with outstanding work carry `LockHourCap = 1`, and
+  `ErpUpsertService.cs:189` writes a hardcoded 1, so the flag was never a
+  per-pull choice and honouring it made the over-receipt path unreachable on
+  live data. The assertions went stale, not the product.
+- **The case numbering is gone.** There is no single "case 7" any more — it
+  split into 7a/7b. The header lists cases 1, 3, 5, 6 and 7a/7b as holding
+  unchanged, so "cases 1-6 and 8" no longer describes the file either.
+
+A reader treating this smoke as an expected fail would discount a real
+regression in it. Nothing in the battery is currently failing by design.
+
 ## Stack
 - .NET 8 LTS, C# 12
 - Dapper (no EF Core, no string concat in SQL)

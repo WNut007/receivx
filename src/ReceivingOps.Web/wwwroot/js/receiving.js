@@ -762,12 +762,9 @@
   }
 
   function scopeBadgeHtml(scope) {
-    // §5.1 — three states. The overflow case must be checked BEFORE 'pull-locked',
-    // because it is still a locked pull and would otherwise fall through to the
-    // warehouse-wide badge and misreport what just happened.
-    if (scope === 'pull-locked + variance overflow') {
-      return '<span class="alloc-scope overflow" title="Accepted variance: allocation spilled past this pull’s PO into other open POs for the same vendor">⚠ Pull-locked + overflow</span>';
-    }
+    // §5.1 — two states. 'pull-locked + variance overflow' went with the overflow walk:
+    // a receive can no longer spill onto a PO this pull is not linked to, so there is no
+    // third state left to badge.
     if (scope === 'pull-locked') {
       return '<span class="alloc-scope pull-locked" title="FIFO is restricted to POs linked to this pull (§3.5)">🔒 Pull-locked</span>';
     }
@@ -834,15 +831,18 @@
       // Cache the scope so a subsequent 409 (e.g. drained PO) can still show the right badge.
       if (item) item.scopeHint = p.scope || 'warehouse-wide';
 
-      // §6.2 — a slice drawn from a PO that is not linked to this pull is marked inline,
-      // so the operator sees they are drawing on another PO BEFORE confirming. The server
-      // decides isPullLinked from the plan it built; the badge never infers it from qty.
+      // §4.5 — an over-receipt is stated, not warned about. Ticking variance on 501
+      // against 500 shows that all 501 land on this pull's own PO line, with 1 beyond the
+      // ordered quantity. Over-delivery happens on nearly every pull at this site, so this
+      // is a figure like the Variance · Settled readout on the stats strip — neutral
+      // weight, no warning colour. The server computes overReceivedQty from the plan it
+      // built; the badge never infers it from qty.
       const lines = (p.allocations || []).map(a => {
-        const overflow = a.isPullLinked === false;
-        const tag = overflow
-          ? ' <span class="alloc-overflow-tag" title="Not linked to this pull — drawn from another open PO for the same vendor">other PO</span>'
+        const over = a.overReceivedQty | 0;
+        const tag = over > 0
+          ? ` <span class="alloc-over-tag" title="Recorded on this pull's own PO line, beyond its ordered quantity">+${over.toLocaleString()} over ordered</span>`
           : '';
-        return `<span class="alloc-line${overflow ? ' is-overflow' : ''}">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}${tag}</span>`;
+        return `<span class="alloc-line">${a.qty.toLocaleString()} from <b>${escapeHtml(a.poNumber)}</b> · L${a.poLineNumber}${tag}</span>`;
       }).join('');
       const header = (p.allocations || []).length > 1
         ? `<span class="alloc-line"><b>Will allocate ${qty.toLocaleString()} pcs across ${p.allocations.length} POs:</b></span>`

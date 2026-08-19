@@ -1,57 +1,67 @@
-# Smoke test: PO allocation overflow past the pull-linked PO when variance is accepted
+# Smoke test: an over-receipt stays on the pull's OWN PO line
 #
-# Brief: brief-po-overflow-on-variance.md (§7 test cases).
+# Brief: brief-over-receipt-own-po.md (§6 test cases). Requires db/051.
 #
-# THE CASE THIS REPRODUCES
-# ------------------------
-# Pull 0000026590, WH-BPI, item 2063-810743-0E4, hour 20. The window expects 400;
-# the vendor delivered 401. The operator ticks accept-variance. Before this change
-# the receive was refused by PO-line capacity (BUILD_PROMPT §7.1 Cap 2) with
-# "Insufficient PO capacity. Need 401, have 400 pcs." — the pull's own PO had
-# exactly 400 and FIFO was scoped to it, so nothing could be recorded.
+# Renamed from smoke-po-overflow-variance.ps1. That file asserted the feature this
+# one reverses, so the cases it carried are inverted here rather than deleted, with
+# the old assertion quoted above each so the change is visible and deliberate.
 #
-# The over-delivered unit DOES have purchase-order cover: 22 other open PO lines
-# for the same vendor (COI-HSABP1), same item, same warehouse. It just sat on a
-# different line. This is a matching problem, not an unpurchased-goods problem,
-# so the fix widens allocation rather than relaxing any cap. Every received unit
-# still lands on a real PO line; CK_POL_Caps is untouched.
+# THE DEFECT THIS PINS
+# --------------------
+# Receiving 501 against a line ordered at 500 records 501 on THAT line. It does not
+# consume any other purchase order.
+#
+# The predecessor read the requirement as "the goods must be recordable somewhere",
+# and since other open PO lines for the same vendor had capacity, widened allocation
+# to spill into them. Production pull 0000028773: one SKU, one window, 501 against
+# 500. The walk put 500 on the pull's own PO and sent the remaining 1 to
+# TH5805-P233094 — a PO belonging to pull 0000015008. Two Receipts rows against two
+# different purchase orders for what the operator experienced as a single receive,
+# and a Delivery Note that printed as two pages with different ASN, invoice and PO
+# on each. One receive, one PO line.
+#
+# db/051 is what makes that storable: CK_POL_Caps loses its OrderedQty ceiling and
+# keeps its floor, so ReceivedQty becomes the figure actually received.
 #
 # THE SEED, AND WHY IT IS HERE
 # ----------------------------
-# The dev database carries pull 0000026590 and the 22-line overflow pool, but NOT
-# the anchor PO that production has (PoNumber = PullExternalRef = '0000026590',
-# one line, 400 pcs). Without it the receive fails earlier and differently —
-# "No PO linked to this pull" — which is a different 409 and would silently make
-# this smoke assert the wrong thing. The seed below creates that anchor PO so the
-# production failure is reproducible locally, per the brief's §7 instruction to
-# reproduce before changing anything.
+# The dev database carries pull 0000026590 but NOT the anchor PO that production has
+# (PoNumber = PullExternalRef = '0000026590', 400 pcs). Without it the receive fails
+# earlier and differently — "No PO linked to this pull" — which is a different 409
+# and would silently make this smoke assert the wrong thing.
 #
 # CASES
-#   1.  Repro/§7.1  401 ticked → 200, TWO receipt rows (400 on the pull's PO line,
-#                   1 on the FIFO-next line for the same vendor), window 401,
-#                   IsClosed=1, VarianceAccepted=1, VarianceQty=1
-#   2.  §7.2        Same request unticked → 400 OVER_RECEIPT_NOT_ACCEPTED, zero rows
-#   3.  §7.3        Pull PO alone covers the qty → ONE row, audit scope 'pull-locked'
-#                   (NOT the overflow label — overflow is decided from the plan, not
-#                   from the request flag)
-#   4.  §7.5        Overflow never crosses vendors — a fat open PO under a different
-#                   VendorCode is not drawn on, and the receive fails instead
-#   5.  §7.14       Audit row carries the overflow label + names every PO consumed
-#   6.  NEW         VarianceAccepted / IsClosed across a multi-row allocation:
-#                   cancelling the SECOND slice (the one whose VarianceQty is NULL)
-#                   must still clear IsClosed. See the note at case 6.
-#   6b. NEW         The same for the FIRST slice — the VarianceQty carrier.
-#   6c. NEW         The half-reversed state 6b leaves behind, field by field:
-#                   window cache reconciles with live receipt rows, reversal shape,
-#                   PO line restored + auto-closed PO reopened, forward path intact.
-#   7.  §7.10       Normal in-range receive, box unticked → single pull-linked slice,
-#                   scope label unchanged. Regression guard on the narrow path.
-#   8-13. NEW       The step-8c VarianceQty recompute. See the block above case 8 for
-#                   the invariant; 8 clears to NULL at exactly zero, 9 and 12 and 13
-#                   restate a negative, 10 restates a positive, 11 proves 8c is inert
-#                   where no variance was ever accepted.
+#   1.  §6.1   401 ticked → ONE receipt row, 401 on the pull's own line, the line
+#              stored at ReceivedQty 401 / OrderedQty 400. INVERTED (was: two rows,
+#              400 on the pull's PO + 1 spilled onto another).
+#   2.  §6.2   Same request unticked → 400 OVER_RECEIPT_NOT_ACCEPTED, zero rows.
+#              Unchanged.
+#   3.         Pull PO alone covers the qty → ONE row, plain 'pull-locked' label,
+#              no over-receipt clause. The figure is read off the plan, not the tick.
+#   4.  §6.3   A same-vendor, older, ample-capacity PO belonging to ANOTHER pull is
+#              untouched, and so is every other line in the warehouse. This is the
+#              direct inversion and the case that proves the reversal.
+#   5.         Audit names the over-received line and the overage. INVERTED (was:
+#              carries the 'variance overflow' scope label + names two POs).
+#   6.  §6.6   Cancelling the over-received slice returns the line to 0 — never left
+#              above OrderedQty — and clears IsClosed though it carries no
+#              VarianceQty. RE-SEEDED onto the pull's own two lines.
+#   6b.        The same for the slice that DOES carry VarianceQty.
+#   6c.        The half-reversed state 6b leaves behind, field by field.
+#   7.         Normal in-range receive, unticked → narrow path unchanged.
+#   8-13.      The step-8c VarianceQty recompute. Unchanged by this brief.
+#   14. §6.7   db/051 itself: a line accepts ReceivedQty > OrderedQty; a negative is
+#              still rejected.
+#   15. §6.8   vw_PurchaseOrderAvailability excludes an over-received line.
+#   16. §6.9   Auto-close fires for a PO whose only line is over-received.
+#   17. §4.3   The storer rule. An over-receipt is refused when the item's storer has
+#              no PO line of its own (fallback), and refused with a DIFFERENT message
+#              when the item has no storer at all. Allocation WITHIN capacity is
+#              unaffected in both cases.
 #
-# Cases 4, 6, 8, 9, 11, 13 of the brief are NOT covered here — see the trailer.
+# Brief §6.4 (multi-line 1,200 across two 500 lines) is covered by case 10's existing
+# three-slice fixture; §6.5 (short close) by cases 12 and 13. §6.10 (the DN renders
+# one page) is a report-level check and lives in smoke-do-report.
 #
 # Assumes ReceivingOps.Web is running on http://localhost:5213.
 
@@ -199,10 +209,15 @@ VALUES (@po, 1, '$ITEM', 'SOV anchor line', $ordered, 0, '$VENDOR', 'Western Dig
     Sql $q | Out-Null
 }
 
-# Case 4 — a different vendor with ample stock, dated OLDER than everything else so
-# a naive FIFO walk would reach it first. If overflow ever crossed vendors, this is
-# the line it would grab.
-function SeedOtherVendorPo {
+# Case 4 — the PO an over-receipt would spill onto if anything still widened. SAME
+# vendor, same item, ample stock, dated OLDER than everything else so a naive FIFO walk
+# reaches it first, and belonging to no pull — exactly the shape of TH5805-P233094, the
+# line production's 401st unit actually landed on.
+#
+# The predecessor of this fixture used a DIFFERENT vendor, which tested a weaker claim:
+# overflow was allowed to cross POs and only barred from crossing vendors, so a
+# wrong-vendor line proved nothing about the same-vendor spill that was the defect.
+function SeedSameVendorOtherPullPo {
     $q = @"
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
@@ -211,7 +226,7 @@ INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, Status, Cr
 VALUES (@po, '$OTHER_PO', '$WH_BPI', '2020-01-01', 'open', '11111111-1111-1111-1111-000000000001');
 INSERT INTO dbo.PurchaseOrderLines
     (PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName)
-VALUES (@po, 1, '$ITEM', 'SOV wrong-vendor line', 999999, 0, 'COI-NOTTHISVENDOR', 'Not This Vendor');
+VALUES (@po, 1, '$ITEM', 'SOV other-pull same-vendor line', 999999, 0, '$VENDOR', 'Western Digital');
 "@
     Sql $q | Out-Null
 }
@@ -305,16 +320,41 @@ OK 'precondition: exactly one pull-linked line, 400 remaining (matches productio
 
 $res = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
 if ($res.totalQty -ne 401) { Fail "expected totalQty 401, got $($res.totalQty)" }
-if ($res.allocations.Count -ne 2) { Fail "expected 2 allocation slices, got $($res.allocations.Count)" }
 
-$slice1 = $res.allocations[0]; $slice2 = $res.allocations[1]
-if ($slice1.qty -ne 400) { Fail "slice 1 should take 400 from the pull's PO, got $($slice1.qty)" }
-if ($slice1.poNumber -ne $SEED_PO) { Fail "slice 1 should be the pull-linked PO $SEED_PO, got $($slice1.poNumber)" }
-if ($slice1.isPullLinked -ne $true) { Fail "slice 1 should be flagged isPullLinked" }
-if ($slice2.qty -ne 1) { Fail "slice 2 should take 1, got $($slice2.qty)" }
-if ($slice2.isPullLinked -ne $false) { Fail "slice 2 should be flagged as NOT pull-linked (overflow)" }
-if ($slice2.poNumber -eq $SEED_PO) { Fail "slice 2 must come from a different PO" }
-OK "401 allocated 400@$($slice1.poNumber) + 1@$($slice2.poNumber), overflow slice flagged"
+# INVERTED. This case previously asserted the opposite:
+#
+#     if ($res.allocations.Count -ne 2) { Fail "expected 2 allocation slices, ..." }
+#     if ($slice1.qty -ne 400) { ... }   # the pull's own PO, filled to OrderedQty
+#     if ($slice2.qty -ne 1)   { ... }   # the spill, on SOMEONE ELSE'S purchase order
+#     if ($slice2.isPullLinked -ne $false) { ... }
+#     if ($slice2.poNumber -eq $SEED_PO)   { ... }
+#
+# That is the defect, written down as a requirement. Production pull 0000028773 sent
+# its 1 spare unit to TH5805-P233094 — a PO belonging to pull 0000015008 — and the
+# Delivery Note printed as two pages with different ASN, invoice and PO on each. One
+# receive, one PO line: the 401st unit stays on the line ordered at 400 and pushes
+# its ReceivedQty to 401, which db/051 now permits.
+if ($res.allocations.Count -ne 1) {
+    $where = ($res.allocations | ForEach-Object { "$($_.qty)@$($_.poNumber)" }) -join ' + '
+    Fail "expected ONE allocation slice, got $($res.allocations.Count): $where"
+}
+
+$slice1 = $res.allocations[0]
+if ($slice1.qty -ne 401) { Fail "the single slice should carry all 401, got $($slice1.qty)" }
+if ($slice1.poNumber -ne $SEED_PO) { Fail "the slice must be the pull's own PO $SEED_PO, got $($slice1.poNumber)" }
+if ($slice1.overReceivedQty -ne 1) { Fail "expected overReceivedQty 1, got $($slice1.overReceivedQty)" }
+OK "401 recorded as a single 401@$($slice1.poNumber) slice, 1 pc beyond OrderedQty"
+
+# The stored figure is the point of db/051: ReceivedQty is what was received, and it
+# is allowed to exceed OrderedQty rather than being spread until it fits.
+$polState = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(pol.ReceivedQty AS VARCHAR)+'|'+CAST(pol.OrderedQty AS VARCHAR)
+FROM   dbo.PurchaseOrderLines pol
+WHERE  pol.Id = '$($slice1.purchaseOrderLineId)';
+"@
+if ($polState.Trim() -ne '401|400') { Fail "PO line should read ReceivedQty|OrderedQty = 401|400, got $polState" }
+OK 'the pull-linked PO line stores ReceivedQty 401 against OrderedQty 400'
 
 $row = Sql @"
 SET NOCOUNT ON;
@@ -326,21 +366,34 @@ FROM dbo.PullItemWindows piw WHERE piw.PullItemId='$pi' AND piw.HourOfDay=$HOUR;
 $parts = ($row | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
 if ($parts[0] -ne '401') { Fail "window ReceivedQty expected 401, got $($parts[0])" }
 if ($parts[1] -ne '1')   { Fail "window IsClosed expected 1, got $($parts[1])" }
-if ($parts[2] -ne '2')   { Fail "expected VarianceAccepted=1 on BOTH rows, got $($parts[2])" }
+# INVERTED: was `-ne '2'` — "VarianceAccepted=1 on BOTH rows". There is one row now.
+# The multi-row form of this invariant has not been dropped; it moved to case 6, which
+# splits across the pull's own two lines to keep exercising it.
+if ($parts[2] -ne '1')   { Fail "expected VarianceAccepted=1 on the single row, got $($parts[2])" }
 if ($parts[3] -ne '1')   { Fail "expected SUM(VarianceQty)=1 (stamped once), got $($parts[3])" }
-OK "window 401 / IsClosed=1 / VarianceAccepted on both rows / VarianceQty summed once"
+OK 'window 401 / IsClosed=1 / VarianceAccepted on the row / VarianceQty stamped once'
 
 # ---------------------------------------------------------------------------
-Step '5. Audit row carries the overflow label and names every PO'
+Step '5. Audit row names the over-received line and the overage'
 $audit = SqlScalar @"
 SET NOCOUNT ON;
 SELECT TOP 1 Message FROM dbo.AuditLog
 WHERE EntityId = 'pi=$pi' AND ActionType = 'receive'
 ORDER BY OccurredAt DESC;
 "@
-if ($audit -notmatch 'pull-locked \+ variance overflow') { Fail "audit missing overflow label. Got: $audit" }
-if ($audit -notmatch [regex]::Escape("400@$SEED_PO")) { Fail "audit missing pull-linked slice. Got: $audit" }
-if ($audit -notmatch [regex]::Escape("1@$($slice2.poNumber)")) { Fail "audit missing overflow slice. Got: $audit" }
+# INVERTED. Previously:
+#     if ($audit -notmatch 'pull-locked \+ variance overflow') { ... }
+#     if ($audit -notmatch [regex]::Escape("400@$SEED_PO"))    { ... }
+#     if ($audit -notmatch [regex]::Escape("1@$($slice2.poNumber)")) { ... }
+#
+# The third scope state is gone with the walk that produced it, so the label is
+# plain 'pull-locked' and there is no second PO to name. What replaces it is §4.4:
+# "401@PO" reads identically whether the line was ordered at 401 or at 400, so the
+# one fact that makes this receive unusual has to be stated outright.
+if ($audit -match 'variance overflow') { Fail "audit still carries the retired overflow label. Got: $audit" }
+if ($audit -notmatch 'Scope: pull-locked\.') { Fail "audit should read 'Scope: pull-locked.'. Got: $audit" }
+if ($audit -notmatch [regex]::Escape("401@$SEED_PO")) { Fail "audit missing the single slice. Got: $audit" }
+if ($audit -notmatch 'Over-receipt: 1 pcs beyond OrderedQty 400') { Fail "audit missing the over-receipt clause. Got: $audit" }
 OK "audit: $audit"
 
 # ---------------------------------------------------------------------------
@@ -358,8 +411,23 @@ OK "audit: $audit"
 # route back. That is the stranding this asserts cannot happen. Cancelling the
 # non-first slice is the case that distinguishes the two implementations, which is
 # why this test cancels slice 2 and not slice 1.
+#
+# RE-SEEDED for the reversal. This case used to inherit case 1's two slices, where the
+# second was the spill onto another pull's PO. A receive no longer produces one, so the
+# multi-slice allocation it needs now comes from the pull's OWN two lines — which is the
+# only way to split on a lock-by-pull pull, and the shape case 11 already relied on. The
+# invariant under test is unchanged and so are its stakes: 2 lines of 200, receive 401,
+# giving slice 1 = 200 (carrying VarianceQty) and slice 2 = 201, over its line by 1.
 Step '6. Cancel the SECOND slice (VarianceQty NULL) → IsClosed must still clear'
-$cancelBody = @{ reason = 'miscount'; note = 'smoke: reverse overflow slice' } | ConvertTo-Json
+Cleanup; SeedAnchorPoLines 2 200
+$res6 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
+if ($res6.allocations.Count -ne 2) { Fail "fixture: expected 2 slices across the pull's own lines, got $($res6.allocations.Count)" }
+$slice2 = $res6.allocations[1]
+if ($slice2.qty -ne 201)             { Fail "fixture: slice 2 should carry 201 (200 + the 1 over), got $($slice2.qty)" }
+if ($slice2.overReceivedQty -ne 1)   { Fail "fixture: slice 2 should report overReceivedQty 1, got $($slice2.overReceivedQty)" }
+if ($res6.allocations[0].overReceivedQty -ne 0) { Fail "fixture: slice 1 is within its line and must report overReceivedQty 0" }
+
+$cancelBody = @{ reason = 'miscount'; note = 'smoke: reverse the over-received slice' } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/receipts/$($slice2.receiptId)/cancel" -Method POST `
     -Body $cancelBody -ContentType 'application/json' -WebSession $sv | Out-Null
 
@@ -372,17 +440,20 @@ FROM dbo.PullItemWindows piw WHERE piw.PullItemId='$pi' AND piw.HourOfDay=$HOUR;
 $ap = ($after | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
 if ($ap[2] -ne '-1') { Fail "precondition broken: slice 2 was expected to carry NULL VarianceQty, got $($ap[2])" }
 if ($ap[0] -ne '0')  { Fail "IsClosed should have cleared when the non-first slice was reversed, got $($ap[0])" }
-if ($ap[1] -ne '400'){ Fail "window should be back to 400 after reversing 1, got $($ap[1])" }
-OK "reversing the VarianceQty-NULL slice cleared IsClosed and left the window at 400"
+if ($ap[1] -ne '200'){ Fail "window should be back to 200 after reversing 201, got $($ap[1])" }
+OK 'reversing the VarianceQty-NULL slice cleared IsClosed and left the window at 200'
 
-# The overflow PO line must be whole again — the reversal goes back to ITS OWN line.
+# Brief §6 case 6 — cancelling an OVER-receipt must not leave the line above OrderedQty.
+# The reversal goes back to the line the original consumed, and that line was the one
+# pushed past its ordered quantity, so this is where a cancel that assumed the old cap
+# would strand a line at 201/200 forever.
 $restored = SqlScalar @"
 SET NOCOUNT ON;
 SELECT CAST(pol.ReceivedQty AS VARCHAR) FROM dbo.PurchaseOrderLines pol
 WHERE pol.Id = '$($slice2.purchaseOrderLineId)';
 "@
-if ($restored -ne '0') { Fail "overflow PO line should be restored to 0, got $restored" }
-OK "overflow slice reversed against its own PO line (ReceivedQty back to 0)"
+if ($restored -ne '0') { Fail "the over-received PO line should be restored to 0, got $restored" }
+OK 'cancelling the over-receipt returned the line to 0 — not left above OrderedQty'
 
 # ---------------------------------------------------------------------------
 # 6b — the other end of the same invariant. Case 6 proved the slice WITHOUT
@@ -390,8 +461,9 @@ OK "overflow slice reversed against its own PO line (ReceivedQty back to 0)"
 # neither end is left resting on inference. Both must hold, because §8b keys on
 # VarianceAccepted — which every slice carries — and not on which slice it was.
 Step '6b. Cancel the FIRST slice (the one carrying VarianceQty) → IsClosed clears too'
-Cleanup; SeedAnchorPo 400
+Cleanup; SeedAnchorPoLines 2 200
 $res6b = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
+if ($res6b.allocations.Count -ne 2) { Fail "fixture: expected 2 slices, got $($res6b.allocations.Count)" }
 $first = $res6b.allocations[0]
 $firstVq = SqlScalar "SET NOCOUNT ON; SELECT CAST(ISNULL(VarianceQty,-1) AS VARCHAR) FROM dbo.Receipts WHERE Id='$($first.receiptId)';"
 if ($firstVq -ne '1') { Fail "precondition: slice 1 should carry VarianceQty=1, got $firstVq" }
@@ -406,15 +478,15 @@ SELECT CAST(IsClosed AS VARCHAR)+'|'+CAST(ReceivedQty AS VARCHAR)
 FROM dbo.PullItemWindows WHERE PullItemId='$pi' AND HourOfDay=$HOUR;
 "@
 $p6b = ($a6b | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
-if ($p6b[0] -ne '0') { Fail "IsClosed should have cleared when the first slice was reversed, got $($p6b[0])" }
-if ($p6b[1] -ne '1') { Fail "window should be 1 after reversing the 400 slice, got $($p6b[1])" }
-OK "reversing the VarianceQty-carrying slice cleared IsClosed and left the window at 1"
+if ($p6b[0] -ne '0')   { Fail "IsClosed should have cleared when the first slice was reversed, got $($p6b[0])" }
+if ($p6b[1] -ne '201') { Fail "window should be 201 after reversing the 200 slice, got $($p6b[1])" }
+OK 'reversing the VarianceQty-carrying slice cleared IsClosed and left the window at 201'
 
 # ---------------------------------------------------------------------------
 # 6c — the state 6b LEAVES BEHIND, asserted field by field rather than inferred
 # from the fact that 6b did not throw.
 #
-# 6b cancels the 400-row and leaves the 1-pc overflow row live. That is a partial
+# 6b cancels the 200-row and leaves the 201-pc over-received row live. That is a partial
 # reversal of one confirm, and cancel is scoped to a receipt ROW, not to the confirm
 # that wrote it (dbo.Receipts carries no confirm/batch key — see the trailer). So
 # this half-state is reachable in production the moment an operator cancels one
@@ -442,16 +514,16 @@ $lv = ($live | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() 
 if ($lv[0] -ne $p6b[1]) { Fail "window ReceivedQty ($($p6b[1])) does not reconcile with live receipts ($($lv[0]))" }
 if ($lv[3] -ne '1')     { Fail "expected exactly 1 live receipt row after the partial cancel, got $($lv[3])" }
 # Step 8c moved the figure onto the surviving ticked row rather than letting it die with
-# the slice that happened to carry it: 1 received of 400 expected is -399. This assertion
+# the slice that happened to carry it: 201 received of 400 expected is -199. This assertion
 # read '0' before 8c existed, which was the orphaned state the recompute now prevents.
-if ($lv[1] -ne '-399')  { Fail "SUM(VarianceQty) over live rows should be -399 (live 1 - expected 400), got $($lv[1])" }
-# The surviving overflow row KEEPS VarianceAccepted=1. That flag is provenance of the
+if ($lv[1] -ne '-199')  { Fail "SUM(VarianceQty) over live rows should be -199 (live 201 - expected 400), got $($lv[1])" }
+# The surviving over-received row KEEPS VarianceAccepted=1. That flag is provenance of the
 # confirm that wrote the row, not a claim about the window's current state, and §8b
 # depends on every slice carrying it: were it cleared here, a later cancel of this row
 # would no longer reopen the window. It is also what makes the row eligible to carry the
 # recomputed figure above.
-if ($lv[2] -ne '1')     { Fail "the surviving overflow row should still carry VarianceAccepted=1, got $($lv[2]) row(s)" }
-OK "window reconciles with live receipts (1 = 1); figure restated to -399 on the surviving ticked row"
+if ($lv[2] -ne '1')     { Fail "the surviving over-received row should still carry VarianceAccepted=1, got $($lv[2]) row(s)" }
+OK 'window reconciles with live receipts (201 = 201); figure restated to -199 on the surviving ticked row'
 
 $rev = Sql @"
 SET NOCOUNT ON;
@@ -462,37 +534,43 @@ INNER JOIN dbo.Receipts orig ON orig.Id = rv.ReversesReceiptId
 WHERE rv.ReversesReceiptId = '$($first.receiptId)';
 "@
 $rp = ($rev | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
-if ($rp[0] -ne '-400') { Fail "reversal row should carry -400, got $($rp[0])" }
+if ($rp[0] -ne '-200') { Fail "reversal row should carry -200, got $($rp[0])" }
 # §7.3 — the reversal goes back to the line the original consumed, never via FIFO.
 if ($rp[2] -ne 'same') { Fail "reversal landed on a different PO line than the original" }
 # The reversal is not itself a variance act; stamping it would double-count the flag.
 if ($rp[1] -ne '0')    { Fail "reversal row should carry VarianceAccepted=0, got $($rp[1])" }
-OK "reversal row: -400, VarianceAccepted=0, same PO line as the original"
+OK "reversal row: -200, VarianceAccepted=0, same PO line as the original"
 
+# ORDER BY is load-bearing now that the anchor PO has two lines: without it the row
+# this reads is whatever the plan happens to return first.
 $po = Sql @"
 SET NOCOUNT ON;
 SELECT CAST(pol.ReceivedQty AS VARCHAR)+'|'+po.Status
 FROM dbo.PurchaseOrderLines pol
 INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
-WHERE po.PoNumber = '$SEED_PO';
+WHERE po.PoNumber = '$SEED_PO' AND pol.LineNumber = 1;
 "@
 $pp = ($po | Where-Object { $_ -match '\|' } | Select-Object -First 1).Trim() -split '\|'
-if ($pp[0] -ne '0')    { Fail "pull PO line should be back to 0 received, got $($pp[0])" }
-# Step 7 auto-reopen: the 400-receive filled and closed this PO; giving the quantity
-# back has to make it a FIFO candidate again or the next receive cannot reach it.
-if ($pp[1] -ne 'open') { Fail "pull PO auto-closed at 400/400 should have reopened on cancel, got '$($pp[1])'" }
-OK "pull PO line restored to 0/400 and the auto-closed PO reopened"
+if ($pp[0] -ne '0')    { Fail "pull PO line 1 should be back to 0 received, got $($pp[0])" }
+# Step 7 auto-reopen. Both lines were at-or-past their ordered quantity after the
+# receive (200/200 and 201/200), so NOT EXISTS(OrderedQty > ReceivedQty) held and the PO
+# auto-closed. Giving line 1's quantity back has to make it a FIFO candidate again or the
+# next receive cannot reach it. Note line 2 stays at 201/200 and is correctly NOT a
+# candidate — the walk filters OrderedQty > ReceivedQty, so an over-received line drops
+# out of availability on its own (brief §5).
+if ($pp[1] -ne 'open') { Fail "pull PO auto-closed on full receipt should have reopened on cancel, got '$($pp[1])'" }
+OK 'pull PO line 1 restored to 0/200 and the auto-closed PO reopened'
 
-# The forward path is the real test of "not stranded": with 1 of 400 received the
-# window has 399 outstanding, and that remainder must allocate on the NARROW path —
-# the pull's own PO has its capacity back, so no overflow should be needed or used.
-$pv = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$pi&qty=399&hour=$HOUR&varianceAccepted=false" -WebSession $sv
+# The forward path is the real test of "not stranded": with 201 of 400 received the
+# window has 199 outstanding, and that remainder must allocate on the narrow path —
+# line 1 has its 200 back, which covers it.
+$pv = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$pi&qty=199&hour=$HOUR&varianceAccepted=false" -WebSession $sv
 if ($pv.scope -ne 'pull-locked')            { Fail "forward preview should be plain pull-locked, got '$($pv.scope)'" }
 if ($pv.allocations.Count -ne 1)            { Fail "forward preview should need 1 slice, got $($pv.allocations.Count)" }
-if ($pv.allocations[0].qty -ne 399)         { Fail "forward preview should allocate 399, got $($pv.allocations[0].qty)" }
+if ($pv.allocations[0].qty -ne 199)         { Fail "forward preview should allocate 199, got $($pv.allocations[0].qty)" }
 if ($pv.allocations[0].poNumber -ne $SEED_PO) { Fail "forward preview should sit on the pull's own PO, got $($pv.allocations[0].poNumber)" }
-if ($pv.allocations[0].isPullLinked -ne $true) { Fail "forward preview slice should be pull-linked" }
-OK "forward path intact: 399 previews as one pull-linked slice on $SEED_PO, no overflow"
+if ($pv.allocations[0].overReceivedQty -ne 0) { Fail "forward preview is within capacity and must report overReceivedQty 0" }
+OK "forward path intact: 199 previews as one slice on $SEED_PO line 1, within capacity"
 
 # ---------------------------------------------------------------------------
 Step '2. Same over-receipt, box UNTICKED → 400, nothing recorded'
@@ -509,7 +587,10 @@ Step '3. Pull PO alone covers the qty → ONE row, label stays pull-locked'
 Cleanup; SeedAnchorPo 500
 $res3 = Receive $sv $pi 401 $true 'Over by 1, but the pull PO has headroom.'
 if ($res3.allocations.Count -ne 1) { Fail "expected 1 slice, got $($res3.allocations.Count)" }
-if ($res3.allocations[0].isPullLinked -ne $true) { Fail "the single slice should be pull-linked" }
+if ($res3.allocations[0].poNumber -ne $SEED_PO) { Fail "the single slice should be the pull's own PO" }
+# 401 into a 500 line is not an over-receipt at all, whatever the tick says. The figure
+# is decided from the plan that was built, never from the request flag.
+if ($res3.allocations[0].overReceivedQty -ne 0) { Fail "within-capacity receive must report overReceivedQty 0, got $($res3.allocations[0].overReceivedQty)" }
 $audit3 = SqlScalar @"
 SET NOCOUNT ON;
 SELECT TOP 1 Message FROM dbo.AuditLog
@@ -517,22 +598,49 @@ WHERE EntityId = 'pi=$pi' AND ActionType = 'receive' ORDER BY OccurredAt DESC;
 "@
 if ($audit3 -match 'variance overflow') { Fail "no slice left the pull's PO — label must NOT say overflow. Got: $audit3" }
 if ($audit3 -notmatch 'Scope: pull-locked') { Fail "expected 'Scope: pull-locked'. Got: $audit3" }
-OK "headroom case stayed on one PO and kept the plain pull-locked label"
+if ($audit3 -match 'Over-receipt:') { Fail "a within-capacity receive must not carry the over-receipt clause. Got: $audit3" }
+OK 'headroom case stayed on one PO, plain pull-locked label, no over-receipt clause'
 
 # ---------------------------------------------------------------------------
-Step '4. Overflow never crosses vendors'
-Cleanup; SeedAnchorPo 400; SeedOtherVendorPo
-# 999,999 pcs sit on an OLDER PO under a different vendor. If the vendor anchor
-# were dropped, FIFO would reach it first and this receive would succeed.
-$fail4 = ReceiveExpectFail $sv $pi 100000 $true 'Should not reach the other vendor.' 409
-if (-not $fail4 -or $fail4.Wrong) { Fail "expected 409, got $($fail4.Status) / $($fail4.Title)" }
+# INVERTED — and it is the case that proves the reversal (brief §6 case 3).
+#
+# This was 'Overflow never crosses vendors': it seeded a fat DIFFERENT-vendor PO and
+# asserted the walk would not reach it, because overflow was allowed to cross POs but
+# not vendors. The distinction no longer exists. An over-receipt does not reach ANY
+# other purchase order — not another vendor's, and not another pull's under the SAME
+# vendor, which is the one production actually hit (0000028773 spilled onto
+# TH5805-P233094, same vendor, different pull).
+#
+# So the fixture is now the harder one: a same-vendor, same-item, OLDER PO with ample
+# capacity, positioned so that any residual widening would reach it first.
+Step '4. A same-vendor PO on another pull is untouched by an over-receipt'
+Cleanup; SeedAnchorPo 400; SeedSameVendorOtherPullPo
+$res4 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
+if ($res4.allocations.Count -ne 1) {
+    $where = ($res4.allocations | ForEach-Object { "$($_.qty)@$($_.poNumber)" }) -join ' + '
+    Fail "over-receipt spread across $($res4.allocations.Count) POs: $where — it must stay on the pull's own line"
+}
+if ($res4.allocations[0].poNumber -ne $SEED_PO) { Fail "the slice must be the pull's own PO, got $($res4.allocations[0].poNumber)" }
+
 $otherTouched = SqlScalar @"
 SET NOCOUNT ON;
 SELECT CAST(pol.ReceivedQty AS VARCHAR) FROM dbo.PurchaseOrderLines pol
 INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId WHERE po.PoNumber = '$OTHER_PO';
 "@
-if ($otherTouched -ne '0') { Fail "the other vendor's line was consumed ($otherTouched) — overflow crossed vendors" }
-OK "other vendor's 999,999-pc line untouched; receive refused: $($fail4.Title)"
+if ($otherTouched -ne '0') { Fail "the other pull's PO line was consumed ($otherTouched) — the spill is back" }
+
+# Nothing anywhere else in the warehouse moved either. The narrow check above would pass
+# if the excess had landed on some third line; this one would not.
+$strayLines = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(COUNT(*) AS VARCHAR)
+FROM   dbo.PurchaseOrderLines pol
+INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
+WHERE  po.WarehouseId = '$WH_BPI' AND pol.ItemCode = '$ITEM'
+  AND  pol.ReceivedQty > 0 AND po.PoNumber <> '$SEED_PO';
+"@
+if ($strayLines -ne '0') { Fail "$strayLines PO line(s) outside the pull's own PO carry receipts for this item" }
+OK "401 stayed on $SEED_PO; the same-vendor PO on another pull and every other line untouched"
 
 # ---------------------------------------------------------------------------
 Step '7. Normal in-range receive, unticked → narrow path unchanged'
@@ -540,7 +648,7 @@ Cleanup; SeedAnchorPo 400
 $res7 = Receive $sv $pi 250 $false 'Ordinary partial.'
 if ($res7.allocations.Count -ne 1) { Fail "expected 1 slice, got $($res7.allocations.Count)" }
 if ($res7.allocations[0].poNumber -ne $SEED_PO) { Fail "partial should sit on the pull's own PO" }
-if ($res7.allocations[0].isPullLinked -ne $true) { Fail "partial slice should be pull-linked" }
+if ($res7.allocations[0].overReceivedQty -ne 0) { Fail "an in-range partial must report overReceivedQty 0" }
 $audit7 = SqlScalar @"
 SET NOCOUNT ON;
 SELECT TOP 1 Message FROM dbo.AuditLog
@@ -653,44 +761,57 @@ WHERE pi.PullId = (SELECT Id FROM dbo.Pulls WHERE PullNumber='$PULL_NO')
 }
 
 # ---------------------------------------------------------------------------
-Step '8. 401 ticked -> cancel the OVERFLOW slice only -> variance figure clears'
-Cleanup; SeedAnchorPo 400
-$r8 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
-$s8over = $r8.allocations | Where-Object { $_.isPullLinked -eq $false }
-if (-not $s8over) { Fail "expected an overflow slice in the 401 allocation" }
+# RE-SEEDED. This case used to receive 401 against a single 400 line and cancel the
+# 1-pc overflow slice — the excess had its own row precisely because it lived on
+# someone else's PO. It no longer does: the excess is merged into the last slice on
+# the pull's own line, so "cancel the slice that is exactly the excess" has no
+# referent. The invariant under test is untouched — SUM(VarianceQty) clears to NULL
+# at exactly zero delta — so the fixture reaches zero a different way: three of the
+# pull's own 200-lines, 600 received against 400 expected, cancel one 200 slice.
+Step '8. 600 ticked across three own lines -> cancel one slice -> variance figure clears'
+Cleanup; SeedAnchorPoLines 3 200
+$r8 = Receive $sv $pi 600 $true 'Vendor over-delivered by 200; accepted at gate.'
+if ($r8.allocations.Count -ne 3) { Fail "expected 3 slices across the 3-line anchor PO, got $($r8.allocations.Count)" }
+$s8over = $r8.allocations[2]
 $pre8 = AssertInvariant $pi '8 (before cancel)'
-if ($pre8.Delta -ne 1) { Fail "precondition: window should be over by 1, got $($pre8.Delta)" }
+if ($pre8.Delta -ne 200) { Fail "precondition: window should be over by 200, got $($pre8.Delta)" }
 
-CancelSlice $sv $s8over.receiptId 'smoke: reverse overflow slice'
+CancelSlice $sv $s8over.receiptId 'smoke: reverse the last slice'
 $a8 = AssertInvariant $pi '8'
 if ($a8.Win.Received -ne 400 -or $a8.Win.Expected -ne 400) { Fail "window should be 400/400, got $($a8.Win.Received)/$($a8.Win.Expected)" }
 if ($a8.Win.IsClosed) { Fail "IsClosed should have cleared, got 1" }
 if ($a8.Live.VarSum -ne 'NULL') { Fail "SUM(VarianceQty) should be NULL at exactly 400/400, got $($a8.Live.VarSum)" }
-OK "window 400/400, IsClosed=0, SUM(VarianceQty)=NULL — the +1 did not survive the slice that carried it"
+OK 'window 400/400, IsClosed=0, SUM(VarianceQty)=NULL — the +200 did not survive the slice that carried it'
 ReportPullStatus $pi '8'
 
 # ---------------------------------------------------------------------------
-Step '9. 401 ticked -> cancel the PULL-LINKED slice only -> figure restated to -399 on an OPEN window'
-Cleanup; SeedAnchorPo 400
+# RE-SEEDED for the same reason as case 8: the slice this cancels used to be the
+# pull-linked one, identified by the retired isPullLinked flag. Two own lines of 200
+# with 401 received gives slices [200, 201]; cancelling the first leaves 201 live.
+Step '9. 401 ticked -> cancel the FIRST slice -> figure restated to -199 on an OPEN window'
+Cleanup; SeedAnchorPoLines 2 200
 $r9 = Receive $sv $pi 401 $true 'Vendor over-delivered by 1; accepted at gate.'
-$s9linked = $r9.allocations | Where-Object { $_.isPullLinked -eq $true }
-CancelSlice $sv $s9linked.receiptId 'smoke: reverse pull-linked slice'
+if ($r9.allocations.Count -ne 2) { Fail "expected 2 slices, got $($r9.allocations.Count)" }
+CancelSlice $sv $r9.allocations[0].receiptId 'smoke: reverse the first slice'
 
 $a9 = AssertInvariant $pi '9'
-if ($a9.Live.Qty -ne 1)   { Fail "live SUM(qty) should be 1, got $($a9.Live.Qty)" }
-if ($a9.Win.IsClosed)     { Fail "IsClosed should have cleared, got 1" }
+if ($a9.Live.Qty -ne 201)  { Fail "live SUM(qty) should be 201, got $($a9.Live.Qty)" }
+if ($a9.Win.IsClosed)      { Fail "IsClosed should have cleared, got 1" }
 # Signed rule: the surviving row carried the operator's tick, so it carries the window's
-# current difference — 1 - 400 = -399. The figure tracks the quantities, not whether the
+# current difference — 201 - 400 = -199. The figure tracks the quantities, not whether the
 # window happens to be closed right now; IsClosed is asserted separately, just above.
-if ($a9.Live.VarSum -ne '-399') { Fail "surviving ticked row should carry -399, got $($a9.Live.VarSum)" }
+if ($a9.Live.VarSum -ne '-199') { Fail "surviving ticked row should carry -199, got $($a9.Live.VarSum)" }
 if ($a9.Live.VarRows -ne 1)     { Fail "expected exactly 1 row carrying the figure, got $($a9.Live.VarRows)" }
-OK "live 1 pc of 400, IsClosed=0, VarianceQty restated to -399 on the surviving ticked row"
+OK 'live 201 pcs of 400, IsClosed=0, VarianceQty restated to -199 on the surviving ticked row'
 
 # ---------------------------------------------------------------------------
+# RE-SEEDED: the three slices used to be 400 on the anchor plus two pool lines. They
+# are now three lines of the pull's OWN PO, which is the only way a receive splits
+# three ways at all now. Quantities and every assertion below are unchanged.
 Step '10. 1,200 ticked across three slices -> cancel the MIDDLE slice -> invariant holds'
-Cleanup; SeedAnchorPo 400
-$r10 = Receive $sv $pi 1200 $true 'Three-way spill; over by 800.'
-if ($r10.allocations.Count -ne 3) { Fail "expected 3 slices for 1,200 (400 anchor + 2 pool lines), got $($r10.allocations.Count)" }
+Cleanup; SeedAnchorPoLines 3 400
+$r10 = Receive $sv $pi 1200 $true 'Three-way split; over by 800.'
+if ($r10.allocations.Count -ne 3) { Fail "expected 3 slices for 1,200 across three 400 lines, got $($r10.allocations.Count)" }
 $pre10 = AssertInvariant $pi '10 (before cancel)'
 if ($pre10.Delta -ne 800) { Fail "precondition: window should be over by 800, got $($pre10.Delta)" }
 
@@ -788,6 +909,114 @@ $want13 = "$($a13.Live.Qty - 400)"
 if ($a13.Live.VarSum -ne $want13) { Fail "surviving ticked row should carry $want13 (live $($a13.Live.Qty) - 400), got $($a13.Live.VarSum)" }
 if ($a13.Live.VarRows -ne 1)      { Fail "expected exactly 1 row carrying the figure, got $($a13.Live.VarRows)" }
 OK "short close restated with its sign: live $($a13.Live.Qty) of 400 carries $want13 on exactly one surviving ticked row"
+
+# ===========================================================================
+# 14-16 — the schema half. These assert db/051 and the reads that depend on it,
+# because "the receive succeeded" is not on its own proof that the constraint was
+# relaxed rather than the quantity quietly clamped somewhere.
+# ===========================================================================
+Step '14. db/051 — the line accepts ReceivedQty > OrderedQty, and still rejects a negative'
+$def = SqlScalar @"
+SET NOCOUNT ON;
+SELECT c.definition FROM sys.check_constraints c
+WHERE c.parent_object_id = OBJECT_ID('dbo.PurchaseOrderLines') AND c.name = 'CK_POL_Caps';
+"@
+if (-not $def) { Fail 'CK_POL_Caps is missing entirely — db/051 has not been run' }
+if ($def -match 'OrderedQty') { Fail "CK_POL_Caps still caps against OrderedQty — db/051 has not been run. Got: $def" }
+if ($def -notmatch 'ReceivedQty') { Fail "CK_POL_Caps lost its ReceivedQty floor. Got: $def" }
+OK "CK_POL_Caps = $($def.Trim()) — ceiling dropped, floor kept"
+
+# Behavioural, not just structural: a definition check passes against a constraint that
+# was left disabled or untrusted. Both writes are rolled back.
+Cleanup; SeedAnchorPo 400
+$probe = SqlScalar @"
+SET NOCOUNT ON;
+DECLARE @id UNIQUEIDENTIFIER = (SELECT TOP 1 pol.Id FROM dbo.PurchaseOrderLines pol
+    INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId WHERE po.PoNumber='$SEED_PO');
+DECLARE @over VARCHAR(10) = 'no', @neg VARCHAR(10) = 'accepted';
+BEGIN TRY
+    BEGIN TRAN; UPDATE dbo.PurchaseOrderLines SET ReceivedQty = 401 WHERE Id = @id; SET @over='yes'; ROLLBACK;
+END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; END CATCH
+BEGIN TRY
+    BEGIN TRAN; UPDATE dbo.PurchaseOrderLines SET ReceivedQty = -1 WHERE Id = @id; ROLLBACK;
+END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; SET @neg='rejected'; END CATCH
+SELECT @over + '|' + @neg;
+"@
+$pb = $probe.Trim() -split '\|'
+if ($pb[0] -ne 'yes')      { Fail 'the constraint still rejects ReceivedQty > OrderedQty' }
+if ($pb[1] -ne 'rejected') { Fail 'the constraint accepts a NEGATIVE ReceivedQty — the floor was lost with the ceiling, and CancelAsync has nothing beneath it' }
+OK '401 against a 400 line accepted; -1 still rejected'
+
+# ---------------------------------------------------------------------------
+Step '15. vw_PurchaseOrderAvailability excludes an over-received line'
+Cleanup; SeedAnchorPo 400
+Receive $sv $pi 401 $true 'Over by 1.' | Out-Null
+$avail = SqlScalar @"
+SET NOCOUNT ON;
+SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.vw_PurchaseOrderAvailability v
+INNER JOIN dbo.PurchaseOrders po ON po.Id = v.PurchaseOrderId WHERE po.PoNumber = '$SEED_PO';
+"@
+if ($avail -ne '0') { Fail "an over-received line is still listed as available ($avail row(s)); RemainingQty would be negative" }
+OK 'the over-received line drops out of availability on its own (OrderedQty > ReceivedQty is false)'
+
+# ---------------------------------------------------------------------------
+Step '16. Auto-close fires for a PO whose line is over-received'
+# NOT EXISTS(OrderedQty > ReceivedQty) — 401 is not < 400, so the line does not hold
+# the PO open. A cap-era reading that looked for equality would leave it open forever.
+$status = SqlScalar "SET NOCOUNT ON; SELECT po.Status FROM dbo.PurchaseOrders po WHERE po.PoNumber = '$SEED_PO';"
+if ($status.Trim() -ne 'closed') { Fail "PO with an over-received line should have auto-closed, got '$($status.Trim())'" }
+OK 'the PO auto-closed with its line at 401/400'
+
+# ===========================================================================
+# 17 — §4.3, the storer rule. The overage is a claim that a SPECIFIC supplier
+# over-delivered, so it may only land on a line belonging to the pull item's own
+# storer. Allocation within capacity keeps its documented fallback onto the shared
+# pool (docs/defect-storer-without-po-line.md, 629 live items on open pulls); what
+# does not fall back is pushing a line past its OrderedQty.
+# ===========================================================================
+Step '17. Over-receipt is refused when the item has no line of its own storer'
+Cleanup; SeedAnchorPo 400
+# Retag the pull item to a storer that owns no line here, leaving the anchor PO's own
+# vendor in place. The walk falls back to the shared pool and can still FILL the order —
+# but the excess has no line of this storer's to land on.
+$origVendor = SqlScalar "SET NOCOUNT ON; SELECT ISNULL(VendorCode,'<null>') FROM dbo.PullItems WHERE Id='$pi';"
+Sql "SET NOCOUNT ON; UPDATE dbo.PullItems SET VendorCode = 'SOV-NOSUCHSTORER' WHERE Id = '$pi';" | Out-Null
+
+$within = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$pi&qty=400&hour=$HOUR&varianceAccepted=false" -WebSession $sv
+if ($within.allocations.Count -lt 1) { Fail 'the fallback must still allocate WITHIN capacity — those items have to stay receivable' }
+OK 'within capacity: the storer fallback still allocates from the shared pool, unchanged'
+
+$fail17 = ReceiveExpectFail $sv $pi 401 $true 'Over by 1 with no storer PO.' 409
+if (-not $fail17 -or $fail17.Wrong) { Fail "expected 409, got $($fail17.Status) / $($fail17.Title)" }
+if ($fail17.Code -ne 'OVER_RECEIPT_NO_STORER_PO') { Fail "expected OVER_RECEIPT_NO_STORER_PO, got '$($fail17.Code)'" }
+if ($fail17.Title -notmatch 'SOV-NOSUCHSTORER') { Fail "the refusal must name the storer so procurement knows what to raise. Got: $($fail17.Title)" }
+if ($fail17.Title -notmatch 'raise a purchase order') { Fail "the refusal must say what to do. Got: $($fail17.Title)" }
+$wrote17 = SqlScalar "SET NOCOUNT ON; SELECT CAST(COUNT(*) AS VARCHAR) FROM dbo.Receipts WHERE PullItemId='$pi';"
+if ($wrote17 -ne '0') { Fail "the refused over-receipt wrote $wrote17 row(s); expected 0" }
+OK "refused with OVER_RECEIPT_NO_STORER_PO naming the storer; nothing written"
+
+# ---------------------------------------------------------------------------
+Step '17b. A NULL-storer item gets a DIFFERENT refusal'
+# 2,943 items on open pulls carry no storer — historical rows merged before the ERP
+# grained by (SKU, storer). There is no supplier to attribute an over-delivery to, so
+# this refuses too, but must NOT send the operator to procurement: there is no storer
+# to raise a PO against, and an instruction that cannot be acted on is worse than a
+# plain refusal.
+Sql "SET NOCOUNT ON; UPDATE dbo.PullItems SET VendorCode = NULL WHERE Id = '$pi';" | Out-Null
+$fail17b = ReceiveExpectFail $sv $pi 401 $true 'Over by 1 with no storer at all.' 409
+if (-not $fail17b -or $fail17b.Wrong) { Fail "expected 409, got $($fail17b.Status) / $($fail17b.Title)" }
+if ($fail17b.Code -ne 'OVER_RECEIPT_NO_STORER') { Fail "expected OVER_RECEIPT_NO_STORER, got '$($fail17b.Code)'" }
+if ($fail17b.Title -match 'raise a purchase order') { Fail "a NULL-storer item must NOT be sent to procurement — there is no storer to raise one against. Got: $($fail17b.Title)" }
+if ($fail17b.Title -notmatch 'no storer recorded') { Fail "the refusal must say why it cannot be attributed. Got: $($fail17b.Title)" }
+OK 'NULL-storer over-receipt refused with its own message, no procurement instruction'
+
+# Restore the fixture's storer so a re-run starts from the same state.
+if ($origVendor.Trim() -eq '<null>') {
+    Sql "SET NOCOUNT ON; UPDATE dbo.PullItems SET VendorCode = NULL WHERE Id = '$pi';" | Out-Null
+} else {
+    Sql "SET NOCOUNT ON; UPDATE dbo.PullItems SET VendorCode = '$($origVendor.Trim())' WHERE Id = '$pi';" | Out-Null
+}
+OK "pull item storer restored to $($origVendor.Trim())"
 
 # ---------------------------------------------------------------------------
 Cleanup

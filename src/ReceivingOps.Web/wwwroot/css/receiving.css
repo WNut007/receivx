@@ -1886,34 +1886,29 @@
     background: rgba(74, 143, 255, 0.10);
     border: 1px solid rgba(74, 143, 255, 0.35);
   }
-  /* §5.1/§6.2 — variance overflow. Uses the themed over-state tokens so the
-     "we went past the plan" colour matches the OVER BY n PCS readout and the
-     hour-grid over cells across all three themes. */
-  .alloc-scope.overflow {
-    color: var(--over);
-    background: var(--over-bg);
-    border: 1px solid var(--over-border);
-  }
   .alloc-line {
     display: block;
     padding: 1px 0;
   }
-  .alloc-line.is-overflow {
-    color: var(--over);
-  }
-  .alloc-overflow-tag {
+  /* §4.5 — the over-ordered figure on an allocation slice. Deliberately NOT the
+     --over tokens the old overflow tag used: those said "we went past the plan",
+     which was right when the excess spilled onto another pull's PO and is wrong
+     now that it stays on this pull's own line. Over-delivery happens on nearly
+     every pull here, so this reads like .stat-trend.muted on the stats strip —
+     a settled fact stated in muted mono, not a warning. */
+  .alloc-over-tag {
     display: inline-block;
     font-family: var(--font-mono);
     font-size: 9px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 1px 5px;
     margin-left: 6px;
     border-radius: 999px;
-    color: var(--over);
-    background: var(--over-bg);
-    border: 1px solid var(--over-border);
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     vertical-align: 1px;
   }
   .cap-hint .ico {

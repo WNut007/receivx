@@ -341,20 +341,31 @@ FROM dbo.PullItemWindows w WHERE w.PullItemId = '$itemC' AND w.HourOfDay = 19;
     if ($unticked -ne 400) { Fail "unticked over-receipt returned $unticked, expected 400 (loose pull still needs the tick)" }
     if ($untickedCode -ne 'OVER_RECEIPT_NOT_ACCEPTED') { Fail "unticked over-receipt did not carry OVER_RECEIPT_NOT_ACCEPTED" }
 
-    # Ticked + reason code: 150 against a window of 100. 100 comes off this
-    # pull's own PO line, 50 overflows onto WIPTEST-0007's line for the same
-    # vendor + item. Every unit still lands on a real PO line.
+    # INVERTED for brief-over-receipt-own-po. This case previously asserted the
+    # opposite:
+    #
+    #     $linked   = @($over.allocations | Where-Object { $_.isPullLinked -eq $true })
+    #     $overflow = @($over.allocations | Where-Object { $_.isPullLinked -eq $false })
+    #     if ($overflow.Count -lt 1) { Fail "no overflow allocation — the extra 50 did
+    #                                        not reach the other open PO line" }
+    #     if ($linkedQty -ne 100)  { ... }   # the synthetic line, filled to OrderedQty
+    #     if ($overflowQty -ne 50) { ... }   # the rest, on WIPTEST-0007's line
+    #     if ($polOther -ne '50')  { Fail "... overflow did not land" }
+    #
+    # Ticked + reason code: 150 against a window of 100. All 150 now stay on this
+    # pull's own synthesised PO line, pushing it to 150 against an OrderedQty of 100.
+    # WIPTEST-0007 belongs to a different pull sheet and is not touched — which
+    # matters more here than elsewhere, because a synthesised PO has no procurement
+    # document behind it and quietly consuming a second one would compound that.
     $over = Receive $sup $itemOf 7 150 $true 'OVER_DELIVERY' 'smoke: over-receive with the tick'
     if ($over.totalQty -ne 150) { Fail "over-receive totalQty=$($over.totalQty), expected 150" }
 
-    $linked   = @($over.allocations | Where-Object { $_.isPullLinked -eq $true })
-    $overflow = @($over.allocations | Where-Object { $_.isPullLinked -eq $false })
-    if ($linked.Count -lt 1)   { Fail "no pull-linked allocation — FIFO did not consume the synthetic PO line first" }
-    if ($overflow.Count -lt 1) { Fail "no overflow allocation — the extra 50 did not reach the other open PO line" }
-    $linkedQty   = ($linked   | Measure-Object -Property qty -Sum).Sum
-    $overflowQty = ($overflow | Measure-Object -Property qty -Sum).Sum
-    if ($linkedQty -ne 100)   { Fail "pull-linked allocation=$linkedQty, expected 100 (the line's full OrderedQty)" }
-    if ($overflowQty -ne 50)  { Fail "overflow allocation=$overflowQty, expected 50" }
+    if ($over.allocations.Count -ne 1) {
+        $where = ($over.allocations | ForEach-Object { "$($_.qty)@$($_.poNumber)" }) -join ' + '
+        Fail "over-receive spread across $($over.allocations.Count) POs: $where — it must stay on the pull's own line"
+    }
+    if ($over.allocations[0].qty -ne 150)             { Fail "the single slice should carry all 150, got $($over.allocations[0].qty)" }
+    if ($over.allocations[0].overReceivedQty -ne 50)  { Fail "expected overReceivedQty 50, got $($over.allocations[0].overReceivedQty)" }
 
     $polOwn = SqlScalar @"
 SET NOCOUNT ON;
@@ -368,8 +379,8 @@ SELECT CAST(pol.ReceivedQty AS VARCHAR) FROM dbo.PurchaseOrderLines pol
   INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber = 'WIPTEST-0007' AND pol.ItemCode = 'WIPSKU-OF';
 "@
-    if ($polOwn -ne '100')  { Fail "WIPTEST-0006 PO line ReceivedQty=$polOwn, expected 100" }
-    if ($polOther -ne '50') { Fail "WIPTEST-0007 PO line ReceivedQty=$polOther, expected 50 — overflow did not land" }
+    if ($polOwn -ne '150')  { Fail "WIPTEST-0006 PO line ReceivedQty=$polOwn, expected 150 (100 ordered + 50 over)" }
+    if ($polOther -ne '0')  { Fail "WIPTEST-0007 PO line ReceivedQty=$polOther, expected 0 — the excess reached another pull's PO" }
 
     $winOf = SqlScalar @"
 SET NOCOUNT ON;
