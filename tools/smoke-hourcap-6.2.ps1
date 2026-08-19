@@ -98,16 +98,81 @@ function SqlCleanup {
     # received. Receipts is "append-only" in production (CLAUDE.md convention)
     # but this is test teardown — wiping the smoke namespace is the point.
     # Order: receipts → pulls (windows + items cascade with Pulls).
+    #
+    # GIVING THE PO CAPACITY BACK IS PART OF THE TEARDOWN, NOT AN EXTRA.
+    #
+    # Deleting the Receipts rows without restoring PurchaseOrderLines.ReceivedQty
+    # left the cache claiming consumption that no row backed. This smoke receives
+    # against SHARED seed POs for item SUMMARY that it does not create and does not
+    # delete, so every run permanently consumed part of that pool: measured at 1,000
+    # units per run, and 252,800 orphaned units had accumulated across the SUMMARY
+    # lines before this was found. The pool then runs dry and the next run fails with
+    # "Insufficient PO capacity. Need 100, have 0 pcs." — a message that points at
+    # the receive path rather than at the teardown that caused it, in a smoke that
+    # looks unrelated. A test that permanently consumes shared capacity breaks the
+    # environment it runs in.
+    #
+    # SET-FROM-TRUTH, not a decrement, and scoped to the lines this smoke's receipts
+    # actually touched. The ReceivedQty cache is explicitly denormalized and
+    # reproducible from Receipts (CLAUDE.md), so recomputing it is in convention;
+    # scoping keeps it from rewriting lines other smokes' live receipts sit on. Same
+    # shape as smoke-variance-reason.ps1's Cleanup and db/038.
+    #
+    # The line ids have to be captured BEFORE the delete — afterwards there is
+    # nothing left pointing at them. Neither hourcap smoke cancels, so no reversal
+    # rows exist and the plain delete order is safe.
     $sql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
+
+DECLARE @touched TABLE (LineId UNIQUEIDENTIFIER PRIMARY KEY);
+INSERT INTO @touched (LineId)
+SELECT DISTINCT r.PurchaseOrderLineId
+FROM   dbo.Receipts r
+INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE  p.PullNumber LIKE 'PL-SHC-%' AND r.PurchaseOrderLineId IS NOT NULL;
+
 DELETE r FROM dbo.Receipts r
 INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PL-SHC-%';
+
+-- PullItems cascades from Pulls; PullSignatures does NOT (FK_PullSig_Pull is
+-- NO_ACTION), so a signed pull blocks the delete below — and one blocked row fails
+-- the whole statement, stranding EVERY PL-SHC- pull, not just the signed ones. 191
+-- had accumulated, 23 of them signed. The previous teardown piped sqlcmd to
+-- Out-Null, so this had been failing in silence since the signature work landed.
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SHC-%';
+
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SHC-%';
+
+UPDATE pol SET ReceivedQty = ISNULL(t.Qty, 0)
+FROM   dbo.PurchaseOrderLines pol
+INNER JOIN @touched tt ON tt.LineId = pol.Id
+OUTER APPLY (SELECT SUM(r.QtyReceived) AS Qty FROM dbo.Receipts r
+             WHERE r.PurchaseOrderLineId = pol.Id) t;
+
+-- A receive that filled a line auto-closed its PO (ReceiptService step 5). Handing
+-- the quantity back has to reopen it, or the line stays out of every later FIFO walk
+-- and the capacity is returned in name only.
+UPDATE po SET Status = 'open', ClosedAt = NULL
+FROM   dbo.PurchaseOrders po
+WHERE  po.Status = 'closed'
+  AND  EXISTS (SELECT 1 FROM dbo.PurchaseOrderLines pol
+               INNER JOIN @touched tt ON tt.LineId = pol.Id
+               WHERE pol.PurchaseOrderId = po.Id AND pol.OrderedQty > pol.ReceivedQty);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b so a failed statement is visible. The previous form piped everything to
+    # Out-Null, so a teardown that stopped working would have gone unnoticed
+    # indefinitely — which is how the leak above survived.
+    $out = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -b -h -1 -W -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "TEARDOWN FAILED — PO capacity may not have been returned:" -ForegroundColor Red
+        Write-Host ($out | Out-String) -ForegroundColor Red
+    }
 }
 
 SqlCleanup
