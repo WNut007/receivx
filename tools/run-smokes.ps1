@@ -99,6 +99,10 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # UpsertAsync against the dev DB with no ERP host. Build it first:
         # dotnet build tools/ErpUpsertHarness.
         'smoke-storer-grain.ps1'
+        # Read-path companion to storer-grain: the console grid orders by
+        # (ItemCode, VendorCode, SortOrder) so a SKU's storer rows sit together.
+        # Seeds its own SKUORD-% pulls via SQL; needs node on PATH for step 6.
+        'smoke-receiving-sku-order.ps1'
         # Shares smoke-phase-12-7's P127TEST-% fixture namespace. Both purge
         # the prefix on entry and exit; they must not run concurrently.
         'smoke-po-import-skip-duplicates.ps1'

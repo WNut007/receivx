@@ -292,7 +292,7 @@ public class PullRepository : IPullRepository
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
-            ORDER BY pi.SortOrder, pi.ItemCode, piw.HourOfDay;";
+            ORDER BY pi.ItemCode, pi.VendorCode, pi.SortOrder, piw.HourOfDay;";
 
         using var conn = _factory.Create();
 
@@ -381,7 +381,25 @@ public class PullRepository : IPullRepository
             NewCount = summary.NewCount,
             WindowsTotal = summary.WindowsTotal,
             WindowsPending = summary.WindowsPending,
-            Items = itemsByGuid.Values.OrderBy(i => i.SortOrder).ThenBy(i => i.ItemCode).ToList(),
+            // Ordered by SKU, not by insertion order (same rule as itemsSql above).
+            // VendorCode second because a SKU carried by two storers is two legitimate
+            // rows (fa8a0e2): they belong next to each other, and a storer split that
+            // lands at MAX(SortOrder)+1 must not fall to the bottom of the grid.
+            // Ordinal to match ItemKey — a culture-aware compare orders these machine
+            // codes differently depending on the host locale.
+            //
+            // SortOrder is the last key so two rows can never swap between loads, and
+            // it stays the last key. It carries no unique constraint, so all three can
+            // in principle tie; zero groups do today across 51,960 rows. Do not
+            // "complete" this with .ThenBy(i => i.Id) — an Id tiebreaker pins the order
+            // back to insertion sequence, the exact thing this ordering moves away
+            // from. A tie appearing is a data question worth noticing, not one to bury
+            // under a GUID.
+            Items = itemsByGuid.Values
+                .OrderBy(i => i.ItemCode, StringComparer.Ordinal)
+                .ThenBy(i => i.VendorCode, StringComparer.Ordinal)
+                .ThenBy(i => i.SortOrder)
+                .ToList(),
         };
     }
 
@@ -510,7 +528,7 @@ public class PullRepository : IPullRepository
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
-            ORDER BY pi.SortOrder, pi.ItemCode, piw.HourOfDay;";
+            ORDER BY pi.ItemCode, pi.VendorCode, pi.SortOrder, piw.HourOfDay;";
 
         using var conn = _factory.Create();
         var rows = await conn.QueryAsync<PullItemRow>(
@@ -618,7 +636,12 @@ public class PullRepository : IPullRepository
                 });
             }
         }
-        return byGuid.Values.OrderBy(i => i.SortOrder).ThenBy(i => i.ItemCode);
+        // Same order as GetByIdAsync — SKU, then storer, then SortOrder as the
+        // final tiebreaker. See the comment there for why.
+        return byGuid.Values
+            .OrderBy(i => i.ItemCode, StringComparer.Ordinal)
+            .ThenBy(i => i.VendorCode, StringComparer.Ordinal)
+            .ThenBy(i => i.SortOrder);
     }
 
     private sealed class PullItemRow

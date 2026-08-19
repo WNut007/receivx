@@ -51,6 +51,11 @@
   let _previewBlocked = false;
   let items = [];
 
+  // UTF-16 code-unit compare, the JS counterpart of StringComparer.Ordinal.
+  // Used for the grid order (see ingestPullDetail); NOT localeCompare, which
+  // would order machine codes differently depending on the host locale.
+  const cmpOrdinal = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+
   function loadPullWarehouse(pullId, whCode) {
     currentPull = pullId;
     items = (pullData[pullId] && pullData[pullId][whCode]) || [];
@@ -1829,7 +1834,20 @@
     currentPullHourCapLocked = !!pd.lockHourCap;   // db/047 §2f
 
     const mapped = (pd.items || [])
-      .sort((a,b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      // Order matches PullRepository (SKU, storer, SortOrder) so the grid, the
+      // drawer and the Excel export below all read the same. Sorting on sortOrder
+      // alone used to override the server order here, which put a storer split
+      // appended at MAX(SortOrder)+1 at the bottom of the grid, away from its
+      // sibling. `<`/`>` on strings is a UTF-16 ordinal compare — the JS
+      // counterpart of StringComparer.Ordinal; localeCompare would reorder these
+      // machine codes per host locale. A missing storer collapses to '' and sorts
+      // first, the same bucket SQL puts a NULL VendorCode in. sortOrder stays last
+      // with nothing behind it on purpose — read the note in
+      // PullRepository.GetByIdAsync before adding a further tiebreaker here.
+      .sort((a, b) =>
+        cmpOrdinal(a.itemCode || '', b.itemCode || '') ||
+        cmpOrdinal(a.vendorCode || '', b.vendorCode || '') ||
+        ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)))
       .map(i => {
         const schedule = {};
         for (const w of (i.windows || [])) {
