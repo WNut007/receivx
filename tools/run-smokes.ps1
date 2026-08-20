@@ -47,6 +47,12 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-6.1.ps1'
         'smoke-phase-6.2.ps1'
         'smoke-phase-6.3.ps1'
+        # Drawer maximize + copy-row. Sits next to 6.3 because it covers the
+        # same surface, but is its own file: 6.3 is scoped to the v2.1
+        # items-grid wiring and should not start failing for later features.
+        # Lifts the row serialiser out of dashboard.js and runs it in node, so
+        # NODE MUST BE ON PATH. The live section skips without the dev server.
+        'smoke-pull-drawer-actions.ps1'
         'smoke-confirm-modal.ps1'
         'verify-hourcap-6.1.ps1'
         'smoke-hourcap-6.2.ps1'

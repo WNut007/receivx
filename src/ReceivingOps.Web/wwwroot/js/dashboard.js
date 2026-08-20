@@ -738,8 +738,33 @@
     }
   }
 
+  // ---- maximize / restore -------------------------------------------------
+  //
+  // Two states, no drag handle, no stored width. Nothing here binds a key: Esc
+  // stays Bootstrap's, which CLOSES the drawer. Overloading it to restore first
+  // would strand someone who hit Esc to get out.
+  const maxBtn = document.getElementById('d-maximize');
+  const MAX_LABEL = { expand: 'ขยายเต็มจอ', restore: 'ย่อกลับ' };
+  function setMaximized(on) {
+    drawerEl.classList.toggle('is-maximized', on);
+    if (!maxBtn) return;
+    const label = on ? MAX_LABEL.restore : MAX_LABEL.expand;
+    maxBtn.setAttribute('aria-label', label);
+    maxBtn.setAttribute('title', label);
+    maxBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const i = maxBtn.querySelector('i');
+    if (i) i.className = on ? 'bi bi-arrows-angle-contract' : 'bi bi-arrows-angle-expand';
+  }
+  maxBtn?.addEventListener('click', () => {
+    setMaximized(!drawerEl.classList.contains('is-maximized'));
+  });
+
   drawerEl.addEventListener('hidden.bs.offcanvas', () => {
     selectedPullId = null;
+    // The state does not persist across opens — a different pull starts
+    // restored. Resetting on hide rather than on show also covers the Esc path,
+    // which never goes through openDrawer.
+    setMaximized(false);
     document.querySelectorAll('.card-pull.selected').forEach(c => c.classList.remove('selected'));
   });
 
@@ -961,6 +986,86 @@
     renderItemsTable();
   }
 
+  // ---- clipboard: one row, tab-separated ---------------------------------
+  //
+  // Serialised from the ITEM OBJECT, never from the rendered cells. Reading the
+  // DOM would inherit the em-dash placeholders and would depend on which columns
+  // happen to be scrolled into view, so the result would change with scroll
+  // position — a wrong paste nobody notices.
+  //
+  // These four functions are lifted out of this file and executed in node by
+  // smoke-pull-drawer-actions.ps1, so they must stay free of the DOM, of esc(),
+  // and of anything else that needs a browser. Keep them that way.
+
+  // Placeholder cells render an em-dash on screen; on the clipboard they must be
+  // EMPTY. A dash in a spreadsheet cell is data — it breaks any formula or filter
+  // downstream, and it turns an empty field into a non-empty one for anything
+  // counting blanks.
+  //
+  // Tabs and newlines inside a value collapse to a single space. Description is
+  // free text straight from the ERP, and one stray newline would turn a one-row
+  // copy into two lines that paste as two rows.
+  function cleanCell(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v).trim();
+    if (s === '' || s === '—') return '';
+    return s.replace(/[\t\r\n]+/g, ' ');
+  }
+
+  // "CODE · NAME", falling back to whichever half exists. Shared with
+  // renderItemsTable so the copied value cannot drift from the displayed one.
+  function vendorDisplay(it) {
+    const code = cleanCell(it.vendorCode);
+    const name = cleanCell(it.vendorName);
+    if (code && name) return code + ' · ' + name;
+    return code || name;
+  }
+
+  // Column order follows the ITEMS table header, with one deliberate exception:
+  // WINDOWS renders as "1 · 2,100 exp · 0 rcv" and copies as THREE fields —
+  // count, expected, received — as raw integers.
+  //
+  // Split, not one cell, for two reasons. The export sheets are the tiebreaker
+  // and they write quantities as numeric cells, never as a composite string
+  // (PosExportJob.cs:157/222, TransactionsExportJob.cs:163). And the displayed
+  // form runs through toLocaleString(), so "2,100" would paste as text whose
+  // meaning depends on the reader's locale — the exact "formatting Excel then
+  // misreads" case. A composite string is neither readable as a number nor
+  // computable.
+  //
+  // 13 header columns -> 15 fields. The actions column carries controls, not
+  // data, and contributes nothing.
+  function itemRowValues(it) {
+    const wins = it.windows || [];
+    let exp = 0;
+    let rcv = 0;
+    for (const w of wins) {
+      exp += w.expectedQty || 0;
+      rcv += w.receivedQty || 0;
+    }
+    return [
+      cleanCell(it.itemCode),
+      cleanCell(it.description),
+      vendorDisplay(it),
+      cleanCell(it.tag),
+      cleanCell(it.status),
+      String(wins.length),
+      String(exp),
+      String(rcv),
+      cleanCell(it.productFamily),
+      cleanCell(it.fromSubInventory),
+      cleanCell(it.toSubInventory),
+      cleanCell(it.trialId),
+      cleanCell(it.location),
+      cleanCell(it.phase),
+      cleanCell(it.specialControl)
+    ];
+  }
+
+  function serializeItemRow(it) {
+    return itemRowValues(it).join('\t');
+  }
+
   function renderItemsTable() {
     const tbody = document.getElementById('d-items-tbody');
     const empty = document.getElementById('d-items-empty');
@@ -977,9 +1082,9 @@
       const windows = it.windows || [];
       const exp = windows.reduce((a, w) => a + (w.expectedQty || 0), 0);
       const rcv = windows.reduce((a, w) => a + (w.receivedQty || 0), 0);
-      const vendor = it.vendorCode
-        ? esc(it.vendorCode) + (it.vendorName ? ' · ' + esc(it.vendorName) : '')
-        : (it.vendorName ? esc(it.vendorName) : '—');
+      // Same string the clipboard gets, so the two can never disagree.
+      const vendorText = vendorDisplay(it);
+      const vendor = vendorText ? esc(vendorText) : '—';
       const tagCell = it.tag
         ? '<span class="badge tag-' + esc(it.tag) + '">' + esc(it.tag) + '</span>'
         : '<span class="text-muted">—</span>';
@@ -1004,6 +1109,7 @@
         erp(it.phase) +
         erp(it.specialControl) +
         '<td class="actions-col">' +
+          '<button class="btn btn-link copy-row-btn" data-act="copy" title="Copy row" aria-label="Copy row"><i class="bi bi-clipboard"></i></button>' +
           '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
           '<button class="btn btn-link" data-act="erp" title="Edit ERP fields"><i class="bi bi-tag"></i></button>' +
           '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
@@ -1025,7 +1131,41 @@
     else if (act === 'delete') deleteItem(itemId);
     else if (act === 'windows') openWindowsModal(itemId);
     else if (act === 'erp') openExtendedFieldsModal(itemId);
+    else if (act === 'copy') copyItemRow(itemId, btn);
   });
+
+  // Brief feedback on the button itself — no toast. A silent success is
+  // indistinguishable from a failure, which for a clipboard write is the one
+  // outcome the feature cannot have.
+  function flashCopyState(btn, cls, icon) {
+    const i = btn.querySelector('i');
+    btn.classList.remove('is-done', 'is-failed');
+    btn.classList.add(cls);
+    if (i) i.className = 'bi ' + icon;
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => {
+      btn.classList.remove('is-done', 'is-failed');
+      if (i) i.className = 'bi bi-clipboard';
+    }, 1500);
+  }
+
+  async function copyItemRow(itemId, btn) {
+    const it = drawerItems.find(x => String(x.id) === String(itemId));
+    if (!it) return;
+    // writeText needs a secure context. Production is HTTPS and localhost
+    // counts as secure, so this branch is the unusual one — but an absent API
+    // would otherwise be a silent no-op that looks exactly like a copy.
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      flashCopyState(btn, 'is-failed', 'bi-x-lg');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(serializeItemRow(it));
+      flashCopyState(btn, 'is-done', 'bi-check-lg');
+    } catch {
+      flashCopyState(btn, 'is-failed', 'bi-x-lg');
+    }
+  }
 
   // ---- Add Item modal ----------------------------------------------------
   function openAddItemModal() {

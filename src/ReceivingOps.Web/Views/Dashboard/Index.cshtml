@@ -172,7 +172,18 @@
             <div class="drawer-title" id="d-title">—</div>
             <div class="drawer-subtitle" id="d-subtitle">—</div>
         </div>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        @* Maximize / restore. Two states only — no drag handle, no stored width.
+           Labels are Thai per the brief and swap with state; aria-pressed carries
+           the state for assistive tech. Esc is NOT wired here: Bootstrap's own
+           offcanvas keyboard handling closes the drawer, and someone hitting Esc
+           out of a maximized drawer expects to be out, not merely restored. *@
+        <div class="drawer-header-actions">
+            <button type="button" class="btn-drawer-max" id="d-maximize"
+                    aria-label="ขยายเต็มจอ" title="ขยายเต็มจอ" aria-pressed="false">
+                <i class="bi bi-arrows-angle-expand"></i>
+            </button>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
     </div>
 
     <div class="offcanvas-body">

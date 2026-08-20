@@ -795,6 +795,44 @@
      width below the breakpoint as a fallback). */
   #detailDrawer.offcanvas { width: min(900px, 95vw); }
 
+  /* Maximize. The items table carries 13 data columns plus an actions column
+     and does not fit 900px, so reading a row means panning sideways and losing
+     the code column. Toggling .is-maximized widens the panel to the viewport,
+     at which point .items-table-wrap's overflow-x has nothing left to scroll.
+
+     The id is repeated deliberately. The rule above is (id + class); a bare
+     .is-maximized would lose the cascade to it, and the toggle would look
+     wired up while nothing moved.
+
+     width: 100%, NOT 100vw. For a fixed-position element a percentage resolves
+     against the viewport EXCLUDING the scrollbar gutter, while 100vw includes
+     it — 100vw pushes the panel past the right edge and that is exactly how
+     the page behind starts panning sideways. */
+  #detailDrawer.offcanvas.is-maximized { width: 100%; }
+
+  /* Two icon controls in the drawer header. .btn-close keeps Bootstrap's own
+     treatment; the maximize control is sized to sit level with it. */
+  .drawer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .btn-drawer-max {
+    background: none;
+    border: 0;
+    padding: 2px 5px;
+    line-height: 1;
+    border-radius: 4px;
+    color: var(--text-muted);
+    transition: color .12s ease, background .12s ease;
+  }
+  .btn-drawer-max:hover,
+  .btn-drawer-max:focus-visible {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .btn-drawer-max i { font-size: 15px; }
+
   /* v2.1 Phase 6.3 — items grid + add/edit/windows modals */
   .items-table-wrap { overflow-x: auto; }
   .items-table { font-size: 13px; }
@@ -812,7 +850,27 @@
     border-bottom: 1px solid var(--border);
     padding: 8px 10px;
   }
-  .items-table .actions-col { width: 110px; text-align: right; white-space: nowrap; }
+  /* 138px, up from 110px, for the copy-row control added alongside the four
+     existing ones. nowrap would have grown the column anyway; stating it keeps
+     the width predictable instead of dependent on icon metrics. */
+  .items-table .actions-col { width: 138px; text-align: right; white-space: nowrap; }
+
+  /* Copy-row trigger: revealed on row hover, but ALWAYS shown on focus so it
+     is reachable by keyboard, and held visible while it reports success or
+     failure so the confirmation is not lost the moment the pointer moves off.
+     opacity rather than display/visibility — the button has to stay in the tab
+     order, and it must not reflow the row when it appears. */
+  .items-table td.actions-col .copy-row-btn {
+    opacity: 0;
+    transition: opacity .12s ease, color .12s ease;
+  }
+  .items-table tr:hover td.actions-col .copy-row-btn,
+  .items-table td.actions-col .copy-row-btn:focus,
+  .items-table td.actions-col .copy-row-btn:focus-visible,
+  .items-table td.actions-col .copy-row-btn.is-done,
+  .items-table td.actions-col .copy-row-btn.is-failed { opacity: 1; }
+  .items-table td.actions-col .copy-row-btn.is-done   { color: var(--complete); }
+  .items-table td.actions-col .copy-row-btn.is-failed { color: var(--over); }
   /* Phase 9.1 — ERP-sourced columns sit in a visually grouped band so they
      read as "external metadata" rather than another row of operator inputs. */
   .items-table th.erp-col,
