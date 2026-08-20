@@ -277,14 +277,23 @@ public class ErpSyncJob
 
                 sourceTotals[plan.Source.SourceName] = new PerSourceTotals
                 {
-                    SourceRowCount = draft.SourceRowCount,
-                    DraftPullCount = draft.Pulls.Count,
-                    Created        = outcome.Created,
-                    Updated        = outcome.Updated,
-                    SkippedClosed  = outcome.SkippedClosed,
-                    Errors         = outcome.Errors,
-                    ItemsAdded     = outcome.ItemsAdded,
-                    ItemsCanceled  = outcome.ItemsCanceled,
+                    SourceRowCount     = draft.SourceRowCount,
+                    DraftPullCount     = draft.Pulls.Count,
+                    Created            = outcome.Created,
+                    Updated            = outcome.Updated,
+                    SkippedClosed      = outcome.SkippedClosed,
+                    SkippedSynthesised = outcome.SkippedSynthesised,
+                    Errors             = outcome.Errors,
+                    ItemsAdded         = outcome.ItemsAdded,
+                    ItemsCanceled      = outcome.ItemsCanceled,
+
+                    SkippedRowCount        = draft.SkippedRowCount,
+                    WipSkippedRowCount     = draft.WipSkippedRowCount,
+                    WipSkippedPullCount    = draft.WipSkippedPullCount,
+                    WipMixedPullCount      = draft.WipMixedPullCount,
+                    WipMixedNonWipRowCount = draft.WipMixedNonWipRowCount,
+                    WipMixedNonWipQty      = draft.WipMixedNonWipQty,
+                    WipMixedPullNumbers    = new List<string>(draft.WipMixedPullNumbers),
                 };
             }
 
@@ -296,13 +305,35 @@ public class ErpSyncJob
             await _logRepo.UpdateSourceTotalsAsync(runId,
                 JsonSerializer.Serialize(sourceTotals));
 
+            // The existing c/u/s/e tokens keep their spelling, so anything
+            // parsing this line still finds them. Skip figures are appended.
             var perSourceSummary = string.Join(", ",
                 sourceTotals.Select(kv =>
-                    $"{kv.Key}=(c={kv.Value.Created},u={kv.Value.Updated},s={kv.Value.SkippedClosed},e={kv.Value.Errors})"));
+                    $"{kv.Key}=(c={kv.Value.Created},u={kv.Value.Updated},s={kv.Value.SkippedClosed},e={kv.Value.Errors}," +
+                    $"synthSkip={kv.Value.SkippedSynthesised},wipSkipRows={kv.Value.WipSkippedRowCount}," +
+                    $"wipSkipSheets={kv.Value.WipSkippedPullCount},rowSkip={kv.Value.SkippedRowCount})"));
+
+            // Mixed WIP/non-WIP sheets are dropped whole, which costs non-WIP
+            // rows nobody asked to lose. Two such sheets exist upstream, so the
+            // event is rare enough to disappear inside a counter. It gets its
+            // own sentence naming the sheets, or no sentence at all.
+            var mixed = sourceTotals.Where(kv => kv.Value.WipMixedPullCount > 0).ToList();
+            var mixedNote = mixed.Count == 0 ? "" :
+                " — mixed WIP/non-WIP sheets dropped whole: " + string.Join("; ", mixed.Select(kv =>
+                    $"{kv.Key} {kv.Value.WipMixedPullCount} sheet(s) costing " +
+                    $"{kv.Value.WipMixedNonWipRowCount} non-WIP row(s) / {kv.Value.WipMixedNonWipQty} units" +
+                    (kv.Value.WipMixedPullNumbers.Count > 0
+                        ? " [" + string.Join(",", kv.Value.WipMixedPullNumbers.Take(5)) + "]"
+                        : "")));
+
+            // dbo.AuditLog.Message is NVARCHAR(1000), and IAuditService swallows
+            // write failures per §8, so an over-long message does not error - it
+            // silently leaves no audit row at all. That is the db/032 defect
+            // exactly; cap the string rather than re-learn it.
             await _audit.WriteSystemAsync(actorName, "etl-end", "ErpSync",
                 runId.ToString(),
-                $"[run {runId}] Completed in {sw.ElapsedMilliseconds}ms — " +
-                $"sources=[{string.Join(",", sourceTotals.Keys)}] — {perSourceSummary}");
+                Cap($"[run {runId}] Completed in {sw.ElapsedMilliseconds}ms — " +
+                    $"sources=[{string.Join(",", sourceTotals.Keys)}] — {perSourceSummary}{mixedNote}"));
         }
         catch (Exception ex)
         {
@@ -326,6 +357,12 @@ public class ErpSyncJob
             _mutex.Release();
         }
     }
+
+    /// <summary>
+    /// Trims an audit message to <c>dbo.AuditLog.Message</c>'s NVARCHAR(1000).
+    /// </summary>
+    private static string Cap(string s, int max = 1000)
+        => s.Length <= max ? s : s.Substring(0, max - 1) + "\u2026";
 
     // Per-source defaults — recurring path. Adding a new source means
     // adding a switch arm here AND a Sources sub-property on ErpSyncOptions.
@@ -364,8 +401,39 @@ public class ErpSyncJob
         public int Created { get; set; }
         public int Updated { get; set; }
         public int SkippedClosed { get; set; }
+
+        /// <summary>Pulls the feed refused to touch because the PO import made them.</summary>
+        public int SkippedSynthesised { get; set; }
+
         public int Errors { get; set; }
         public int ItemsAdded { get; set; }
         public int ItemsCanceled { get; set; }
+
+        /// <summary>
+        /// Rows the transform dropped for ordinary reasons (blank PRS_ID, blank
+        /// SKU, non-positive QTY). ErpSyncDraft has carried this since Phase
+        /// 10.2; until now nothing read it, so no run ever reported a dropped
+        /// row. Surfaced here rather than as a new ErpSyncLog column because
+        /// SourceTotals is already JSON and needs no migration.
+        /// </summary>
+        public int SkippedRowCount { get; set; }
+
+        /// <summary>Rows dropped by the WIP sheet filter (every row of a WIP sheet).</summary>
+        public int WipSkippedRowCount { get; set; }
+
+        /// <summary>Distinct pull sheets dropped by the WIP filter.</summary>
+        public int WipSkippedPullCount { get; set; }
+
+        /// <summary>Of those, how many also carried non-WIP rows.</summary>
+        public int WipMixedPullCount { get; set; }
+
+        /// <summary>Non-WIP rows dropped as collateral from mixed sheets.</summary>
+        public int WipMixedNonWipRowCount { get; set; }
+
+        /// <summary>Summed QTY of those non-WIP rows - units that stop being fed.</summary>
+        public int WipMixedNonWipQty { get; set; }
+
+        /// <summary>PRS_IDs of the mixed sheets, so the rare case is findable.</summary>
+        public List<string> WipMixedPullNumbers { get; set; } = new();
     }
 }

@@ -82,6 +82,12 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-10-7-erp-bpi.ps1'
         'smoke-phase-13-7-erp-prb.ps1'
         'smoke-phase-13-9-trigger-config.ps1'
+        # The ERP feed must not create, update, or take over a WIP pull —
+        # those come from the PO import, which builds the pull AND the PO it
+        # receives against. Sections 1-2 always run (source shape + a DB-free
+        # Transform via ErpUpsertHarness); sections 3-7 need the ERP host and
+        # skip cleanly without it.
+        'smoke-erp-wip-skip.ps1'
         'smoke-phase-11-1-app-settings.ps1'
         'smoke-phase-11-2-config-ui.ps1'
         'smoke-phase-12-2-po-import-reader.ps1'

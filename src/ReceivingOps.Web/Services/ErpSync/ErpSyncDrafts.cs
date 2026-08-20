@@ -17,9 +17,73 @@ namespace ReceivingOps.Web.Services.ErpSync;
 /// </summary>
 public class ErpSyncDraft
 {
+    /// <summary>
+    /// How many PRS_IDs of a mixed sheet are named in the run summary before
+    /// the list is cut off. Mixed sheets are rare (2 upstream, all-time), so
+    /// the cap is a runaway guard rather than an expected truncation.
+    /// </summary>
+    public const int MixedPullNumberSampleCap = 20;
+
     public List<PullDraft> Pulls { get; set; } = new();
     public int SourceRowCount { get; set; }
+
+    /// <summary>
+    /// Rows the transform dropped for ordinary reasons: blank PRS_ID, blank
+    /// SKU, non-positive QTY.
+    ///
+    /// <para>Counted since Phase 10.2 and, until the WIP filter landed, read by
+    /// absolutely nothing — not <c>ErpSyncLogTotals</c>, not
+    /// <c>dbo.ErpSyncLog</c>, not the <c>etl-end</c> audit line. A counter
+    /// nothing reads is worse than no counter, because a run that dropped 647
+    /// rows looked exactly like a run that dropped none. It is now carried into
+    /// the per-source totals JSON alongside the WIP figures.</para>
+    /// </summary>
     public int SkippedRowCount { get; set; }
+
+    /// <summary>
+    /// Rows dropped because their pull sheet carries a WIP storer. Counts
+    /// EVERY row of such a sheet, not only the WIP-vendor rows — the filter is
+    /// sheet-grained, so the whole sheet leaves the draft together.
+    /// </summary>
+    public int WipSkippedRowCount { get; set; }
+
+    /// <summary>Distinct pull sheets dropped by the WIP filter.</summary>
+    public int WipSkippedPullCount { get; set; }
+
+    /// <summary>
+    /// Of <see cref="WipSkippedPullCount"/>, how many also carried non-WIP
+    /// rows. These are the sheets where the sheet-grain rule costs something
+    /// real, so they are counted separately rather than folded into the total.
+    /// </summary>
+    public int WipMixedPullCount { get; set; }
+
+    /// <summary>Non-WIP rows dropped as collateral from mixed sheets.</summary>
+    public int WipMixedNonWipRowCount { get; set; }
+
+    /// <summary>Summed QTY of those non-WIP rows — the units that stop being fed.</summary>
+    public int WipMixedNonWipQty { get; set; }
+
+    /// <summary>PRS_IDs of the mixed sheets, capped at <see cref="MixedPullNumberSampleCap"/>.</summary>
+    public List<string> WipMixedPullNumbers { get; } = new();
+
+    /// <summary>
+    /// Records one sheet dropped by the WIP filter. Lives here rather than in
+    /// each source so the two readers cannot drift on what counts as mixed or
+    /// on where the sample list is cut.
+    /// </summary>
+    public void NoteWipSkippedSheet(string pullNumber, int totalRows, int nonWipRows, int nonWipQty)
+    {
+        WipSkippedRowCount += totalRows;
+        WipSkippedPullCount++;
+
+        if (nonWipRows <= 0) return;
+
+        WipMixedPullCount++;
+        WipMixedNonWipRowCount += nonWipRows;
+        WipMixedNonWipQty += nonWipQty;
+        if (WipMixedPullNumbers.Count < MixedPullNumberSampleCap)
+            WipMixedPullNumbers.Add(pullNumber);
+    }
 
     /// <summary>Total number of distinct (PRS_ID, synthesized ItemCode) tuples projected.</summary>
     public int ItemCount => Pulls.Sum(p => p.Items.Count);

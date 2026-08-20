@@ -32,6 +32,11 @@ using ReceivingOps.Web.Services.ErpSync;
 //   rerun-stable        the same draft twice; second run must add/cancel nothing
 //   withdraw-one-storer storer B removed from the draft; only B may cancel
 //
+//   transform-wip-sheet     an all-WIP sheet produces no pull
+//   transform-wip-mixed     a mixed WIP/non-WIP sheet produces no pull either
+//   transform-wip-casing    WIP detection is case-insensitive substring
+//   transform-wip-and-clean a WIP sheet does not disturb an ordinary one
+//
 // Output is one JSON object on stdout so the smoke can assert on it, plus
 // human-readable lines on stderr. Exit code 0 = scenario ran (assertions are
 // the smoke's job), 2 = harness/infrastructure failure.
@@ -342,6 +347,52 @@ static class TransformScenarios
             Row("HARNESS-T3", "HARNESS-SKU-A", "5732", 100, "07:00"),
             Row("HARNESS-T3", "HARNESS-SKU-B", "5732", 200, "08:00"),
         },
+        // ------------------------------------------------------------------
+        // WIP sheet filter (sheet grain). WIP pulls are built by the PO
+        // import; the ERP feed must not create, update, or take one over.
+        // ------------------------------------------------------------------
+
+        // An all-WIP sheet: nothing survives, counters record what went.
+        "transform-wip-sheet" => new List<BpiPrsSource.BpiPrsRow>
+        {
+            Row("HARNESS-W1", "HARNESS-SKU-A", "WIPBP1", 100, "07:00"),
+            Row("HARNESS-W1", "HARNESS-SKU-B", "WIPBP1", 250, "08:00"),
+        },
+
+        // THE case the sheet grain exists for. A row-grain filter would leave
+        // this sheet in the draft carrying only its non-WIP item, and the
+        // upsert's orphan pass would then cancel the WIP item on the pull —
+        // canceling stock whose PO line may already carry ReceivedQty. Sheet
+        // grain drops the whole thing, so no pull is produced at all.
+        //
+        // Both non-WIP rows carry a positive QTY on purpose: the real upstream
+        // mixed sheet (0000023492) escapes a row-grain filter only because its
+        // one non-WIP row has QTY = 0 and the qty guard drops it anyway. Testing
+        // with a zero would test the luck, not the rule.
+        "transform-wip-mixed" => new List<BpiPrsSource.BpiPrsRow>
+        {
+            Row("HARNESS-W2", "HARNESS-SKU-A", "WIPBP3", 500, "07:00"),
+            Row("HARNESS-W2", "HARNESS-SKU-B", "76575",  900, "07:00"),
+            Row("HARNESS-W2", "HARNESS-SKU-C", "76575",  740, "09:00"),
+        },
+
+        // Case-insensitivity + substring, matching WipPullSynthesis.IsWipStorerCode.
+        // A code that merely CONTAINS wip in any casing is a WIP storer; the
+        // importer decides the same way, and the two must not drift.
+        "transform-wip-casing" => new List<BpiPrsSource.BpiPrsRow>
+        {
+            Row("HARNESS-W3", "HARNESS-SKU-A", "coi-WiPbp1", 100, "07:00"),
+        },
+
+        // A WIP sheet and an ordinary sheet in one batch: the ordinary one must
+        // come through completely untouched, items and quantities intact.
+        "transform-wip-and-clean" => new List<BpiPrsSource.BpiPrsRow>
+        {
+            Row("HARNESS-W4-WIP",   "HARNESS-SKU-A", "WIPBP1", 100, "07:00"),
+            Row("HARNESS-W4-CLEAN", "HARNESS-SKU-A", "5732",   300, "07:00"),
+            Row("HARNESS-W4-CLEAN", "HARNESS-SKU-B", "84600",  450, "11:00"),
+        },
+
         _ => throw new ArgumentException($"unknown transform scenario '{scenario}'"),
     };
 
@@ -363,9 +414,25 @@ static class TransformScenarios
         }),
     });
 
-    Console.WriteLine(JsonSerializer.Serialize(new { scenario, pulls = shaped }));
+    // Counters ride along with the pulls: a filter that drops rows silently is
+    // indistinguishable from a feed that shrank, so the smoke asserts on both
+    // what survived and what was reported as dropped.
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        scenario,
+        pulls = shaped,
+        skippedRowCount = draft.SkippedRowCount,
+        wipSkippedRowCount = draft.WipSkippedRowCount,
+        wipSkippedPullCount = draft.WipSkippedPullCount,
+        wipMixedPullCount = draft.WipMixedPullCount,
+        wipMixedNonWipRowCount = draft.WipMixedNonWipRowCount,
+        wipMixedNonWipQty = draft.WipMixedNonWipQty,
+        wipMixedPullNumbers = draft.WipMixedPullNumbers,
+    }));
     Console.Error.WriteLine($"[harness] transform '{scenario}': "
-        + $"{draft.Pulls.Sum(p => p.Items.Count)} item(s) from {rows.Count} row(s)");
+        + $"{draft.Pulls.Sum(p => p.Items.Count)} item(s) from {rows.Count} row(s); "
+        + $"wipSkipped={draft.WipSkippedRowCount} row(s) / {draft.WipSkippedPullCount} sheet(s), "
+        + $"mixed={draft.WipMixedPullCount}");
     return 0;
     }
 

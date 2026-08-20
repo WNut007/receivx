@@ -80,8 +80,9 @@ public class ErpUpsertService : IErpUpsertService
 
         _log.LogInformation(
             "ErpUpsert applied — created={Created}, updated={Updated}, " +
-            "skippedClosed={Skipped}, errors={Errors}, itemsAdded={Added}, itemsCanceled={Canceled}",
-            result.Created, result.Updated, result.SkippedClosed,
+            "skippedClosed={Skipped}, skippedSynthesised={SkippedSynth}, errors={Errors}, " +
+            "itemsAdded={Added}, itemsCanceled={Canceled}",
+            result.Created, result.Updated, result.SkippedClosed, result.SkippedSynthesised,
             result.Errors, result.ItemsAdded, result.ItemsCanceled);
 
         return result;
@@ -126,6 +127,54 @@ public class ErpUpsertService : IErpUpsertService
                 PullNumber = pull.PullNumber,
                 Outcome = "created",
                 Detail = $"items={pull.Items.Count}",
+            });
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // The ERP feed does not own pulls the PO import synthesised.
+        //
+        // WIP pull sheets arrive through the importer, which builds the pull,
+        // its items, its windows, and a purchase order to receive against. This
+        // feed knows nothing about that synthetic PO, so an item the draft omits
+        // is canceled below while its PO line keeps the ReceivedQty already
+        // booked against it — a canceled pull item with live received quantity
+        // behind it and nothing to detect the mismatch.
+        //
+        // BpiPrsSource / PrbPrsSource now drop WIP sheets before they ever reach
+        // a draft, so in the ordinary case this guard never sees one. It is here
+        // because the two defences key on different things and can disagree: the
+        // source filter keys on the STORER CODE, this keys on PROVENANCE. A
+        // synthesised pull whose sheet later appears in the feed under a non-WIP
+        // storer passes the filter and arrives right here, and nothing upstream
+        // forbids that.
+        //
+        // Measured 2026-08-20: 964 ERP-fed pulls carry WIP items against 25
+        // synthesised ones, the pull-number ranges are disjoint, and not one of
+        // the 25 has ever drawn an etl-* audit row. That is why the takeover has
+        // never fired — a property of the data, not of the code. Sheet filtering
+        // alone would leave the invariant resting on that coincidence.
+        //
+        // Checked BEFORE the closed check on purpose: one of the 25 synthesised
+        // pulls is already closed, and attributing that skip to "closed" would
+        // undercount this guard and hide the fact that it was needed at all.
+        // ------------------------------------------------------------------
+        if (string.Equals(existing.Origin, WipPullSynthesis.OriginPoImport, StringComparison.Ordinal))
+        {
+            // Nothing was written; roll back the open tx and record the skip
+            // standalone, same shape as the closed-pull path below.
+            tx.Rollback();
+            await _audit.WriteSystemAsync(actorName, "etl-skip", "Pull",
+                pull.PullNumber,
+                $"[run {runId}]{srcTag} Skipped — pull was synthesised by the PO import " +
+                $"(Origin={WipPullSynthesis.OriginPoImport}); the ERP feed does not update, " +
+                "add to, or cancel these. Nothing on the pull was read or written.", ct);
+            result.SkippedSynthesised++;
+            result.PullOutcomes.Add(new PullOutcome
+            {
+                PullNumber = pull.PullNumber,
+                Outcome = "skipped-synthesised",
+                Detail = null,
             });
             return;
         }
@@ -384,6 +433,16 @@ public class ErpUpsertService : IErpUpsertService
             result.ItemsCanceled++;
 
             // db/050 — detection only, never a behaviour change.
+            //
+            // NOW UNREACHABLE BY DESIGN — and deliberately kept. The Origin
+            // guard in UpsertOneAsync returns before UpdatePullAsync is ever
+            // called for a synthesised pull, so isSynthesised is false on every
+            // path that reaches here. Deleting this block would mean that
+            // removing the guard silently restores the original hole with no
+            // trail at all. Left in place it is a tripwire instead: an
+            // 'etl-cancel-synth' audit row appearing in production means the
+            // guard was bypassed or removed, and the row names the item, the
+            // storer, and the ReceivedQty stranded behind it.
             //
             // When the ERP finally does feed a pull the PO import synthesised,
             // this takeover is mostly graceful: PullDate is refreshed, item

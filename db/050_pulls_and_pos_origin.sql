@@ -58,6 +58,57 @@
      'po-import'   — synthesised by the PO Excel import (WIP pull sheets).
 
    ---------------------------------------------------------------------------
+   CORRECTION — recorded 2026-08-20. READ THIS BEFORE ACTING ON THE PARAGRAPH
+   ABOVE.
+   ---------------------------------------------------------------------------
+   The claim above is left exactly as written because it was true of what it
+   measured. It is NOT true of the sentence it reads like.
+
+   STALE CLAIM: "For pull sheets whose STORER CODE contains WIP, the ERP never
+   sends the Receive feed."
+
+   That reads as a property of WIP. It was a property of THOSE 25 SHEETS. The
+   measurement — 647 of 4,401 rows, 25 sheets, 68,579 units, zero with a Pulls
+   row — is still accurate for the 2026-08-16 export. It was never evidence
+   that the feed does not carry WIP at all, and it does.
+
+   WHAT IS TRUE: the ERP feed is the DOMINANT producer of WIP pulls, and was
+   actively creating them right up to the day this correction was written.
+   Measured 2026-08-20 against the dev database and the live ERP host:
+
+     - 964 pulls carrying WIP items have Origin IS NULL (ERP-fed), against 25
+       with Origin = 'po-import'.
+     - Latest ERP-fed WIP PullDate: 2026-08-19 — the previous day. 31 in the
+       last 7 days, 179 in the last 30.
+     - dbo.BPI_PRS carries 8,784 WIP rows across 475 sheets (1,144,765 units)
+       in a 30-day window — 24% of its rows. dbo.PRB_PRS carries zero WIP rows
+       across all 253,992 of its rows.
+     - The two populations are disjoint. The 25 synthesised sheets run
+       0000028073-0000028388; no ERP-fed WIP pull falls in that range, and not
+       one of the 25 has ever drawn an etl-* audit row. Both statements hold at
+       once: the feed carries WIP, and it never fed these particular sheets.
+
+   WHY THE DISTINCTION IS LOAD-BEARING NOW: since 2026-08-20 the ERP readers
+   (BpiPrsSource / PrbPrsSource) drop every pull sheet carrying a WIP storer,
+   at sheet grain, before a draft exists — and ErpUpsertService refuses to
+   update or cancel any pull with Origin = 'po-import'. A reader who takes the
+   stale claim at face value concludes the feed never fed WIP, cannot see what
+   either defence is for, and has a plausible-sounding reason to delete them.
+   Removing them re-opens the takeover: the feed omits an item the importer
+   synthesised, the item is canceled, and its purchase-order line keeps the
+   ReceivedQty already booked against it, with nothing to detect the mismatch.
+
+   Left in place rather than quietly overwritten, for the same reason the
+   db/047_STATUS.md migration ledger keeps its own corrected "not done" entry:
+   a document that asserts something which was true when written and quietly
+   stopped being true is more dangerous than one that says nothing, and this
+   one survived precisely because nothing forced it to be touched when the
+   feed's behaviour was measured.
+
+   See also: tools/smoke-erp-wip-skip.ps1, and the WIP filter comment blocks in
+   BpiPrsSource.Transform / ErpUpsertService.UpsertOneAsync.
+
+   ---------------------------------------------------------------------------
    VARCHAR(16), NULLABLE, NO DEFAULT, NO BACKFILL
    ---------------------------------------------------------------------------
    NULL is not "unknown origin" — it is the ordinary case, and it must stay the

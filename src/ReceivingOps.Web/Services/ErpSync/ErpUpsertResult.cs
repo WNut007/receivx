@@ -17,6 +17,14 @@ public class ErpUpsertResult
     public int SkippedClosed { get; set; }
 
     /// <summary>
+    /// Pulls skipped because <c>Pulls.Origin = 'po-import'</c> — the PO import
+    /// synthesised them and the ERP feed does not own them. Counted separately
+    /// from <see cref="SkippedClosed"/> because the reasons are unrelated: a
+    /// closed pull is finished, a synthesised pull is somebody else's.
+    /// </summary>
+    public int SkippedSynthesised { get; set; }
+
+    /// <summary>
     /// Pulls skipped because of an unrecoverable error (PullNumber too long,
     /// FK lookup failed, constraint violation, etc.). One entry per pull.
     /// </summary>
@@ -34,13 +42,13 @@ public class ErpUpsertResult
     /// </summary>
     public List<PullOutcome> PullOutcomes { get; set; } = new();
 
-    public int TotalProcessed => Created + Updated + SkippedClosed + Errors;
+    public int TotalProcessed => Created + Updated + SkippedClosed + SkippedSynthesised + Errors;
 }
 
 /// <summary>One row in <see cref="ErpUpsertResult.PullOutcomes"/>.</summary>
 public class PullOutcome
 {
     public string PullNumber { get; set; } = "";
-    public string Outcome { get; set; } = "";   // created|updated|skipped-closed|error
+    public string Outcome { get; set; } = "";   // created|updated|skipped-closed|skipped-synthesised|error
     public string? Detail { get; set; }         // error message, or short summary
 }
