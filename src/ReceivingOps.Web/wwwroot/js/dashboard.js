@@ -1244,9 +1244,30 @@
   let erpPrefill = null;
 
   function openAddItemModal(prefill) {
-    if (!itemAddModal || !selectedPullId) return;
+    // Bound as `() => openAddItemModal()`, never bare. A bare listener hands the
+    // DOM its PointerEvent as `prefill`, and an Event is truthy, so the
+    // `prefill ? ... : ''` reads below would all pull fields off the event.
+    // Normalising here too means a future re-binding degrades to the empty form
+    // rather than throwing halfway through populating it.
+    if (prefill instanceof Event) prefill = null;
+    // These three used to return silently. A dead button with no console line and
+    // no toast looks exactly like a broken one — which is how the PointerEvent
+    // bug above cost a full debugging session.
+    if (!itemAddModal) {
+      console.warn('[add-item] modal not initialised — bootstrap Modal instance missing');
+      return;
+    }
+    if (!selectedPullId) {
+      console.warn('[add-item] no pull selected');
+      showToast('Open a pull first', 'Select a pull before adding an item');
+      return;
+    }
     const p = pulls.find(x => x.pullId === selectedPullId);
-    if (!p) return;
+    if (!p) {
+      console.warn('[add-item] selected pull not in the loaded list', selectedPullId);
+      showToast('Pull not found', 'Refresh the dashboard and try again');
+      return;
+    }
     drawerPullIdForItems = selectedPullId;
     document.getElementById('iam-pull-label').textContent = p.id;
     document.getElementById('iam-item-code').value = prefill ? prefill.itemCode : '';
@@ -1260,7 +1281,9 @@
     erpPrefill = prefill || null;
 
     document.getElementById('iam-windows-tbody').innerHTML = '';
-    if (prefill && prefill.hours.length) {
+    // `prefill?.hours` rather than `prefill.hours`: a prefill shape that ever
+    // loses `hours` should fall through to the one-empty-row path, not throw.
+    if (Array.isArray(prefill?.hours) && prefill.hours.length) {
       // Hours carry; quantities come back blank and required. The operator is
       // changing the quantity anyway — that is one of the two reasons to
       // duplicate — and a zero would make the row read as settled everywhere.
@@ -1365,7 +1388,9 @@
     }
   }
 
-  document.getElementById('d-add-item')?.addEventListener('click', openAddItemModal);
+  // Arrow wrapper, never a bare `openAddItemModal` reference — a bare listener
+  // passes the PointerEvent in as `prefill`. smoke-add-item-binding.ps1 guards this.
+  document.getElementById('d-add-item')?.addEventListener('click', () => openAddItemModal());
   document.getElementById('iam-save')?.addEventListener('click', saveAddItem);
 
   // ---- Edit Item modal ---------------------------------------------------

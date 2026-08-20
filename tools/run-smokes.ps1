@@ -53,6 +53,11 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # Lifts the row serialiser out of dashboard.js and runs it in node, so
         # NODE MUST BE ON PATH. The live section skips without the dev server.
         'smoke-pull-drawer-actions.ps1'
+        # Guards the ADD ITEM binding: openAddItemModal must never be handed to
+        # the DOM bare, or the PointerEvent arrives as its prefill argument and
+        # the button goes inert. Lifts the function into node, so NODE MUST BE
+        # ON PATH. No dev server, no database.
+        'smoke-add-item-binding.ps1'
         'smoke-confirm-modal.ps1'
         'verify-hourcap-6.1.ps1'
         'smoke-hourcap-6.2.ps1'
