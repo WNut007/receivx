@@ -803,6 +803,13 @@ breadcrumb). Production must use Managed Identity or a vault — never a
 hardcoded SQL login.
 
 ## Tooling
+- **`docs/smoke-conventions.md` — read before writing or editing a smoke.**
+  Two rules learned from smokes that were green while proving nothing:
+  (1) when a check's subject is SOURCE TEXT, prove the assertion fails when
+  that subject changes, and prove your detector watches the same signal the
+  battery does (exit code, not a grep for `FAIL:`); (2) a smoke leaves the
+  database as it found it — namespace the fixture, purge on entry AND exit,
+  clean up on the failure path, and never `2>&1 | Out-Null` a cleanup.
 - `tools/run-smokes.ps1` — aggregate smoke runner (PowerShell 7+).
   Default battery = 16 suites; verify + phase smokes + legacy smokes.
   See `## Smoke test inventory` in memory's `receivx_build_state.md`.

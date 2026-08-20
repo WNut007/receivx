@@ -458,6 +458,42 @@ Re-run `tools/seed-summary-po-capacity.ps1` when it bites. The newer
 that is the pattern to use for new smokes. Retrofitting it to the older smokes
 is deliberately **out of scope** here.
 
+#### ADDENDUM — recorded 2026-08-20. A second leak this section does not cover.
+
+The paragraph above is correct as written, and measurement confirms its
+mechanism: `smoke-variance-outstanding-queries.ps1` and the DO-report smokes do
+delete their receipts and never restore `PurchaseOrderLines.ReceivedQty`.
+
+What it does not cover is that **the pulls, items and windows are not deleted
+either**, and have not been since `db/042`.
+
+`db/042` added `dbo.PullSignatures` with `FK_PullSig_Pull` as `NO_ACTION`, where
+`FK_PullItems_Pull` is `CASCADE`. A pull closed with a signature cannot be
+deleted until its signature row goes first, and no cleanup does that. The
+cleanups delete by `LIKE` in one set-based statement, so a single signed pull
+refuses the whole range and takes the unsigned rows with it. The receipt DELETE
+that runs first has no such blocker, which is why the receipts DO go and the
+pulls do not — and why the leak this section describes is real while the rows
+themselves quietly accumulate behind it.
+
+Measured 2026-08-20 before the purge: **148 stranded pulls** — 130 `PL-VQ-%`
+(oldest 2026-08-06, only 26 actually signed) and 18 `PL-DOR-%` (oldest
+2026-07-16, all 18 signed) — carrying 226 items and 244 windows. 218 of those
+windows still hold `ReceivedQty > 0` totalling 67,740 units against receipts
+that no longer exist, which is this section's drain made visible: the caches
+were never decremented and now have no ledger rows behind them at all.
+
+The failure was invisible because every cleanup ends `2>&1 | Out-Null`, which
+sends the SQL error to the same place as the success output. The smoke prints
+its cleanup step and reports ALL PASS.
+
+An earlier draft of this addendum claimed the receipts were never deleted
+either. That was wrong — corrected the same day, before the purge, against the
+counts above.
+
+Full account: `docs/defect-pull-signature-fk-blocks-smoke-cleanup.md`.
+The rule this violates: `docs/smoke-conventions.md` §2.
+
 ## Decisions locked (do not relitigate)
 
 - `IsClosed` on **`dbo.PullItemWindows`**, keyed `(PullItemId, HourOfDay)` —
