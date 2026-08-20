@@ -1066,6 +1066,60 @@
     return itemRowValues(it).join('\t');
   }
 
+  // ---- duplicate: map a source row to Add Item's initial values ------------
+  //
+  // Lifted out of this file and executed in node by
+  // smoke-pull-drawer-actions.ps1, so it must stay free of the DOM and of
+  // esc(), same rule as the serialiser above. It shares cleanCell with it, so
+  // an em-dash placeholder can never become the literal value of a duplicated
+  // field.
+  //
+  // CARRIED: the fields an operator duplicates a row in order to keep —
+  // identity, description, tag, remark, and the seven Phase 9.1 ERP columns.
+  // Sub-inventory, location and trial are the whole point; the four that the
+  // create payload already accepted are the ones easiest to retype.
+  //
+  // CLEARED:
+  //   vendorCode/vendorName — a different storer is the usual reason to
+  //     duplicate, and blank keeps the new row clear of the
+  //     (PullId, ItemCode, VendorCode) guard. When the SOURCE row has no
+  //     storer either, the pre-filled form reproduces the existing key exactly
+  //     and the server's 409 is what says so, at save time. That is deliberate:
+  //     a client-side pre-check would be guessing at the server's rule.
+  //   status — a duplicate of a canceled row is a new live row.
+  //   sortOrder — assigned by the server as for any new item.
+  //   receipts, close state, variance reason — those describe events that
+  //     happened to the source row, not properties of it.
+  //
+  // WINDOWS: the source row's HOURS carry; each quantity comes back blank and
+  // required. Zero is not "not yet known" in this system — isSettled() treats
+  // e <= 0 as settled, the console reports such a window as 'received', and the
+  // close gate and pending badge both test ExpectedQty > ReceivedQty. A row
+  // duplicated at zero would look finished the moment it existed, and its first
+  // real receipt would surface as an over-delivery needing a reason code.
+  function buildDuplicatePrefill(it) {
+    const hours = (it.windows || [])
+      .map(w => w.hourOfDay)
+      .filter(h => h !== null && h !== undefined)
+      .sort((a, b) => a - b);
+    return {
+      itemCode: cleanCell(it.itemCode),
+      description: cleanCell(it.description),
+      tag: cleanCell(it.tag),
+      remark: cleanCell(it.remark),
+      vendorCode: '',
+      vendorName: '',
+      productFamily: cleanCell(it.productFamily),
+      fromSubInventory: cleanCell(it.fromSubInventory),
+      toSubInventory: cleanCell(it.toSubInventory),
+      specialControl: cleanCell(it.specialControl),
+      trialId: cleanCell(it.trialId),
+      location: cleanCell(it.location),
+      phase: cleanCell(it.phase),
+      hours: hours
+    };
+  }
+
   function renderItemsTable() {
     const tbody = document.getElementById('d-items-tbody');
     const empty = document.getElementById('d-items-empty');
@@ -1110,6 +1164,7 @@
         erp(it.specialControl) +
         '<td class="actions-col">' +
           '<button class="btn btn-link copy-row-btn" data-act="copy" title="Copy row" aria-label="Copy row"><i class="bi bi-clipboard"></i></button>' +
+          '<button class="btn btn-link dup-row-btn" data-act="duplicate" title="Duplicate row" aria-label="Duplicate row"><i class="bi bi-files"></i></button>' +
           '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
           '<button class="btn btn-link" data-act="erp" title="Edit ERP fields"><i class="bi bi-tag"></i></button>' +
           '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
@@ -1132,7 +1187,20 @@
     else if (act === 'windows') openWindowsModal(itemId);
     else if (act === 'erp') openExtendedFieldsModal(itemId);
     else if (act === 'copy') copyItemRow(itemId, btn);
+    else if (act === 'duplicate') duplicateItemRow(itemId);
   });
+
+  // Opens the existing Add Item modal pre-filled. Deliberately does NOT write a
+  // row: the operator's reason for duplicating is to change something, so an
+  // immediate insert would leave a no-vendor row on the pull for however long it
+  // took them to notice. It also goes through the ordinary create path, so the
+  // duplicate guard, the validation and the audit row are all the same ones a
+  // manual add gets.
+  function duplicateItemRow(itemId) {
+    const it = drawerItems.find(x => String(x.id) === String(itemId));
+    if (!it) return;
+    openAddItemModal(buildDuplicatePrefill(it));
+  }
 
   // Brief feedback on the button itself — no toast. A silent success is
   // indistinguishable from a failure, which for a clipboard write is the one
@@ -1168,28 +1236,47 @@
   }
 
   // ---- Add Item modal ----------------------------------------------------
-  function openAddItemModal() {
+  // `prefill` is optional. Omitted (a plain Add item click) the form opens empty
+  // exactly as before; supplied (the duplicate action) every field is seeded from
+  // it. The seven ERP fields have no inputs in this modal — they ride along in
+  // erpPrefill and go straight into the create payload, which is what the
+  // PullItemCreateRequest extension is for.
+  let erpPrefill = null;
+
+  function openAddItemModal(prefill) {
     if (!itemAddModal || !selectedPullId) return;
     const p = pulls.find(x => x.pullId === selectedPullId);
     if (!p) return;
     drawerPullIdForItems = selectedPullId;
     document.getElementById('iam-pull-label').textContent = p.id;
-    document.getElementById('iam-item-code').value = '';
-    document.getElementById('iam-description').value = '';
+    document.getElementById('iam-item-code').value = prefill ? prefill.itemCode : '';
+    document.getElementById('iam-description').value = prefill ? prefill.description : '';
+    // Always blank, prefill or not — see buildDuplicatePrefill.
     document.getElementById('iam-vendor-code').value = '';
     document.getElementById('iam-vendor-name').value = '';
-    document.getElementById('iam-tag').value = '';
-    document.getElementById('iam-remark').value = '';
-    // Seed with one empty row so the user sees the table shape.
+    document.getElementById('iam-tag').value = prefill ? prefill.tag : '';
+    document.getElementById('iam-remark').value = prefill ? prefill.remark : '';
+
+    erpPrefill = prefill || null;
+
     document.getElementById('iam-windows-tbody').innerHTML = '';
-    appendAddWindowRow();
+    if (prefill && prefill.hours.length) {
+      // Hours carry; quantities come back blank and required. The operator is
+      // changing the quantity anyway — that is one of the two reasons to
+      // duplicate — and a zero would make the row read as settled everywhere.
+      prefill.hours.forEach(h => appendAddWindowRow(h));
+    } else {
+      // Seed with one empty row so the user sees the table shape.
+      appendAddWindowRow();
+    }
     itemAddModal.show();
   }
 
-  function appendAddWindowRow() {
+  function appendAddWindowRow(hourOfDay) {
     const tbody = document.getElementById('iam-windows-tbody');
     const hourOpts = Array.from({ length: 24 }, (_, h) =>
-      '<option value="' + h + '">' + String(h).padStart(2, '0') + ':00</option>').join('');
+      '<option value="' + h + '"' + (h === hourOfDay ? ' selected' : '') + '>' +
+      String(h).padStart(2, '0') + ':00</option>').join('');
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td><select class="form-select iam-w-hour">' + hourOpts + '</select></td>' +
@@ -1239,6 +1326,21 @@
       remark: document.getElementById('iam-remark').value.trim() || null,
       windows,
     };
+
+    // Duplicate only. These have no inputs in this modal, so a plain add sends
+    // nothing for them and the columns stay NULL, as before. Blank maps to null
+    // so an unset field on the source row does not become an empty string on the
+    // new one — the ERP-vs-Receivx comparison Phase 9.1 exists for depends on
+    // NULL meaning "never set".
+    if (erpPrefill) {
+      body.productFamily    = erpPrefill.productFamily    || null;
+      body.fromSubInventory = erpPrefill.fromSubInventory || null;
+      body.toSubInventory   = erpPrefill.toSubInventory   || null;
+      body.specialControl   = erpPrefill.specialControl   || null;
+      body.trialId          = erpPrefill.trialId          || null;
+      body.location         = erpPrefill.location         || null;
+      body.phase            = erpPrefill.phase            || null;
+    }
 
     const btn = document.getElementById('iam-save');
     btn.disabled = true;

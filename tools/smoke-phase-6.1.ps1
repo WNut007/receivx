@@ -176,18 +176,76 @@ if ($list[1].itemCode -ne 'SMK-ITEM-B') { Fail "Second should be SMK-ITEM-B, got
 OK "List reflects both items in sortOrder"
 
 # ----------------------------------------------------------------------------
-# 6. POST duplicate ItemCode → 409
+# 6. POST a genuine duplicate → 409, and the same SKU under a different storer
+#    → accepted
 # ----------------------------------------------------------------------------
-Step "POST duplicate ItemCode on same pull → 409"
+# SUPERSEDED ASSERTION, kept visible so the change is legible rather than silent:
+#
+#     $dupBody = @{
+#         itemCode = 'SMK-ITEM-A'
+#         description = 'dup'
+#         windows = @(@{ hourOfDay = 11; expectedQty = 10 })
+#     } | ConvertTo-Json -Depth 5
+#
+# Item A is created above with vendorCode = 'V001'. The storer-grain change
+# widened the duplicate guard from (PullId, ItemCode) to
+# (PullId, ItemCode, VendorCode), because one pull sheet routinely carries the
+# same SKU from two storers holding separate purchase orders. From that commit
+# on, the body above was NOT a duplicate — (pull, 'SMK-ITEM-A', NULL) is a
+# different key from (pull, 'SMK-ITEM-A', 'V001') — so the POST correctly
+# succeeded and this case has been failing on a known cause ever since. The
+# assertion went stale, not the guard.
+#
+# The fix is not merely to make it green. What the case was written to prove is
+# that the guard refuses a genuine duplicate, so the request now matches item A
+# on all THREE key parts. The second half is new and is what keeps the first
+# half meaningful: narrowing the guard back to (PullId, ItemCode) would still
+# pass a refuse-only test, and would only be caught by something that asserts
+# the same SKU under a DIFFERENT storer is allowed through.
+Step "POST genuine duplicate (same SKU + same storer) → 409"
 $dupBody = @{
     itemCode = 'SMK-ITEM-A'
     description = 'dup'
+    vendorCode = 'V001'          # matches item A — all three key parts collide
     windows = @(@{ hourOfDay = 11; expectedQty = 10 })
 } | ConvertTo-Json -Depth 5
 $r = InvokeExpectFail 'POST' "$base/api/pulls/$pullId/items" $dupBody $svAdmin 409
-if (-not $r -or $r.Wrong) { Fail "Expected 409 on duplicate, got $($r.Status)" }
+if (-not $r -or $r.Wrong) { Fail "Expected 409 on genuine duplicate, got $($r.Status)" }
 if ($r.Title -notmatch 'already exists') { Fail "Expected 'already exists' in title, got: $($r.Title)" }
-OK "Duplicate ItemCode rejected with 409"
+OK "Genuine duplicate (SKU + storer) rejected with 409"
+
+Step "POST same SKU under a DIFFERENT storer → accepted"
+$otherStorerBody = @{
+    itemCode = 'SMK-ITEM-A'
+    description = 'same sku, second storer'
+    vendorCode = 'V002'
+    windows = @(@{ hourOfDay = 12; expectedQty = 10 })
+} | ConvertTo-Json -Depth 5
+# Caught explicitly. If the guard is ever narrowed back to (PullId, ItemCode)
+# this POST returns 409, and an uncaught Invoke-RestMethod would abort the script
+# with a raw exception dump — no FAIL line naming the cause, and SqlCleanup never
+# runs, so the smoke pull is left behind for the next run to trip over.
+$otherStorer = $null
+try {
+    $otherStorer = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method POST `
+        -Body $otherStorerBody -ContentType 'application/json' -WebSession $svAdmin
+} catch {
+    $st = $null
+    try { $st = [int]$_.Exception.Response.StatusCode } catch { }
+    Fail "Same SKU under a different storer was REFUSED (HTTP $st). The duplicate guard is keyed on (PullId, ItemCode) alone; it must be (PullId, ItemCode, VendorCode) — one pull sheet routinely carries the same SKU from two storers with separate purchase orders."
+}
+if ($otherStorer.itemCode -ne 'SMK-ITEM-A') { Fail "Second-storer row has the wrong itemCode: $($otherStorer.itemCode)" }
+if ($otherStorer.vendorCode -ne 'V002')     { Fail "Second-storer row has the wrong vendorCode: $($otherStorer.vendorCode)" }
+if ($otherStorer.id -eq $itemAId)           { Fail "Second-storer POST returned item A rather than creating a row" }
+OK "Same SKU under a different storer accepted as its own row"
+
+# Removed again immediately: every case below counts the items on this pull, and
+# a third row left behind would make them fail for a reason that has nothing to
+# do with what they test. Added in this case, removed in this case.
+Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items/$($otherStorer.id)" -Method DELETE -WebSession $svAdmin | Out-Null
+$backTo2 = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method GET -WebSession $svAdmin
+if ($backTo2.Count -ne 2) { Fail "Fixture not restored after the second-storer row: expected 2 items, got $($backTo2.Count)" }
+OK "Second-storer row removed; fixture back to 2 items for the cases below"
 
 # ----------------------------------------------------------------------------
 # 7. Validation: empty ItemCode, duplicate hours, no windows, HourOfDay > 23

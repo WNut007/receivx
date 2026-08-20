@@ -850,23 +850,28 @@
     border-bottom: 1px solid var(--border);
     padding: 8px 10px;
   }
-  /* 138px, up from 110px, for the copy-row control added alongside the four
-     existing ones. nowrap would have grown the column anyway; stating it keeps
-     the width predictable instead of dependent on icon metrics. */
-  .items-table .actions-col { width: 138px; text-align: right; white-space: nowrap; }
+  /* 162px: six controls — copy, duplicate, windows, ERP, edit, delete. Was
+     138px for five and 110px for the original four. nowrap would have grown the
+     column anyway; stating it keeps the width predictable instead of dependent
+     on icon metrics. */
+  .items-table .actions-col { width: 162px; text-align: right; white-space: nowrap; }
 
   /* Copy-row trigger: revealed on row hover, but ALWAYS shown on focus so it
      is reachable by keyboard, and held visible while it reports success or
      failure so the confirmation is not lost the moment the pointer moves off.
      opacity rather than display/visibility — the button has to stay in the tab
      order, and it must not reflow the row when it appears. */
-  .items-table td.actions-col .copy-row-btn {
+  .items-table td.actions-col .copy-row-btn,
+  .items-table td.actions-col .dup-row-btn {
     opacity: 0;
     transition: opacity .12s ease, color .12s ease;
   }
   .items-table tr:hover td.actions-col .copy-row-btn,
+  .items-table tr:hover td.actions-col .dup-row-btn,
   .items-table td.actions-col .copy-row-btn:focus,
+  .items-table td.actions-col .dup-row-btn:focus,
   .items-table td.actions-col .copy-row-btn:focus-visible,
+  .items-table td.actions-col .dup-row-btn:focus-visible,
   .items-table td.actions-col .copy-row-btn.is-done,
   .items-table td.actions-col .copy-row-btn.is-failed { opacity: 1; }
   .items-table td.actions-col .copy-row-btn.is-done   { color: var(--complete); }

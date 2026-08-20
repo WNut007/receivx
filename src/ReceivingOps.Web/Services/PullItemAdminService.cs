@@ -55,8 +55,16 @@ public class PullItemAdminService : IPullItemAdminService
             if (dup.HasValue)
                 throw new BusinessException(
                     string.IsNullOrWhiteSpace(req.VendorCode)
-                        ? $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}."
-                        : $"Item '{req.ItemCode}' from storer '{req.VendorCode}' already exists on pull {pull.PullNumber}.");
+                        // The blank-vendor case is the one the drawer's duplicate action
+                        // lands on: duplicating a row that has no storer reproduces the
+                        // existing key exactly. Naming the field to fill in turns the
+                        // refusal into an instruction; without it the operator is told
+                        // only that they are wrong, which they are not — they duplicated
+                        // a row and have not yet said whose goods it is.
+                        ? $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}. " +
+                          "Set a storer (vendor code) to tell the two rows apart."
+                        : $"Item '{req.ItemCode}' from storer '{req.VendorCode}' already exists on pull {pull.PullNumber}. " +
+                          "Change the storer to add another row for this item.");
 
             var nextSort = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
                 "SELECT ISNULL(MAX(SortOrder), 0) + 1 FROM dbo.PullItems WHERE PullId = @PullId;",
@@ -65,15 +73,21 @@ public class PullItemAdminService : IPullItemAdminService
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.PullItems
                        (Id, PullId, ItemCode, Description, VendorCode, VendorName,
-                        Tag, Status, Remark, SortOrder)
+                        Tag, Status, Remark, SortOrder,
+                        ProductFamily, FromSubInventory, ToSubInventory,
+                        SpecialControl, TrialId, Location, [Phase])
                 OUTPUT INSERTED.Id
                 VALUES (NEWID(), @PullId, @ItemCode, @Description, @VendorCode, @VendorName,
-                        @Tag, 'normal', @Remark, @SortOrder);",
+                        @Tag, 'normal', @Remark, @SortOrder,
+                        @ProductFamily, @FromSubInventory, @ToSubInventory,
+                        @SpecialControl, @TrialId, @Location, @Phase);",
                 new
                 {
                     PullId = pullId, req.ItemCode, req.Description,
                     req.VendorCode, req.VendorName, req.Tag, req.Remark,
                     SortOrder = nextSort,
+                    req.ProductFamily, req.FromSubInventory, req.ToSubInventory,
+                    req.SpecialControl, req.TrialId, req.Location, req.Phase,
                 }, transaction: tx, cancellationToken: ct));
 
             foreach (var w in req.Windows)
@@ -442,6 +456,17 @@ public class PullItemAdminService : IPullItemAdminService
         if (req.Remark is not null && req.Remark.Length > 255)
             throw new ValidationException("Remark is too long (≤ 255 chars)");
 
+        // The seven Phase 9.1 columns are NVARCHAR(50) (db/024). Checked here so an
+        // over-long value is a 400 naming the field rather than a SqlException
+        // truncation error naming nothing.
+        ValidateErpField(req.ProductFamily,    nameof(req.ProductFamily));
+        ValidateErpField(req.FromSubInventory, nameof(req.FromSubInventory));
+        ValidateErpField(req.ToSubInventory,   nameof(req.ToSubInventory));
+        ValidateErpField(req.SpecialControl,   nameof(req.SpecialControl));
+        ValidateErpField(req.TrialId,          nameof(req.TrialId));
+        ValidateErpField(req.Location,         nameof(req.Location));
+        ValidateErpField(req.Phase,            nameof(req.Phase));
+
         if (req.Windows is null || req.Windows.Count == 0)
             throw new ValidationException("At least one window is required");
         var dup = req.Windows.GroupBy(w => w.HourOfDay).FirstOrDefault(g => g.Count() > 1);
@@ -451,9 +476,37 @@ public class PullItemAdminService : IPullItemAdminService
         {
             if (w.HourOfDay > 23)
                 throw new ValidationException($"HourOfDay {w.HourOfDay} out of range (0..23)");
+            // Stays > 0, deliberately, and the drawer's duplicate action is why it
+            // was examined rather than why it changed.
+            //
+            // Duplicate pre-fills the source row's HOURS and leaves each quantity
+            // blank and required. An earlier draft carried the hours with
+            // ExpectedQty = 0 instead; zero already means something here and it is
+            // not "not yet known". isSettled() returns true for e <= 0
+            // ("nothing scheduled is nothing owed"), the console's period status
+            // skips such a window entirely and reports 'received', the close gate
+            // and WindowsPending both test ExpectedQty > ReceivedQty, and since
+            // db/047 rev 11 removed the hour cap, outstanding = 0 makes ANY receipt
+            // an over-delivery needing the variance tick and a reason code.
+            //
+            // A freshly duplicated row would therefore have looked finished the
+            // moment it existed, and its first genuine receipt would have been
+            // recorded as a variance. Making the operator type a number they were
+            // going to type anyway costs one field and avoids all of it.
             if (w.ExpectedQty <= 0)
                 throw new ValidationException($"ExpectedQty for hour {w.HourOfDay} must be positive");
         }
+    }
+
+    /// <summary>
+    /// Phase 9.1 columns are NVARCHAR(50); anything longer is a 400, not a
+    /// truncation. Blank is allowed and stored as-is — the create path does not
+    /// coalesce, so an omitted field stays NULL.
+    /// </summary>
+    private static void ValidateErpField(string? value, string fieldName)
+    {
+        if (value is not null && value.Length > 50)
+            throw new ValidationException($"{fieldName} is too long (\u2264 50 chars)");
     }
 
     private static void ValidateUpdate(PullItemUpdateRequest req)
