@@ -48,13 +48,33 @@ DELETE r FROM dbo.Receipts r
 INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PL-VQ-%';
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-VQ-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-VQ-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-VQ-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 DELETE pol FROM dbo.PurchaseOrderLines pol
 INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber LIKE 'PO-VQ-%';
 DELETE FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-VQ-%';
 '@
-    sqlcmd -S $SQL.S -E -C -d $SQL.d -I -h -1 -W -Q $q 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S $SQL.S -E -C -d $SQL.d -I -h -1 -W -b -Q $q 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 function Login {

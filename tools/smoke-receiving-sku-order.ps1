@@ -71,7 +71,19 @@ WHERE p.PullNumber LIKE 'SKUORD-%';
 DELETE pi FROM dbo.PullItems pi
   INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'SKUORD-%';
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'SKUORD-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'SKUORD-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'SKUORD-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 "@ | Out-Null
 }
 

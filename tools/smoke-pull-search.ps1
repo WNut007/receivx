@@ -28,7 +28,19 @@ function SqlCleanup {
     $sql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE (p.PullNumber LIKE 'PL-SMOKE-PS-%' OR p.PullNumber LIKE 'ZZ-PL-SMOKE-PS-%');
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE (p.PullNumber LIKE 'PL-SMOKE-PS-%' OR p.PullNumber LIKE 'ZZ-PL-SMOKE-PS-%');
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SMOKE-PS-%' OR PullNumber LIKE 'ZZ-PL-SMOKE-PS-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@
     sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
 }

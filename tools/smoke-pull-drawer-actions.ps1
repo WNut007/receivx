@@ -519,7 +519,19 @@ if (-not $serverUp) {
 DELETE r FROM dbo.Receipts r
 INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId WHERE p.PullNumber LIKE 'PL-DUP-%';
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-DUP-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-DUP-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-DUP-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 DELETE pol FROM dbo.PurchaseOrderLines pol
 INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId WHERE po.PoNumber LIKE 'PO-DUP-%';
 DELETE FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-DUP-%';
