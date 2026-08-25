@@ -1647,142 +1647,24 @@
   updatePeriodNowAffordances();
 
   // ============ EXPORT TO EXCEL ============
-  function buildExportRows() {
-    const pullId = currentPull || '';
-    const whSel = document.getElementById('warehouse-select');
-    const warehouse = whSel.options[whSel.selectedIndex].text;
-    const now = new Date();
-    const exportedAt = now.toLocaleString('en-GB');
-
-    // ---- Sheet 1: Detail (one row per item × scheduled hour) ----
-    const detail = [];
-    items.forEach(item => {
-      const hours = Object.keys(item.schedule).map(Number).sort((a,b)=>a-b);
-      hours.forEach(h => {
-        const slot = item.schedule[h];
-        if (slot.e <= 0) return;
-        const outstanding = slotOutstanding(slot);
-        const pct = slot.e > 0 ? (slot.r / slot.e) : 0;
-        // 'Closed short' is its own status for the same reason the grid has a
-        // CLOSED cell state: exporting a written-off line as 'Partial' tells
-        // whoever reads the spreadsheet that a delivery is still coming.
-        const cellStatus = (item.status === 'canceled') ? 'Canceled'
-                         : (slot.r >= slot.e) ? 'Complete'
-                         : slot.c ? 'Closed short'
-                         : (slot.r > 0) ? 'Partial' : 'Pending';
-        detail.push({
-          'Pull #': pullId,
-          'Warehouse': warehouse,
-          'Item Code': item.code,
-          'Description': item.desc,
-          'Type': item.tag ? item.tag.toUpperCase() : '',
-          'Row Status': item.status.charAt(0).toUpperCase() + item.status.slice(1),
-          'Vendor Code': item.vCode,
-          'Vendor Name': item.vName,
-          'Remark': item.remark,
-          'Hour': String(h).padStart(2,'0') + ':00',
-          'Expected': slot.e,
-          'Received': slot.r,
-          'Outstanding': outstanding,
-          'Progress %': Math.round(pct * 100),
-          'Cell Status': cellStatus,
-        });
-      });
-    });
-
-    // ---- Sheet 2: Summary (one row per item with totals across all hours) ----
-    const summary = items.map(item => {
-      let exp = 0, rec = 0, windows = 0, outstanding = 0, settled = 0;
-      Object.values(item.schedule).forEach(s => {
-        if (s.e > 0) {
-          exp += s.e; rec += s.r; windows++;
-          outstanding += slotOutstanding(s);
-          if (isSettled(s)) settled++;
-        }
-      });
-      const pct = exp > 0 ? Math.round((rec/exp)*100) : 0;
-      // 'Fully received' is reserved for actually receiving everything. An
-      // item whose windows are all settled but not all filled is 'Closed
-      // short' — settled, not delivered in full.
-      const itemStatus = (item.status === 'canceled') ? 'Canceled'
-                       : (exp === 0) ? 'No schedule'
-                       : (rec >= exp) ? 'Fully received'
-                       : (settled === windows) ? 'Closed short'
-                       : (rec > 0) ? 'Outstanding' : 'Pending';
-      return {
-        'Pull #': pullId,
-        'Item Code': item.code,
-        'Description': item.desc,
-        'Type': item.tag ? item.tag.toUpperCase() : '',
-        'Row Status': item.status.charAt(0).toUpperCase() + item.status.slice(1),
-        'Vendor': item.vName,
-        'Total Expected': exp,
-        'Total Received': rec,
-        'Total Outstanding': outstanding,
-        'Progress %': pct,
-        'Windows': windows,
-        'Item Status': itemStatus,
-      };
-    });
-
-    // ---- Sheet 3: Header / metadata ----
-    const meta = [
-      { Field: 'Pull #',         Value: pullId },
-      { Field: 'Warehouse',      Value: warehouse },
-      { Field: 'Exported By',    Value: 'S. Wattana' },
-      { Field: 'Exported At',    Value: exportedAt },
-      { Field: 'Pull Status',    Value: pullClosed ? 'CLOSED · LOCKED' : 'OPEN' },
-      { Field: 'Active Items',   Value: items.filter(i => i.status !== 'canceled').length },
-      { Field: 'Canceled Items', Value: items.filter(i => i.status === 'canceled').length },
-      { Field: 'New Items',      Value: items.filter(i => i.status === 'new').length },
-    ];
-
-    return { detail, summary, meta, pullId };
-  }
-
+  // Server-side now. The workbook used to be assembled here with SheetJS,
+  // which meant the per-pull file and the Reports → Pull Sheets file were two
+  // different generators that happened to agree. They are one generator now
+  // (Services/Reports/PullSheetExportService) and this button just asks for a
+  // different slice of it — one pull, all 24 hours, instead of a period.
+  //
+  // Moving it also picked up the formatting fixes that landed with the report:
+  // bold + frozen + filtered headers, U+00A0 scrubbed out of string cells, and
+  // Progress % stored as a real fraction under a percent format.
   function exportToExcel() {
-    try {
-      if (typeof XLSX === 'undefined') {
-        showToast('Export failed', 'Excel library not loaded — please retry', 'error');
-        return;
-      }
-      const { detail, summary, meta, pullId } = buildExportRows();
-
-      const wb = XLSX.utils.book_new();
-
-      // Header sheet
-      const wsMeta = XLSX.utils.json_to_sheet(meta);
-      wsMeta['!cols'] = [{ wch: 18 }, { wch: 40 }];
-      XLSX.utils.book_append_sheet(wb, wsMeta, 'Header');
-
-      // Summary sheet
-      const wsSum = XLSX.utils.json_to_sheet(summary);
-      wsSum['!cols'] = [
-        {wch:10},{wch:18},{wch:30},{wch:8},{wch:11},
-        {wch:22},{wch:14},{wch:14},{wch:16},{wch:11},{wch:9},{wch:18}
-      ];
-      XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
-
-      // Detail sheet — primary working data
-      const wsDet = XLSX.utils.json_to_sheet(detail);
-      wsDet['!cols'] = [
-        {wch:10},{wch:22},{wch:18},{wch:30},{wch:6},{wch:10},
-        {wch:11},{wch:22},{wch:22},{wch:7},{wch:11},{wch:11},
-        {wch:13},{wch:11},{wch:13}
-      ];
-      // Freeze header row
-      wsDet['!freeze'] = { ySplit: 1 };
-      XLSX.utils.book_append_sheet(wb, wsDet, 'Detail');
-
-      const dateStamp = new Date().toISOString().slice(0,10);
-      const filename = `${pullId}_${dateStamp}.xlsx`;
-      XLSX.writeFile(wb, filename);
-
-      showToast('Export complete', `${filename} · ${detail.length} rows`, 'success-big');
-    } catch (err) {
-      console.error(err);
-      showToast('Export failed', err.message || 'Unknown error', 'error');
+    if (!currentPullId) {
+      showToast('Export failed', 'No pull loaded', 'error');
+      return;
     }
+    // Plain navigation: the endpoint sets Content-Disposition, so the browser
+    // saves it under the server's filename with no blob handling here.
+    window.location.href =
+      '/api/reports/pull-sheets/pull/' + encodeURIComponent(currentPullId) + '/export.xlsx';
   }
 
   document.getElementById('btn-export').addEventListener('click', exportToExcel);
