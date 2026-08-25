@@ -669,12 +669,15 @@ public class ReceiptService : IReceiptService
     /// (<c>V-FORTIS</c>) still matches itself exactly. Both operands are
     /// parameters — the caller passes column and parameter NAMES, never
     /// values.</para>
+    ///
+    /// <para>The predicate itself now lives in <see cref="Data.VendorCodeSql"/> —
+    /// Reports → Pull Sheets resolves Building across the same two formats, and
+    /// a second copy of this rule would drift invisibly (both copies return
+    /// rows, just not the same rows). This wrapper stays so the call sites
+    /// above read unchanged.</para>
     /// </summary>
-    private static string VendorMatchSql(string poLineColumn, string param) => $@"(
-                   {poLineColumn} = {param}
-                   OR (RIGHT({poLineColumn}, LEN({param})) = {param}
-                       AND SUBSTRING({poLineColumn}, LEN({poLineColumn}) - LEN({param}), 1) = '-')
-              )";
+    private static string VendorMatchSql(string poLineColumn, string param)
+        => Data.VendorCodeSql.MatchPredicate(poLineColumn, param);
 
 
     // ============================================================================

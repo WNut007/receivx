@@ -197,9 +197,13 @@ Step '12. Vendor match: stripped↔prefixed both ways, and NOT a shared suffix'
 # the hyphen: 'COI-15732' ENDS WITH '5732' and must NOT match, or the filter
 # would quietly leak stock between two unrelated storers whose codes happen to
 # share a tail.
-$svcSrc = Get-Content -Raw (Join-Path $repoRoot 'src\ReceivingOps.Web\Services\ReceiptService.cs')
-$m = [regex]::Match($svcSrc, '(?s)private static string VendorMatchSql\(string poLineColumn, string param\) => \$@"(.*?)";')
-if (-not $m.Success) { Fail 'could not lift VendorMatchSql out of ReceiptService.cs — was it renamed?' }
+# The predicate moved to Data/VendorCodeSql.cs when Reports -> Pull Sheets needed
+# the same match to resolve Building. ReceiptService.VendorMatchSql is now a
+# wrapper over it, so lifting from the shared file is lifting from what BOTH
+# call sites execute -- a wider guard than before, not a weaker one.
+$svcSrc = Get-Content -Raw (Join-Path $repoRoot 'src\ReceivingOps.Web\Data\VendorCodeSql.cs')
+$m = [regex]::Match($svcSrc, '(?s)public static string MatchPredicate\(string poLineColumn, string param\) => \$@"(.*?)";')
+if (-not $m.Success) { Fail 'could not lift MatchPredicate out of VendorCodeSql.cs -- was it renamed?' }
 $predicate = $m.Groups[1].Value.Replace('{poLineColumn}', 'v').Replace('{param}', '@V').Replace('""', '"')
 
 function MatchSet($probe) {
