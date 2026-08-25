@@ -140,6 +140,14 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-over-receipt-own-po.ps1'
         'smoke-variance-outstanding-queries.ps1'
         'smoke-variance-reason.ps1'          # db/049
+        # Reports -> Pull Sheets (xlsx export by date + period). The period map
+        # smoke reads the RENDERED picker on both /Reports and /Receiving, so it
+        # also guards that the two pages still share one definition.
+        'smoke-pull-sheets-period-map.ps1'
+        'smoke-pull-sheets-night-rollover.ps1'
+        'smoke-pull-sheets-period-scoping.ps1'
+        'smoke-pull-sheets-nbsp.ps1'
+        'smoke-pull-sheets-building.ps1'
     )
 }
 

@@ -23,11 +23,21 @@
     <!-- nav injected by app-nav.js -->
     <div class="page-wrap">
         <div class="page-head">
-            <div class="page-eyebrow">Audit · Delivery Orders</div>
+            <div class="page-eyebrow" id="page-eyebrow">Audit · Delivery Orders</div>
             <h1 class="page-title">Reports</h1>
-            <p class="page-subtitle">Closed pulls with delivery activity. Click a row to preview the DO or export PDF.</p>
+            <p class="page-subtitle" id="page-subtitle">Closed pulls with delivery activity. Click a row to preview the DO or export PDF.</p>
+            @* The two sections share this page shell and nothing else — separate
+               filter bars, separate queries. Delivery Orders is closed-pulls-only;
+               Pull Sheets deliberately includes open pulls. *@
+            <div class="reports-section-switch" id="reports-section-switch" role="tablist" aria-label="Report section">
+                <button type="button" class="section-tab active" data-section="delivery-orders"
+                        role="tab" aria-selected="true">Delivery Orders</button>
+                <button type="button" class="section-tab" data-section="pull-sheets"
+                        role="tab" aria-selected="false">Pull Sheets</button>
+            </div>
         </div>
 
+        <section class="reports-section" id="section-delivery-orders">
         <div class="reports-filter-bar">
             <input type="text" class="form-control filter-q" placeholder="Search PO number, item code…">
             <input type="text" class="form-control filter-pull" placeholder="Pull number">
@@ -171,6 +181,91 @@
                 </div>
             </main>
         </div>
+        </section>
+
+        @* ==================================================================
+           PLANNING · PULL SHEETS
+           Its own filter bar and its own query. Unlike the section above it
+           does NOT filter to closed pulls — surfacing open ones is the point.
+           ================================================================== *@
+        <section class="reports-section" id="section-pull-sheets" hidden>
+            <div class="pull-sheets-filter-bar" id="ps-filter-bar">
+                <label class="ps-field">
+                    <span class="ps-label">Warehouse</span>
+                    <select class="form-select" id="ps-warehouse">
+                        <option value="">All warehouses</option>
+                        @* Populated from /api/warehouses. Non-admins are pinned to
+                           their session warehouse server-side regardless. *@
+                    </select>
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Date</span>
+                    <input type="date" class="form-control" id="ps-date">
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Period</span>
+                    @* Same ReceivingPeriods.All the Receiving grid renders from —
+                       one definition, so the report cannot scope a period the grid
+                       draws differently. *@
+                    <select class="form-select" id="ps-period">
+                        @foreach (var period in ReceivingOps.Web.Models.ReceivingPeriods.All)
+                        {
+                            <option value="@period.Key" data-hours="@string.Join(",", period.Hours)">@period.OptionText</option>
+                        }
+                    </select>
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Status</span>
+                    <select class="form-select" id="ps-status">
+                        <option value="">All statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="fully_received">Fully received</option>
+                        <option value="closed">Closed</option>
+                    </select>
+                </label>
+                <button type="button" class="btn btn-outline-secondary" id="ps-refresh">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+
+            @* Inline on the filter bar — a size refusal is a filter problem, so it
+               is reported where the filter is, not as a raw error. *@
+            <div class="ps-message" id="ps-message" role="status" aria-live="polite" hidden></div>
+
+            <div class="ps-metrics" id="ps-metrics">
+                <div class="ps-metric"><span class="ps-metric-label">Pulls</span><span class="ps-metric-value" id="ps-m-pulls">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Items</span><span class="ps-metric-value" id="ps-m-items">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Expected</span><span class="ps-metric-value" id="ps-m-expected">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Received</span><span class="ps-metric-value" id="ps-m-received">—</span></div>
+            </div>
+
+            <div class="ps-resolved" id="ps-resolved"></div>
+
+            <div class="ps-preview-card">
+                <div class="ps-preview-head">
+                    <span class="ps-preview-title">SUMMARY PREVIEW</span>
+                    <button type="button" class="btn btn-primary" id="ps-export" disabled>
+                        <i class="bi bi-file-earmark-excel"></i> Export xlsx
+                    </button>
+                </div>
+                <div class="ps-table-wrap">
+                    <table class="ps-table" id="ps-table">
+                        <thead>
+                            <tr>
+                                <th>Pull #</th><th>Item Code</th><th>Description</th><th>Vendor</th><th>Building</th>
+                                <th class="num">Expected</th><th class="num">Received</th>
+                                <th class="num">Outstanding</th><th class="num">Progress</th><th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ps-tbody">
+                            <tr><td colspan="10" class="ps-empty">Pick a date and period, then Refresh.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="ps-more" id="ps-more" hidden></div>
+            </div>
+        </section>
     </div>
 </div>
 
@@ -199,5 +294,6 @@
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
 <script src="~/js/components/signature-pad.js" asp-append-version="true"></script>
 <script src="~/js/reports.js" asp-append-version="true"></script>
+<script src="~/js/pull-sheets.js" asp-append-version="true"></script>
 </body>
 </html>

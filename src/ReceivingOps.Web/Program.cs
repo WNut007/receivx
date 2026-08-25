@@ -158,6 +158,7 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IWarehouseRepository, WarehouseRepository>();
 builder.Services.AddScoped<IAssignmentRepository, AssignmentRepository>();
 builder.Services.AddScoped<IPullRepository, PullRepository>();
+builder.Services.AddScoped<IPullSheetReportRepository, PullSheetReportRepository>();
 builder.Services.AddScoped<IReceiptRepository, ReceiptRepository>();
 builder.Services.AddScoped<IPurchaseOrderRepository, PurchaseOrderRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
@@ -180,6 +181,8 @@ builder.Services.AddScoped<IPurchaseOrderAdminService, PurchaseOrderAdminService
 builder.Services.AddScoped<IPullAdminService, PullAdminService>();
 builder.Services.AddScoped<IPullItemAdminService, PullItemAdminService>();
 builder.Services.AddScoped<IDeliveryOrderService, DeliveryOrderService>();
+// Reports → Pull Sheets + the per-pull Export button share this one generator.
+builder.Services.AddScoped<ReceivingOps.Web.Services.Reports.IPullSheetExportService, ReceivingOps.Web.Services.Reports.PullSheetExportService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
@@ -351,6 +354,13 @@ builder.Services.AddHangfireServer(opts =>
 });
 
 var app = builder.Build();
+
+// ---- Receiving period map guard ----
+// The six periods in ReceivingPeriods must still tile the 24-hour day. They
+// drive the Receiving grid AND the Reports → Pull Sheets query, so an edit that
+// dropped or doubled an hour would quietly mis-scope every exported workbook
+// rather than fail. Cheap enough to run on every boot; fails the app if broken.
+ReceivingOps.Web.Models.ReceivingPeriodsSelfTest.Verify();
 
 // ---- v3.x Phase 11.1 — AppSettings seeder ----
 // Runs BEFORE any IOptions<T> consumer so the options binding (commit 5)

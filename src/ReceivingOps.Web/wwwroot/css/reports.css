@@ -1040,3 +1040,132 @@
   font-family: 'Roboto Mono', monospace; font-size: 11px; cursor: pointer;
 }
 .clear-sig-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* ============================================================================
+   REPORTS → PULL SHEETS  (Planning section)
+
+   Pill tabs mirror .exports-tab / .config-tab so the third switcher in the app
+   looks like the other two. Everything below themes off the existing tokens —
+   no new colours, so light / midnight / slate all track automatically.
+   ============================================================================ */
+
+.reports-section-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin-top: 12px; padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.section-tab {
+  background: transparent; border: none;
+  padding: 7px 16px;
+  font: inherit; font-size: 13px; color: var(--text-dim);
+  cursor: pointer; border-radius: 7px;
+  transition: background 140ms ease, color 140ms ease;
+}
+.section-tab:hover { color: var(--text); background: var(--surface-2); }
+.section-tab.active,
+.section-tab.active:hover {
+  background: var(--accent); color: var(--accent-fg); font-weight: 500;
+}
+
+/* ---- Filter bar --------------------------------------------------------- */
+/* Deliberately its own bar, not a variant of .reports-filter-bar: the two
+   sections share no filters and coupling them would mean every future change
+   to one had to be checked against the other. */
+.pull-sheets-filter-bar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+  margin-bottom: 14px;
+}
+.ps-field { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.ps-label {
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+}
+.ps-field .form-select, .ps-field .form-control { min-width: 170px; }
+.pull-sheets-filter-bar .btn { height: 38px; }
+
+/* ---- Inline message ----------------------------------------------------- */
+/* Sits under the filter bar because the thing it usually reports — too many
+   rows — is a filter problem, and the fix is two controls away. */
+.ps-message {
+  padding: 9px 13px; border-radius: 8px; font-size: 13px;
+  margin-bottom: 14px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-dim);
+}
+.ps-message.is-warn {
+  border-color: color-mix(in srgb, #d08a1a 45%, var(--border));
+  background: color-mix(in srgb, #d08a1a 10%, var(--surface));
+  color: var(--text);
+}
+.ps-message.is-error {
+  border-color: color-mix(in srgb, #c0392b 45%, var(--border));
+  background: color-mix(in srgb, #c0392b 10%, var(--surface));
+  color: var(--text);
+}
+
+/* ---- Metric cards ------------------------------------------------------- */
+.ps-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 12px;
+}
+.ps-metric {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.ps-metric-label {
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+}
+.ps-metric-value {
+  font-size: 24px; font-weight: 600; line-height: 1.1; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Resolved-criteria line --------------------------------------------- */
+/* Spells out the hour set and, for Night, both calendar dates — the one place
+   on screen that shows the rollover actually happened. */
+.ps-resolved {
+  font-family: 'Roboto Mono', monospace; font-size: 11px;
+  color: var(--text-dim); margin-bottom: 14px; min-height: 16px;
+}
+
+/* ---- Preview card ------------------------------------------------------- */
+.ps-preview-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.ps-preview-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.ps-preview-title {
+  font-family: 'Roboto Mono', monospace; font-size: 11px;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
+}
+.ps-table-wrap { overflow-x: auto; max-height: 560px; overflow-y: auto; }
+.ps-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-3); color: var(--text-dim);
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+  text-align: left; padding: 9px 12px; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.ps-table tbody td {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  color: var(--text); vertical-align: top;
+}
+.ps-table tbody tr:last-child td { border-bottom: none; }
+.ps-table tbody tr:hover td { background: var(--surface-2); }
+.ps-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ps-table .mono { font-family: 'Roboto Mono', monospace; font-size: 12px; }
+.ps-empty { text-align: center; color: var(--text-muted); padding: 28px 12px; }
+.ps-more {
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-dim);
+  font-size: 12px; text-align: center;
+}
