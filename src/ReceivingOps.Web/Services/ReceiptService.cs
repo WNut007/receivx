@@ -520,7 +520,7 @@ public class ReceiptService : IReceiptService
         PullItemContext pullCtx,
         CancellationToken ct)
     {
-        const string pullMatch = "(po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)";
+        var pullMatch = PullMatchSql();
 
         // Storer grain — the second half of the fix, and the half that
         // actually stops the liability landing on the wrong supplier.
@@ -627,7 +627,7 @@ public class ReceiptService : IReceiptService
     {
         var hints = withLocks ? "WITH (UPDLOCK, HOLDLOCK, ROWLOCK)" : "";
         var pullTerm = pullCtx.LockPoByPull
-            ? " AND (po.PullId = @PullId OR po.PullExternalRef = @PullNumberStr)"
+            ? $" AND {PullMatchSql()}"
             : "";
 
         var hit = await conn.ExecuteScalarAsync<int?>(new CommandDefinition($@"
@@ -678,6 +678,15 @@ public class ReceiptService : IReceiptService
     /// </summary>
     private static string VendorMatchSql(string poLineColumn, string param)
         => Data.VendorCodeSql.MatchPredicate(poLineColumn, param);
+
+    /// <summary>
+    /// §7.15 pull scope, from the ONE definition of that rule -- see
+    /// <see cref="Data.PullScopeSql"/>. Reports -> Pull Sheets resolves Building
+    /// through the same predicate, so the two cannot drift into disagreeing
+    /// about which purchase orders belong to a pull.
+    /// </summary>
+    private static string PullMatchSql()
+        => Data.PullScopeSql.MatchPredicate("@PullId", "@PullNumberStr");
 
 
     // ============================================================================

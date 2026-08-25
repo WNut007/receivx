@@ -52,17 +52,35 @@ public sealed class PullSheetDetailRow
     public string? Tag { get; set; }
     public string RowStatus { get; set; } = "";
     public string? VendorCode { get; set; }
+
+    /// <summary>
+    /// The pull item's own <c>VendorName</c> when it has one, otherwise resolved
+    /// from <c>dbo.PurchaseOrderLines.VendorName</c> (db/036) by the repository.
+    /// The ERP feed carries no vendor name, so in practice every ERP-sourced row
+    /// takes the resolved value and only hand-seeded pulls take their own.
+    ///
+    /// <para>Scoped WAREHOUSE-WIDE, across every PO matching (ItemCode, warehouse,
+    /// storer) -- deliberately NOT the pull scope <see cref="Building"/> uses.
+    /// Vendor is a property of the product and this is a code-to-name lookup, so
+    /// history is a valid source rather than a contaminant.</para>
+    /// </summary>
     public string? VendorName { get; set; }
 
     /// <summary>
     /// ERP-sourced, from <c>dbo.PurchaseOrderLines.Building</c> (db/021), read-only
     /// here -- Receivx has no write path for it and this report does not add one.
     ///
-    /// <para>Resolved by the repository OUTER APPLY, already collapsed across every
-    /// PO line the item reaches: a single agreed value, <c>*mixed*</c> when they
-    /// disagree, or NULL when nothing matched. NULL renders as an em-dash on screen
-    /// and as an empty cell in the workbook, like every other unset ERP field in
-    /// this codebase.</para>
+    /// <para>Scoped to THE PULL: the PO linked by <c>PullId</c> or
+    /// <c>PullExternalRef</c>, which is the same scope §7.15 FIFO uses. One pull
+    /// ships to exactly one building, so this is a property of the shipment and
+    /// not of the line -- there is no ItemCode predicate, and an item the pull's
+    /// PO does not list still resolves.</para>
+    ///
+    /// <para>Collapsed by MIN=MAX like <see cref="VendorName"/>: a single agreed
+    /// value, <c>*mixed*</c> when the lines disagree, or NULL when the pull has no
+    /// linked PO. NULL renders as an em-dash on screen and an empty cell in the
+    /// workbook, like every other unset ERP field in this codebase. A <c>*mixed*</c>
+    /// here means the one-pull-one-building rule broke upstream.</para>
     /// </summary>
     public string? Building { get; set; }
 
@@ -123,8 +141,9 @@ public sealed class PullSheetSummaryRow
     public string? VendorName { get; set; }
 
     /// <summary>
-    /// Collapsed within THIS pull item -- see <see cref="PullSheetDetailRow.Building"/>.
-    /// Every window of one pull item resolves through the same key, so the value is
+    /// Collapsed within THIS pull item -- see <see cref="PullSheetDetailRow.Building"/>
+    /// and <see cref="PullSheetDetailRow.VendorName"/> for the two scopes. Every
+    /// window of one pull item resolves through the same key, so both values are
     /// taken from the group rather than re-collapsed here.
     /// </summary>
     public string? Building { get; set; }
@@ -158,6 +177,13 @@ public sealed class PullSheetGrandTotalRow
 {
     public string ItemCode { get; set; } = "";
     public string Description { get; set; } = "";
+
+    /// <summary>
+    /// Collapsed across the WHOLE PERIOD -- an item dual-sourced from two storers
+    /// reads <c>*mixed*</c> here while each per-pull Summary row keeps its own
+    /// supplier. It used to take the first non-blank, which named one of them as
+    /// though it were the only one.
+    /// </summary>
     public string? VendorName { get; set; }
 
     /// <summary>

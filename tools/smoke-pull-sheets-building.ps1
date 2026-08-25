@@ -1,38 +1,50 @@
-# Smoke test: Reports -> Pull Sheets carries a BUILDING column.
+# Smoke test: Reports -> Pull Sheets BUILDING (pull-scoped) and VENDOR (historical).
 #
-# Building is ERP-sourced (dbo.PurchaseOrderLines.Building, db/021) and sits at
-# PO-LINE grain, while this report is at (pull, item, window) grain. Everything
-# that can go wrong here goes wrong quietly:
+# These two columns sit side by side and are resolved from DIFFERENT sets of PO
+# lines, on purpose. That is the thing this smoke exists to pin, because both
+# wrong answers look entirely plausible on screen:
 #
-#   * The join is across two vendor-code FORMATS. PurchaseOrderLines.VendorCode
+#   * BUILDING is a property of the SHIPMENT. One pull ships to exactly one
+#     building (measured 2026-08-25: 1,429 of 1,429 pulls with a linked PO
+#     resolve to exactly one distinct value, none to two). It is scoped to the
+#     PO linked to the pull -- the same predicate 7.15 FIFO uses -- and carries
+#     NO ItemCode filter. Case 4c is the guard on that: an item on the pull but
+#     absent from the PO's lines must STILL resolve. Re-adding
+#     `pol.ItemCode = pi.ItemCode` to that APPLY turns this smoke red.
+#
+#   * VENDOR is a property of the PRODUCT -- a code-to-name lookup, where any PO
+#     line for that (ItemCode, warehouse, storer) is a valid source and history
+#     is not a contaminant. It stays scoped warehouse-wide. Case 6 is the guard:
+#     a row whose Building is blank must still carry a Vendor Name. Merging the
+#     two APPLYs into one, in either direction, turns this smoke red.
+#
+#   * The vendor lookup crosses two code FORMATS. PurchaseOrderLines.VendorCode
 #     is prefixed (COI-PSBLDV1); PullItems.VendorCode is bare (PSBLDV1). Written
-#     as a plain equality the join matches NOTHING and the column reads as an
-#     honest-looking wall of em-dashes -- indistinguishable from "the ERP has no
-#     building data". Case 3 is the guard: it seeds the two formats deliberately
-#     and asserts a marker string survives the trip.
+#     as a plain equality it matches NOTHING and the column reads as an
+#     honest-looking wall of em-dashes.
 #
-#   * One pull item can reach MANY PO lines (measured on 2026-08-20: one item
-#     reaches 181). Joining POL into the detail projection would multiply every
-#     window row by its line count and inflate ExpectedQty on all four sheets
-#     while still producing a plausible file. Case 4b is the guard: the
-#     two-line fixture must stay ONE row at its seeded quantity.
-#
-#   * Disagreeing lines must collapse to a word, not a comma-joined list -- the
-#     column is a VLOOKUP key downstream. Case 4 pins the literal.
+#   * One pull now reaches EVERY line of its PO, not just its own item's. If
+#     Building were joined rather than APPLY'd, every window row would multiply
+#     by the PO's line count and inflate ExpectedQty on all four sheets while
+#     still producing a plausible file. Case 5b is the guard.
 #
 # Exercises:
-#   1. Preview API carries a `building` field; the Reports page header row has
-#      BUILDING immediately after VENDOR.
-#   2. Building appears in the header row of Summary, Detail and Grand Total,
-#      and NOT on Header.
-#   3. Value round-trip: a distinctive marker on a prefixed-vendor PO line
-#      reaches the Detail sheet body verbatim.
-#   4. Two PO lines disagreeing -> the Summary cell reads exactly '*mixed*'
-#      (4b: and the row is not duplicated, nor its quantity inflated).
-#   5. No matching PO line -> an EMPTY xlsx cell (not 'null', not '*mixed*')
-#      and an em-dash in the preview.
-#   6. NBSP padding is folded BEFORE the collapse, so a padded duplicate of the
-#      same building is not read as a disagreement.
+#   1. Fixture: 4 pulls covering both halves of the pull-scope predicate, an
+#      unlinked pull, and a PO that violates the one-building rule.
+#   2. Preview API carries `building`; the Reports page header has BUILDING
+#      immediately after VENDOR.
+#   3. Building on Summary / Detail / Grand Total, absent from Header.
+#   4. Pull-scoped resolution: via PullExternalRef (4a) and via PullId (4b);
+#      and an item ABSENT from the PO's lines still resolves (4c).
+#   5. NBSP fold before the collapse; grain guard (no row fan-out).
+#   6. Two scopes on ONE row: Building blank, Vendor resolved.
+#   7. A pull with no PO -> blank, not '*mixed*', and NOT the unlinked PO's
+#      building (the historical scope must not leak back).
+#   8. pi.VendorName populated wins over the resolved value.
+#   9. Grand Total collapses BOTH columns across the period: same item in two
+#      buildings -> '*mixed*'; same item from two storers -> '*mixed*'.
+#  10. A PO whose lines disagree -> '*mixed*' survives as the upstream-breakage
+#      signal.
 #
 # Fixture namespace PSBLD-* -- purged on entry, exit, and the failure path.
 
@@ -49,18 +61,28 @@ function Step($n) { Write-Host "`n--- $n ---" -ForegroundColor Cyan }
 function OK($m)   { Write-Host "PASS: $m" -ForegroundColor Green }
 function Fail($m) { Write-Host "FAIL: $m" -ForegroundColor Red; SqlCleanup; exit 1 }
 
+# Routed through a temp FILE rather than -Q. This fixture is long enough that
+# passing it as one command-line argument trips sqlcmd's own re-parse of the
+# Windows command line ("'-' or '/' does not have an associated argument"), and
+# the failure looks like a SQL error rather than a quoting one.
 function RunSql($sql) {
-    $out = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "SQL FAILED (exit $LASTEXITCODE): $out" -ForegroundColor Red
-        exit 2
+    $f = Join-Path ([IO.Path]::GetTempPath()) "psbld-$([guid]::NewGuid().ToString('N')).sql"
+    try {
+        [IO.File]::WriteAllText($f, $sql, (New-Object Text.UTF8Encoding $true))
+        $out = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -i $f 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "SQL FAILED (exit $LASTEXITCODE): $out" -ForegroundColor Red
+            exit 2
+        }
+        return $out
     }
-    return $out
+    finally { if (Test-Path $f) { Remove-Item $f -Force } }
 }
 
-# Order matters: windows -> items -> pulls, and lines -> orders. Never piped to
-# Out-Null -- a cleanup that fails silently leaves the next run seeding on top
-# of its own residue (docs/smoke-conventions.md).
+# Order matters: windows -> items -> pulls, and lines -> orders. PurchaseOrders
+# is cleared BEFORE Pulls because a PullId-linked PO is a child of its pull.
+# Never piped to Out-Null -- a cleanup that fails silently leaves the next run
+# seeding on top of its own residue (docs/smoke-conventions.md).
 function SqlCleanup {
     RunSql @'
 SET NOCOUNT ON;
@@ -71,12 +93,12 @@ WHERE p.PullNumber LIKE 'PSBLD-%';
 DELETE pi FROM dbo.PullItems pi
   INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PSBLD-%';
-DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PSBLD-%';
 DELETE pol FROM dbo.PurchaseOrderLines pol
   INNER JOIN dbo.PurchaseOrders po ON po.Id = pol.PurchaseOrderId
 WHERE po.PoNumber LIKE 'PSBLD-%';
 DELETE FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PSBLD-%';
-PRINT 'cleanup: purchase orders removed = ' + CONVERT(varchar, @@ROWCOUNT);
+DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PSBLD-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@ | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
@@ -98,57 +120,134 @@ function HeaderRow($ws) {
     return $hdr
 }
 
+# Indexes a sheet by item code -> list of hashtables of the requested columns,
+# for the PSBLD-* rows only.
+function IndexSheet($ws, $keyCol, $cols) {
+    $hdr = HeaderRow $ws
+    $ki = [array]::IndexOf($hdr, $keyCol) + 1
+    if ($ki -lt 1) { Fail "sheet has no '$keyCol' column -- [$($hdr -join ' | ')]" }
+    $ci = @{}
+    foreach ($c in $cols) {
+        $i = [array]::IndexOf($hdr, $c) + 1
+        if ($i -lt 1) { Fail "sheet has no '$c' column -- [$($hdr -join ' | ')]" }
+        $ci[$c] = $i
+    }
+    $idx = @{}
+    $last = $ws.LastRowUsed().RowNumber()
+    2..$last | ForEach-Object {
+        $r = $_
+        $code = $ws.Cell($r, $ki).GetString()
+        if ($code -like 'PSBLD-*') {
+            $vals = @{}
+            foreach ($c in $cols) { $vals[$c] = $ws.Cell($r, $ci[$c]).GetString() }
+            if (-not $idx.ContainsKey($code)) { $idx[$code] = @() }
+            $idx[$code] += $vals
+        }
+    }
+    return $idx
+}
+
+function OnPull($rows, $pull) {
+    $hit = @($rows | Where-Object { $_['Pull #'] -eq $pull })
+    if ($hit.Count -eq 0) { Fail "no row for pull $pull" }
+    return $hit[0]
+}
+
 SqlCleanup
 
 # ----------------------------------------------------------------------------
-Step '1. Seed three pull items, each exercising a different Building outcome'
+Step '1. Seed four pulls covering every Building outcome the new scope can produce'
 # ----------------------------------------------------------------------------
-# A -> ONE PO line, Building 'PSBLD-B7X'. The PO line carries the PREFIXED
-#      vendor code, the pull item the BARE one -- the format gap the join has
-#      to bridge. Quantity 900 so an inflated total is unmistakable.
-# B -> TWO PO lines, Buildings 'PSBLD-BM1' / 'PSBLD-BM2'. Disagreement.
-# C -> NO PO line at all. Nothing to say.
+#
+#   PSBLD-1  -> PSBLD-PO-1    linked by PullExternalRef (PullId NULL)   B7X
+#   PSBLD-2  -> PSBLD-PO-2    linked by PullId (PullExternalRef NULL)   B2Y
+#   PSBLD-3  -> no PO at all                                            blank
+#   PSBLD-4  -> PSBLD-PO-4    linked, lines DISAGREE                    *mixed*
+#   PSBLD-PO-HIST             linked to NOTHING. Supplies vendor names
+#                             warehouse-wide and carries PSBLD-BHIST, a
+#                             building that must never reach a cell.
+#
 RunSql @"
 SET NOCOUNT ON;
 DECLARE @wh UNIQUEIDENTIFIER = '$WH_01';
-DECLARE @p UNIQUEIDENTIFIER = NEWID();
-DECLARE @iA UNIQUEIDENTIFIER = NEWID(), @iB UNIQUEIDENTIFIER = NEWID(), @iC UNIQUEIDENTIFIER = NEWID(), @iD UNIQUEIDENTIFIER = NEWID();
-DECLARE @po UNIQUEIDENTIFIER = NEWID();
+DECLARE @p1 UNIQUEIDENTIFIER = NEWID(), @p2 UNIQUEIDENTIFIER = NEWID(),
+        @p3 UNIQUEIDENTIFIER = NEWID(), @p4 UNIQUEIDENTIFIER = NEWID();
+DECLARE @po1 UNIQUEIDENTIFIER = NEWID(), @po2 UNIQUEIDENTIFIER = NEWID(),
+        @po4 UNIQUEIDENTIFIER = NEWID(), @poH UNIQUEIDENTIFIER = NEWID();
 
 INSERT dbo.Pulls (Id, PullNumber, WarehouseId, PullDate, Status)
-VALUES (@p, 'PSBLD-1', @wh, '$D', 'in_progress');
+VALUES (@p1, 'PSBLD-1', @wh, '$D', 'in_progress'),
+       (@p2, 'PSBLD-2', @wh, '$D', 'in_progress'),
+       (@p3, 'PSBLD-3', @wh, '$D', 'in_progress'),
+       (@p4, 'PSBLD-4', @wh, '$D', 'in_progress');
+
+-- Pull items. VendorName NULL everywhere except ITEM-E, which states its own.
+DECLARE @iA1 UNIQUEIDENTIFIER = NEWID(), @iB  UNIQUEIDENTIFIER = NEWID(),
+        @iF1 UNIQUEIDENTIFIER = NEWID(), @iA2 UNIQUEIDENTIFIER = NEWID(),
+        @iF2 UNIQUEIDENTIFIER = NEWID(), @iC  UNIQUEIDENTIFIER = NEWID(),
+        @iE  UNIQUEIDENTIFIER = NEWID(), @iG  UNIQUEIDENTIFIER = NEWID();
 
 INSERT dbo.PullItems (Id, PullId, ItemCode, Description, VendorCode, VendorName, SortOrder)
-VALUES (@iA, @p, 'PSBLD-ITEM-A', N'building round-trip fixture', 'PSBLDV1', NULL, 1),
-       (@iB, @p, 'PSBLD-ITEM-B', N'building mixed-collapse fixture', 'PSBLDV2', NULL, 2),
-       (@iC, @p, 'PSBLD-ITEM-C', N'building unmatched fixture', 'PSBLDV3', NULL, 3),
-       (@iD, @p, 'PSBLD-ITEM-D', N'building nbsp fixture', 'PSBLDV4', NULL, 4);
+VALUES (@iA1, @p1, 'PSBLD-ITEM-A', N'on PO-1, resolves both columns',  'PSBLDV1', NULL, 1),
+       (@iB,  @p1, 'PSBLD-ITEM-B', N'on the pull, NOT a PO-1 line',    'PSBLDV2', NULL, 2),
+       (@iF1, @p1, 'PSBLD-ITEM-F', N'storer one of two',               'PSBLDV6', NULL, 3),
+       (@iA2, @p2, 'PSBLD-ITEM-A', N'same item, second building',      'PSBLDV1', NULL, 1),
+       (@iF2, @p2, 'PSBLD-ITEM-F', N'storer two of two',               'PSBLDV7', NULL, 2),
+       (@iC,  @p3, 'PSBLD-ITEM-C', N'no PO on this pull',              'PSBLDV3', NULL, 1),
+       (@iE,  @p3, 'PSBLD-ITEM-E', N'states its own vendor name',      'PSBLDV5', N'PSBLD Seeded Vendor', 2),
+       (@iG,  @p4, 'PSBLD-ITEM-G', N'its PO disagrees with itself',    'PSBLDV8', NULL, 1);
 
 INSERT dbo.PullItemWindows (Id, PullItemId, HourOfDay, ExpectedQty, ReceivedQty, IsClosed)
-VALUES (NEWID(), @iA, $HOUR, 900, 100, 0),
-       (NEWID(), @iB, $HOUR, 500, 0,   0),
-       (NEWID(), @iC, $HOUR, 300, 0,   0),
-       (NEWID(), @iD, $HOUR, 200, 0,   0);
+VALUES (NEWID(), @iA1, $HOUR, 900, 100, 0),
+       (NEWID(), @iB,  $HOUR, 500, 0,   0),
+       (NEWID(), @iF1, $HOUR, 400, 0,   0),
+       (NEWID(), @iA2, $HOUR, 300, 0,   0),
+       (NEWID(), @iF2, $HOUR, 200, 0,   0),
+       (NEWID(), @iC,  $HOUR, 250, 0,   0),
+       (NEWID(), @iE,  $HOUR, 150, 0,   0),
+       (NEWID(), @iG,  $HOUR, 100, 0,   0);
 
-INSERT dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, Status)
-VALUES (@po, 'PSBLD-PO-1', @wh, '$D', 'open');
+-- PO-1 reaches its pull through PullExternalRef ONLY. PullId stays NULL, which
+-- is the shape every Phase 12 import lands in (27 of 1,761 POs carry the FK;
+-- 1,742 carry the ref). A predicate that only checked the FK misses these.
+INSERT dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, Status, PullId, PullExternalRef)
+VALUES (@po1, 'PSBLD-PO-1', @wh, '$D', 'open', NULL, 'PSBLD-1'),
+-- PO-2 reaches its pull through the FK ONLY -- the other half of the predicate.
+       (@po2, 'PSBLD-PO-2', @wh, '$D', 'open', @p2,  NULL),
+       (@po4, 'PSBLD-PO-4', @wh, '$D', 'open', NULL, 'PSBLD-4'),
+-- Linked to NOTHING. Its Building must never surface; its vendor names must.
+       (@poH, 'PSBLD-PO-HIST', @wh, '$D', 'open', NULL, NULL);
 
--- VendorCode is written PREFIXED here on purpose. A join that compares it to
--- the pull item's bare 'PSBLDV1' with plain equality matches zero rows.
+-- VendorCode is written PREFIXED on every PO line, on purpose. A vendor lookup
+-- that compares it to the pull item's bare 'PSBLDV1' with plain equality
+-- matches zero rows and reports it as "no data".
+--
+-- Every line of PO-1 carries the SAME building, including one padded with a
+-- non-breaking space: SQL Server LTRIM/RTRIM leave U+00A0 alone, so without the
+-- fold those two read as a disagreement and the pull invents a *mixed*.
+-- Note there is NO PSBLD-ITEM-B line here -- that item resolves anyway.
 INSERT dbo.PurchaseOrderLines
       (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, Building)
-VALUES (NEWID(), @po, 1, 'PSBLD-ITEM-A', N'line a',   1000, 0, 'COI-PSBLDV1', N'PSBLD Vendor One', 'PSBLD-B7X'),
-       (NEWID(), @po, 2, 'PSBLD-ITEM-B', N'line b1',  1000, 0, 'COI-PSBLDV2', N'PSBLD Vendor Two', 'PSBLD-BM1'),
-       (NEWID(), @po, 3, 'PSBLD-ITEM-B', N'line b2',  1000, 0, 'COI-PSBLDV2', N'PSBLD Vendor Two', 'PSBLD-BM2'),
-       -- Item D: the SAME building on both lines, but one copy padded with a
-       -- non-breaking space. LTRIM/RTRIM in SQL Server does not treat U+00A0 as
-       -- whitespace, so without the NBSP fold these two read as a disagreement
-       -- and the cell would invent a *mixed*.
-       (NEWID(), @po, 4, 'PSBLD-ITEM-D', N'line d1',  1000, 0, 'COI-PSBLDV4', N'PSBLD Vendor Four', 'PSBLD-BN1'),
-       (NEWID(), @po, 5, 'PSBLD-ITEM-D', N'line d2',  1000, 0, 'COI-PSBLDV4', N'PSBLD Vendor Four', N'PSBLD-BN1' + NCHAR(160));
+VALUES (NEWID(), @po1, 1, 'PSBLD-ITEM-A', N'po1 line a', 1000, 0, 'COI-PSBLDV1', N'PSBLD Vendor One', 'PSBLD-B7X'),
+       (NEWID(), @po1, 2, 'PSBLD-ITEM-F', N'po1 line f', 1000, 0, 'COI-PSBLDV6', N'PSBLD Vendor Six', N'PSBLD-B7X' + NCHAR(160)),
+       (NEWID(), @po1, 3, 'PSBLD-ITEM-Z', N'po1 line z', 1000, 0, 'COI-PSBLDV9', N'PSBLD Vendor Nine', 'PSBLD-B7X'),
+       (NEWID(), @po2, 1, 'PSBLD-ITEM-A', N'po2 line a', 1000, 0, 'COI-PSBLDV1', N'PSBLD Vendor One', 'PSBLD-B2Y'),
+       (NEWID(), @po2, 2, 'PSBLD-ITEM-F', N'po2 line f', 1000, 0, 'COI-PSBLDV7', N'PSBLD Vendor Seven', 'PSBLD-B2Y'),
+       -- PO-4 breaks the one-pull-one-building rule. The collapse is what makes
+       -- that visible instead of silently picking whichever line sorted first.
+       (NEWID(), @po4, 1, 'PSBLD-ITEM-G', N'po4 line g1', 1000, 0, 'COI-PSBLDV8', N'PSBLD Vendor Eight', 'PSBLD-BG1'),
+       (NEWID(), @po4, 2, 'PSBLD-ITEM-G', N'po4 line g2', 1000, 0, 'COI-PSBLDV8', N'PSBLD Vendor Eight', 'PSBLD-BG2'),
+       -- Unlinked history. PSBLD-BHIST is the tripwire: it can only reach a cell
+       -- if Building has been re-scoped to (ItemCode, warehouse, storer).
+       (NEWID(), @poH, 1, 'PSBLD-ITEM-B', N'hist line b', 1000, 0, 'COI-PSBLDV2', N'PSBLD Vendor Two',  'PSBLD-BHIST'),
+       (NEWID(), @poH, 2, 'PSBLD-ITEM-C', N'hist line c', 1000, 0, 'COI-PSBLDV3', N'PSBLD Vendor Three','PSBLD-BHIST'),
+       (NEWID(), @poH, 3, 'PSBLD-ITEM-E', N'hist line e', 1000, 0, 'COI-PSBLDV5', N'PSBLD Overwritten', 'PSBLD-BHIST');
+
+DECLARE @seeded INT = (SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber LIKE 'PSBLD-%');
+IF @seeded <> 4 RAISERROR('Fixture did not land 4 pulls - seed is invalid', 16, 1);
 PRINT 'seeded';
 "@ | Out-Null
-OK 'Seeded PSBLD-1: A=one line, B=two disagreeing lines, C=no line, D=two lines differing only by an NBSP'
+OK 'Seeded PSBLD-1..4 plus an unlinked history PO'
 
 $sv = Login 'sadmin' 'admin' $WH_01
 
@@ -158,20 +257,19 @@ Step '2. Preview API carries a building field, and the page header shows it afte
 $preview = Invoke-RestMethod -WebSession $sv `
     -Uri "$base/api/reports/pull-sheets/preview?warehouseId=$WH_01&date=$D&period=morning"
 
-if ($preview.summaryPreview.Count -lt 3) {
-    Fail "preview returned $($preview.summaryPreview.Count) rows, expected the 3 seeded items"
+if ($preview.summaryPreview.Count -lt 8) {
+    Fail "preview returned $($preview.summaryPreview.Count) rows, expected the 8 seeded (pull, item) rows"
 }
-$rowA = $preview.summaryPreview | Where-Object { $_.itemCode -eq 'PSBLD-ITEM-A' }
-if (-not $rowA) { Fail 'PSBLD-ITEM-A missing from the preview' }
-# Asserted on the row that HAS a value, deliberately. The API serializes with
+$rowA1 = $preview.summaryPreview | Where-Object { $_.pullNumber -eq 'PSBLD-1' -and $_.itemCode -eq 'PSBLD-ITEM-A' }
+if (-not $rowA1) { Fail 'PSBLD-1 / PSBLD-ITEM-A missing from the preview' }
+# Asserted on a row that HAS a value, deliberately. The API serializes with
 # JsonIgnoreCondition.WhenWritingNull, so a null building is omitted from the
 # JSON entirely -- a bare property-exists check would be indistinguishable from
-# case 6, where absence is the correct answer, and would report a missing
-# implementation as a missing value or vice versa.
-if ($rowA.building -ne 'PSBLD-B7X') {
-    Fail "preview building for PSBLD-ITEM-A is '$($rowA.building)', expected 'PSBLD-B7X'. Absent means either PullSheetPreviewRow was not extended or the PO line did not resolve -- the PO line holds 'COI-PSBLDV1' against the pull item's bare 'PSBLDV1'."
+# case 7, where absence is the correct answer.
+if ($rowA1.building -ne 'PSBLD-B7X') {
+    Fail "preview building for PSBLD-1/PSBLD-ITEM-A is '$($rowA1.building)', expected 'PSBLD-B7X' from its PullExternalRef-linked PO"
 }
-OK "preview response carries building='PSBLD-B7X' for the seeded item"
+OK "preview response carries building='PSBLD-B7X'"
 
 $page = (Invoke-WebRequest -WebSession $sv -Uri "$base/Reports").Content
 $m = [regex]::Match($page, '(?is)<table[^>]*id="ps-table".*?</thead>')
@@ -186,14 +284,12 @@ if ($iBuilding -ne $iVendor + 1) {
 }
 OK "preview table header reads ... $($headers[$iVendor]) | $($headers[$iBuilding]) ..."
 
-# The empty-state colspan has to track the column count or the placeholder row
-# stops spanning the table.
 $viewSrc = Get-Content -Raw (Join-Path $repoRoot 'src\ReceivingOps.Web\Views\Reports\Index.cshtml')
 $jsSrc   = Get-Content -Raw (Join-Path $repoRoot 'src\ReceivingOps.Web\wwwroot\js\pull-sheets.js')
 if ($viewSrc -match 'colspan="9"[^>]*class="ps-empty"' -or $jsSrc -match 'colspan=\\?"9\\?"[^>]*ps-empty') {
     Fail 'a ps-empty placeholder still spans 9 columns -- the table now has 10'
 }
-OK 'empty-state colspan tracks the new column count'
+OK 'empty-state colspan tracks the column count'
 
 # ----------------------------------------------------------------------------
 Step '3. Workbook: Building on Summary / Detail / Grand Total, absent from Header'
@@ -213,7 +309,6 @@ try {
         $hdr = HeaderRow $wb.Worksheet($sheet)
         $iB = [array]::IndexOf($hdr, 'Building')
         if ($iB -lt 0) { Fail "'$sheet' has no Building column -- [$($hdr -join ' | ')]" }
-        # Right of Vendor: 'Vendor Name' on Summary/Detail, 'Vendor' on Grand Total.
         $iV = [array]::IndexOf($hdr, 'Vendor Name')
         if ($iV -lt 0) { $iV = [array]::IndexOf($hdr, 'Vendor') }
         if ($iV -lt 0) { Fail "'$sheet' has no vendor column to anchor Building against" }
@@ -225,143 +320,168 @@ try {
 
     $headerHdr = HeaderRow $wb.Worksheet('Header')
     if ($headerHdr -contains 'Building') { Fail "'Header' sheet gained a Building column -- it is the criteria block and must not change" }
-    # The criteria block is a two-column key/value sheet; a Building row would
-    # show up in column 1, not the header row.
     $hs = $wb.Worksheet('Header')
     $hlast = $hs.LastRowUsed().RowNumber()
     $keys = 1..$hlast | ForEach-Object { $hs.Cell($_, 1).GetString() }
     if ($keys -contains 'Building') { Fail "'Header' sheet gained a Building criteria row" }
     OK "'Header' sheet is unchanged -- no Building column or row"
 
-    # ------------------------------------------------------------------------
-    Step '4. Value round-trip: the marker reaches the Detail body through the prefixed-vendor join'
-    # ------------------------------------------------------------------------
-    $ws = $wb.Worksheet('Detail')
-    $hdr = HeaderRow $ws
-    $cItem = [array]::IndexOf($hdr, 'Item Code') + 1
-    $cBld  = [array]::IndexOf($hdr, 'Building') + 1
-    $cExp  = [array]::IndexOf($hdr, 'Expected') + 1
-    $last  = $ws.LastRowUsed().RowNumber()
-
-    $detail = @{}
-    2..$last | ForEach-Object {
-        $code = $ws.Cell($_, $cItem).GetString()
-        if ($code -like 'PSBLD-*') {
-            if (-not $detail.ContainsKey($code)) { $detail[$code] = @() }
-            $detail[$code] += ,@($ws.Cell($_, $cBld).GetString(), $ws.Cell($_, $cExp).GetDouble())
-        }
-    }
-
-    if ($detail['PSBLD-ITEM-A'].Count -ne 1) {
-        Fail "PSBLD-ITEM-A produced $($detail['PSBLD-ITEM-A'].Count) Detail rows, expected 1"
-    }
-    if ($detail['PSBLD-ITEM-A'][0][0] -ne 'PSBLD-B7X') {
-        Fail "Detail Building for PSBLD-ITEM-A is '$($detail['PSBLD-ITEM-A'][0][0])', expected 'PSBLD-B7X'. The PO line holds 'COI-PSBLDV1' and the pull item 'PSBLDV1' -- an empty value here means the vendor prefix is not being stripped."
-    }
-    OK "Detail carries 'PSBLD-B7X' for PSBLD-ITEM-A -- the COI- prefix was bridged"
+    $detail  = IndexSheet $wb.Worksheet('Detail')      'Item Code' @('Building','Vendor Name','Vendor Code','Expected','Pull #')
+    $summary = IndexSheet $wb.Worksheet('Summary')     'Item Code' @('Building','Vendor Name','Total Expected','Pull #')
+    $gt      = IndexSheet $wb.Worksheet('Grand Total') 'Item Code' @('Building','Vendor')
 
     # ------------------------------------------------------------------------
-    Step '5. Two disagreeing PO lines collapse to *mixed* -- and do not fan the row out'
+    Step '4. Pull-scoped resolution: PullExternalRef, PullId, and an item absent from the PO'
     # ------------------------------------------------------------------------
-    $ws = $wb.Worksheet('Summary')
-    $hdr = HeaderRow $ws
-    $sItem = [array]::IndexOf($hdr, 'Item Code') + 1
-    $sBld  = [array]::IndexOf($hdr, 'Building') + 1
-    $sExp  = [array]::IndexOf($hdr, 'Total Expected') + 1
-    $slast = $ws.LastRowUsed().RowNumber()
+    $a1 = OnPull $detail['PSBLD-ITEM-A'] 'PSBLD-1'
+    if ($a1['Building'] -ne 'PSBLD-B7X') {
+        Fail "PSBLD-1/ITEM-A Building is '$($a1['Building'])', expected 'PSBLD-B7X'. Its PO carries PullExternalRef='PSBLD-1' and PullId=NULL -- an empty value means the scope predicate is only checking the FK."
+    }
+    OK '4a. resolved through PullExternalRef (PullId NULL)'
 
-    $summary = @{}
-    2..$slast | ForEach-Object {
-        $code = $ws.Cell($_, $sItem).GetString()
-        if ($code -like 'PSBLD-*') {
-            if (-not $summary.ContainsKey($code)) { $summary[$code] = @() }
-            $summary[$code] += ,@($ws.Cell($_, $sBld).GetString(), $ws.Cell($_, $sExp).GetDouble())
-        }
+    $a2 = OnPull $detail['PSBLD-ITEM-A'] 'PSBLD-2'
+    if ($a2['Building'] -ne 'PSBLD-B2Y') {
+        Fail "PSBLD-2/ITEM-A Building is '$($a2['Building'])', expected 'PSBLD-B2Y'. Its PO carries PullId and PullExternalRef=NULL -- an empty value means the scope predicate is only checking the ref."
     }
+    OK '4b. resolved through PullId (PullExternalRef NULL)'
 
-    if ($summary['PSBLD-ITEM-B'][0][0] -ne '*mixed*') {
-        Fail "Summary Building for PSBLD-ITEM-B is '$($summary['PSBLD-ITEM-B'][0][0])', expected the literal '*mixed*' (its two PO lines say PSBLD-BM1 and PSBLD-BM2)"
+    # THE ItemCode GUARD. PSBLD-ITEM-B is on pull PSBLD-1 but is NOT a line of
+    # PSBLD-PO-1. Building belongs to the shipment, so it resolves anyway.
+    # Re-adding `pol.ItemCode = pi.ItemCode` to the Building APPLY blanks this.
+    $b = OnPull $detail['PSBLD-ITEM-B'] 'PSBLD-1'
+    if ($b['Building'] -eq 'PSBLD-BHIST') {
+        Fail 'PSBLD-ITEM-B picked up PSBLD-BHIST from the unlinked PO -- Building has been re-scoped to the item history'
     }
-    if ($summary['PSBLD-ITEM-B'][0][0] -match ',') {
-        Fail 'disagreeing buildings were comma-joined -- the column is a VLOOKUP key downstream and must collapse to a word'
+    if ($b['Building'] -ne 'PSBLD-B7X') {
+        Fail "PSBLD-ITEM-B Building is '$($b['Building'])', expected 'PSBLD-B7X'. This item is on the pull but absent from its PO's lines: an empty value here means an ItemCode predicate has been re-added to the Building APPLY, which is exactly the 617-pull-items-of-nothing this scope exists to avoid."
     }
-    OK "Summary reads '*mixed*' for the two-building item"
-
-    # 5b -- the grain guard. PSBLD-ITEM-B reaches TWO PO lines. If Building were
-    # joined rather than APPLY'd, this item would appear twice and its 500 would
-    # read as 1000, on a file that otherwise looks entirely normal.
-    if ($summary['PSBLD-ITEM-B'].Count -ne 1) {
-        Fail "PSBLD-ITEM-B produced $($summary['PSBLD-ITEM-B'].Count) Summary rows, expected 1 -- the PO-line join is fanning rows out"
-    }
-    if ($summary['PSBLD-ITEM-B'][0][1] -ne 500) {
-        Fail "PSBLD-ITEM-B Total Expected is $($summary['PSBLD-ITEM-B'][0][1]), expected 500 -- reaching 2 PO lines has inflated the quantity"
-    }
-    if ($detail['PSBLD-ITEM-B'].Count -ne 1) {
-        Fail "PSBLD-ITEM-B produced $($detail['PSBLD-ITEM-B'].Count) Detail rows, expected 1 -- the PO-line join is fanning rows out"
-    }
-    if ($summary['PSBLD-ITEM-A'][0][1] -ne 900) {
-        Fail "PSBLD-ITEM-A Total Expected is $($summary['PSBLD-ITEM-A'][0][1]), expected 900"
-    }
-    OK 'reaching two PO lines still yields one row at the seeded quantity on both sheets'
+    OK '4c. an item absent from the PO lines still resolves from the pull'
 
     # ------------------------------------------------------------------------
-    Step '6. No matching PO line -> an empty cell, not the text null and not *mixed*'
+    Step '5. NBSP fold before the collapse, and no row fan-out'
     # ------------------------------------------------------------------------
-    $cellC = $summary['PSBLD-ITEM-C'][0][0]
-    if ($cellC -ne '') {
-        Fail "Summary Building for the unmatched PSBLD-ITEM-C is '$cellC', expected an empty cell"
+    # PO-1 has three lines, all saying PSBLD-B7X, one of them NBSP-padded. An
+    # unnormalised collapse sees two values and reports *mixed*.
+    if ($a1['Building'] -eq '*mixed*') {
+        Fail 'PSBLD-1 collapsed to *mixed*, but all three PO-1 lines say PSBLD-B7X -- one is NBSP-padded and the fold is missing'
     }
-    $dCellC = $detail['PSBLD-ITEM-C'][0][0]
-    if ($dCellC -ne '') {
-        Fail "Detail Building for the unmatched PSBLD-ITEM-C is '$dCellC', expected an empty cell"
+    if ($a1['Building'] -match [char]0x00A0) {
+        Fail 'the Building cell carries a non-breaking space -- it will not match a plain-space VLOOKUP key downstream'
     }
-    OK 'unmatched item writes an empty cell on Summary and Detail'
+    OK '5a. an NBSP-padded line is not a disagreement, and no NBSP reaches the cell'
+
+    # Grain guard: ITEM-A reaches all THREE lines of PO-1 now that the APPLY has
+    # no ItemCode filter. Joined rather than APPLY'd, this row would triple and
+    # its 900 would read as 2700 on a file that otherwise looks normal.
+    if ($detail['PSBLD-ITEM-A'].Count -ne 2) {
+        Fail "PSBLD-ITEM-A produced $($detail['PSBLD-ITEM-A'].Count) Detail rows, expected 2 (one per pull) -- the PO-line join is fanning rows out"
+    }
+    $sa1 = OnPull $summary['PSBLD-ITEM-A'] 'PSBLD-1'
+    if ([double]$sa1['Total Expected'] -ne 900) {
+        Fail "PSBLD-1/ITEM-A Total Expected is $($sa1['Total Expected']), expected 900 -- reaching 3 PO lines has inflated the quantity"
+    }
+    OK '5b. reaching three PO lines still yields one row per pull at the seeded quantity'
+
+    # ------------------------------------------------------------------------
+    Step '6. Two scopes on one row: Building blank, Vendor resolved'
+    # ------------------------------------------------------------------------
+    # This is the assertion that catches a future re-merge into a single APPLY,
+    # in EITHER direction. PSBLD-3 has no PO, so Building must be blank; its
+    # vendor still resolves warehouse-wide from the unlinked history PO.
+    $c = OnPull $detail['PSBLD-ITEM-C'] 'PSBLD-3'
+    if ($c['Building'] -ne '') {
+        Fail "PSBLD-ITEM-C Building is '$($c['Building'])', expected an empty cell -- pull PSBLD-3 has no PO"
+    }
+    if ($c['Vendor Name'] -ne 'PSBLD Vendor Three') {
+        Fail "PSBLD-ITEM-C Vendor Name is '$($c['Vendor Name'])', expected 'PSBLD Vendor Three'. Building is correctly blank on this row; if Vendor is blank too, the two APPLYs have been merged onto the pull scope and a column with data has been emptied."
+    }
+    OK '6a. Building blank and Vendor resolved on the SAME row -- the two scopes are distinct'
+
+    # And the mirror: ITEM-A resolves its vendor across the COI- prefix gap.
+    if ($a1['Vendor Name'] -ne 'PSBLD Vendor One') {
+        Fail "PSBLD-1/ITEM-A Vendor Name is '$($a1['Vendor Name'])', expected 'PSBLD Vendor One'. The PO line holds 'COI-PSBLDV1' against the pull item's bare 'PSBLDV1' -- an empty value means the prefix is not being bridged."
+    }
+    if ($a1['Vendor Code'] -ne 'PSBLDV1') {
+        Fail "PSBLD-1/ITEM-A Vendor Code is '$($a1['Vendor Code'])', expected the pull item's own bare 'PSBLDV1'"
+    }
+    OK "6b. vendor name resolved across the COI- prefix; vendor code stays the pull item's own"
+
+    # ------------------------------------------------------------------------
+    Step '7. A pull with no PO writes a blank -- not *mixed*, not a stale value'
+    # ------------------------------------------------------------------------
+    if ($c['Building'] -eq '*mixed*') { Fail 'unmatched pull produced *mixed* rather than a blank' }
+    $sc = OnPull $summary['PSBLD-ITEM-C'] 'PSBLD-3'
+    if ($sc['Building'] -ne '') { Fail "Summary Building for PSBLD-ITEM-C is '$($sc['Building'])', expected an empty cell" }
 
     $rowC = $preview.summaryPreview | Where-Object { $_.itemCode -eq 'PSBLD-ITEM-C' }
     if (-not [string]::IsNullOrEmpty($rowC.building)) {
         Fail "preview building for PSBLD-ITEM-C is '$($rowC.building)', expected null so the table renders an em-dash"
     }
-    # The em-dash is the renderer's job; assert the fallback is still wired.
     if ($jsSrc -notmatch 'r\.building \|\|') {
         Fail 'pull-sheets.js no longer falls back for a null building -- the cell would render "undefined"'
     }
-    OK 'preview sends null and the renderer falls back to an em-dash'
+    OK '7. no linked PO -> empty cell on Detail and Summary, null in the preview'
 
     # ------------------------------------------------------------------------
-    Step '7. NBSP padding is not a disagreement, and never reaches a cell'
+    Step '8. A pull item that states its own vendor name keeps it'
     # ------------------------------------------------------------------------
-    # Item D has one building written twice, the second copy padded with U+00A0.
-    # SQL Server LTRIM/RTRIM leave NBSP alone, so an unnormalised collapse sees
-    # two values and reports *mixed* -- a disagreement created by padding.
-    $nbspCell = $summary['PSBLD-ITEM-D'][0][0]
-    if ($nbspCell -eq '*mixed*') {
-        Fail 'PSBLD-ITEM-D collapsed to *mixed*, but both its PO lines say PSBLD-BN1 -- one is NBSP-padded and the fold is missing'
+    # PSBLD-ITEM-E carries VendorName='PSBLD Seeded Vendor'; its history line
+    # says 'PSBLD Overwritten'. The COALESCE must prefer the pull item.
+    $e = OnPull $detail['PSBLD-ITEM-E'] 'PSBLD-3'
+    if ($e['Vendor Name'] -ne 'PSBLD Seeded Vendor') {
+        Fail "PSBLD-ITEM-E Vendor Name is '$($e['Vendor Name'])', expected the pull item's own 'PSBLD Seeded Vendor'. Reading 'PSBLD Overwritten' means the resolved value is winning over a stated one."
     }
-    if ($nbspCell -ne 'PSBLD-BN1') {
-        Fail "Summary Building for PSBLD-ITEM-D is '$nbspCell', expected 'PSBLD-BN1'"
-    }
-    if ($nbspCell -match [char]0x00A0) {
-        Fail 'the Building cell still carries a non-breaking space -- it will not match a plain-space VLOOKUP key downstream'
-    }
-    OK 'an NBSP-padded duplicate collapses to the plain value, with no NBSP in the cell'
+    OK '8. pi.VendorName wins over the resolved value'
 
     # ------------------------------------------------------------------------
-    Step '8. Grand Total collapses across the whole period'
+    Step '9. Grand Total collapses BOTH columns across the period'
     # ------------------------------------------------------------------------
-    $ws = $wb.Worksheet('Grand Total')
-    $hdr = HeaderRow $ws
-    $gItem = [array]::IndexOf($hdr, 'Item Code') + 1
-    $gBld  = [array]::IndexOf($hdr, 'Building') + 1
-    $glast = $ws.LastRowUsed().RowNumber()
-    $gt = @{}
-    2..$glast | ForEach-Object {
-        $code = $ws.Cell($_, $gItem).GetString()
-        if ($code -like 'PSBLD-*') { $gt[$code] = $ws.Cell($_, $gBld).GetString() }
+    # ITEM-A ships to B7X on one pull and B2Y on the other. Each Summary row
+    # keeps its own; Grand Total, which spans both, must say *mixed*.
+    if ($gt['PSBLD-ITEM-A'][0]['Building'] -ne '*mixed*') {
+        Fail "Grand Total Building for PSBLD-ITEM-A is '$($gt['PSBLD-ITEM-A'][0]['Building'])', expected '*mixed*' (PSBLD-B7X on one pull, PSBLD-B2Y on the other)"
     }
-    if ($gt['PSBLD-ITEM-A'] -ne 'PSBLD-B7X') { Fail "Grand Total Building for PSBLD-ITEM-A is '$($gt['PSBLD-ITEM-A'])', expected 'PSBLD-B7X'" }
-    if ($gt['PSBLD-ITEM-B'] -ne '*mixed*')   { Fail "Grand Total Building for PSBLD-ITEM-B is '$($gt['PSBLD-ITEM-B'])', expected '*mixed*'" }
-    if ($gt['PSBLD-ITEM-C'] -ne '')          { Fail "Grand Total Building for PSBLD-ITEM-C is '$($gt['PSBLD-ITEM-C'])', expected an empty cell" }
-    OK 'Grand Total shows the agreed value, *mixed*, and blank respectively'
+    $sa2 = OnPull $summary['PSBLD-ITEM-A'] 'PSBLD-2'
+    if ($sa1['Building'] -ne 'PSBLD-B7X' -or $sa2['Building'] -ne 'PSBLD-B2Y') {
+        Fail "Summary rows lost their own building values ('$($sa1['Building'])' / '$($sa2['Building'])') -- Summary must stay traceable while Grand Total collapses"
+    }
+    OK '9a. Building: *mixed* on Grand Total, own value on each Summary row'
+
+    # ITEM-F comes from storer PSBLDV6 on one pull and PSBLDV7 on the other --
+    # dual sourcing, which is normal. Taking the first non-blank would name one
+    # supplier as though it were the only one.
+    if ($gt['PSBLD-ITEM-F'][0]['Vendor'] -ne '*mixed*') {
+        Fail "Grand Total Vendor for PSBLD-ITEM-F is '$($gt['PSBLD-ITEM-F'][0]['Vendor'])', expected '*mixed*'. It is sourced from two storers across the period; a single name here means the collapse is still FirstOrDefault."
+    }
+    if ($gt['PSBLD-ITEM-F'][0]['Vendor'] -match ',') {
+        Fail 'disagreeing vendors were comma-joined -- the collapse must produce a word'
+    }
+    $sf1 = OnPull $summary['PSBLD-ITEM-F'] 'PSBLD-1'
+    $sf2 = OnPull $summary['PSBLD-ITEM-F'] 'PSBLD-2'
+    if ($sf1['Vendor Name'] -ne 'PSBLD Vendor Six' -or $sf2['Vendor Name'] -ne 'PSBLD Vendor Seven') {
+        Fail "Summary vendor rows are '$($sf1['Vendor Name'])' / '$($sf2['Vendor Name'])', expected Six / Seven -- Summary must stay traceable"
+    }
+    OK '9b. Vendor: *mixed* on Grand Total, own storer on each Summary row'
+
+    if ($gt['PSBLD-ITEM-C'][0]['Building'] -ne '') {
+        Fail "Grand Total Building for PSBLD-ITEM-C is '$($gt['PSBLD-ITEM-C'][0]['Building'])', expected an empty cell"
+    }
+    OK '9c. Grand Total writes a blank for the item with no linked PO'
+
+    # ------------------------------------------------------------------------
+    Step '10. A PO whose own lines disagree still reports *mixed*'
+    # ------------------------------------------------------------------------
+    # This should be unreachable in production -- 1,429 of 1,429 pulls resolve to
+    # one building. The collapse stays as the signal that says so out loud if the
+    # rule ever breaks upstream, instead of picking whichever line sorted first.
+    $g = OnPull $detail['PSBLD-ITEM-G'] 'PSBLD-4'
+    if ($g['Building'] -ne '*mixed*') {
+        Fail "PSBLD-ITEM-G Building is '$($g['Building'])', expected '*mixed*' -- PSBLD-PO-4 says PSBLD-BG1 on one line and PSBLD-BG2 on another, and that disagreement must stay visible"
+    }
+    if ($g['Building'] -match ',') {
+        Fail 'disagreeing buildings were comma-joined -- the column is a VLOOKUP key downstream and must collapse to a word'
+    }
+    OK '10. a self-disagreeing PO surfaces *mixed* rather than a silent pick'
 }
 finally {
     if ($wb) { $wb.Dispose() }

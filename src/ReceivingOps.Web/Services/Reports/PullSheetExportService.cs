@@ -120,10 +120,11 @@ public class PullSheetExportService : IPullSheetExportService
                     Tag = first.Tag,
                     RowStatus = first.RowStatus,
                     VendorCode = first.VendorCode,
+                    // Both already collapsed per pull item by the repository --
+                    // vendor warehouse-wide, building against the pull's own PO --
+                    // and the group key is that same item, so every row here carries
+                    // the same value. Taking the first is reading it, not choosing.
                     VendorName = first.VendorName,
-                    // Already collapsed per pull item by the repository, and the
-                    // group key is that same item, so every row here carries the
-                    // same value -- taking the first is reading it, not choosing.
                     Building = first.Building,
                     ExpectedQty = g.Sum(r => r.ExpectedQty),
                     ReceivedQty = g.Sum(r => r.ReceivedQty),
@@ -153,15 +154,19 @@ public class PullSheetExportService : IPullSheetExportService
                 // less meaning than the padded long one.
                 Description = g.Select(r => r.Description ?? "")
                                .OrderByDescending(d => d.Trim().Length).First(),
-                VendorName = g.Select(r => r.VendorName)
-                              .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
-                // Collapsed a second time, now ACROSS pulls. The repository
-                // collapsed within each pull item; this group spans every pull in
-                // the period, so an item delivered to B2 on one pull and B4 on
-                // another reads *mixed* here while both Summary rows keep their
-                // own value. Not FirstOrDefault like VendorName above: picking one
-                // of two real buildings would be a wrong answer, not a partial one.
-                Building = CollapseBuilding(g.Select(r => r.Building)),
+                // Both of these are collapsed a SECOND time, now ACROSS pulls.
+                // The repository collapsed within each pull item; this group spans
+                // every pull in the period, so an item delivered to B2 on one pull
+                // and B4 on another reads *mixed* here while both Summary rows keep
+                // their own value. Summary stays traceable, Grand Total stays honest.
+                //
+                // Vendor used to take the first non-blank instead, which named one
+                // supplier for a dual-sourced part as though it were the only one:
+                // 18 of 128 item codes in Evening 2026-08-25 reach more than one
+                // vendor. Picking one of two real vendors is a wrong answer, not a
+                // partial one -- the same argument that has always governed Building.
+                VendorName = CollapseText(g.Select(r => r.VendorName)),
+                Building   = CollapseText(g.Select(r => r.Building)),
                 ExpectedQty = g.Sum(r => r.ExpectedQty),
                 ReceivedQty = g.Sum(r => r.ReceivedQty),
                 Outstanding = g.Sum(r => r.Outstanding),
@@ -480,7 +485,7 @@ public class PullSheetExportService : IPullSheetExportService
     /// under — comparing Ordinal here would call "B4" and "b4" a disagreement
     /// that SQL had already resolved.</para>
     /// </summary>
-    internal static string? CollapseBuilding(IEnumerable<string?> values)
+    internal static string? CollapseText(IEnumerable<string?> values)
     {
         var distinct = values
             .Select(Normalize)
