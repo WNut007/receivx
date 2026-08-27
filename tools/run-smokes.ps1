@@ -119,6 +119,10 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # UpsertAsync against the dev DB with no ERP host. Build it first:
         # dotnet build tools/ErpUpsertHarness.
         'smoke-storer-grain.ps1'
+        # db/052 — operator edits win permanently over ERP sync. Drives the
+        # same harness in two phases (HARNESS_NO_PURGE) with real API edits
+        # between them. Owns the HARNESS-OWNER-% namespace.
+        'smoke-operator-owns-edits.ps1'
         # Read-path companion to storer-grain: the console grid orders by
         # (ItemCode, VendorCode, SortOrder) so a SKU's storer rows sit together.
         # Seeds its own SKUORD-% pulls via SQL; needs node on PATH for step 6.

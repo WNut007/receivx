@@ -60,7 +60,11 @@ var connStr = args.Length > 1
     : "Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Integrated Security=True;"
       + "TrustServerCertificate=True;Encrypt=False;Application Name=ErpUpsertHarness;";
 
-const string PullNumber = "HARNESS-STORER-1";
+// db/052 ownership scenarios use their own pull number so the two smokes that
+// drive this harness read clearly apart in the DB. Purge is LIKE 'HARNESS-%'
+// and covers both.
+var isOwnership = scenario.StartsWith("ownership-", StringComparison.Ordinal);
+var PullNumber = isOwnership ? "HARNESS-OWNER-1" : "HARNESS-STORER-1";
 const string ItemCode = "HARNESS-SKU-A";
 const string StorerA = "5732";           // stripped form, as BPI_PRS.VENDOR emits it
 const string StorerB = "84600";
@@ -79,8 +83,17 @@ if (scenario.StartsWith("transform-", StringComparison.Ordinal))
 try
 {
     var factory = new HarnessConnectionFactory(connStr);
-    using (var seed = factory.Create())
+
+    // db/052 — the ownership smoke runs in two phases against ONE pull: phase 1
+    // seeds it, then the smoke makes a real operator edit through the API (so
+    // the ownership mark is written by the shipping service, not by fixture
+    // SQL), then phase 2 re-runs the ETL over the same rows. Phase 2 must not
+    // purge or re-seed, or the edit it is meant to defend disappears with it.
+    var noPurge = Environment.GetEnvironmentVariable("HARNESS_NO_PURGE") == "1";
+
+    if (!noPurge)
     {
+        using var seed = factory.Create();
         seed.Open();
         Purge(seed);
 
@@ -117,8 +130,12 @@ try
 
     using var read = factory.Create();
     read.Open();
+    // Description / Remark / ProductFamily / Origin are read for the db/052
+    // ownership smoke: they are what "the operator's value survived" is
+    // asserted against.
     var items = (await read.QueryAsync<ItemRow>(@"
         SELECT pi.ItemCode, pi.VendorCode, pi.Status, pi.SortOrder,
+               pi.Description, pi.Remark, pi.ProductFamily, pi.Origin,
                ISNULL((SELECT SUM(w.ExpectedQty) FROM dbo.PullItemWindows w
                        WHERE w.PullItemId = pi.Id), 0) AS ExpectedQty
         FROM   dbo.PullItems pi
@@ -135,6 +152,12 @@ try
         updated = result?.Updated ?? -1,
         itemsAdded = result?.ItemsAdded ?? -1,
         itemsCanceled = result?.ItemsCanceled ?? -1,
+        // db/052 field-protection counters, straight off ErpUpsertResult.
+        fieldsSkipped = result?.FieldsSkipped ?? -1,
+        fieldsWritten = result?.FieldsWritten ?? -1,
+        rowsWithAnySkip = result?.RowsWithAnySkip ?? -1,
+        itemsExemptCreated = result?.ItemsExemptCreated ?? -1,
+        skippedByField = result?.SkippedByField,
         outcomes = result?.PullOutcomes.Select(o => new { o.PullNumber, o.Outcome, o.Detail }),
         items,
     };
@@ -190,17 +213,24 @@ void SeedPull(System.Data.IDbConnection conn, string sc)
         ? new[] { StorerA }
         : new[] { StorerA, StorerB };
 
+    // db/052 — ownership scenarios seed the ERP baseline values explicitly, so
+    // "the operator's value survived" can be told apart from "ERP happened to
+    // send the same thing". Everything else keeps the original NULL shape.
+    var seedRemark = sc.StartsWith("ownership-", StringComparison.Ordinal) ? "ERP-BASE" : null;
+    var seedFamily = sc.StartsWith("ownership-", StringComparison.Ordinal) ? "PF-BASE" : null;
+
     var sort = 0;
     foreach (var storer in storers)
     {
         sort++;
         var itemId = conn.QuerySingle<Guid>(@"
             INSERT INTO dbo.PullItems (Id, PullId, ItemCode, Description, VendorCode,
-                                       Tag, Status, Remark, SortOrder)
+                                       Tag, Status, Remark, SortOrder, ProductFamily)
             OUTPUT INSERTED.Id
             VALUES (NEWID(), @PullId, @ItemCode, 'harness item', @VendorCode,
-                    NULL, 'normal', NULL, @SortOrder);",
-            new { PullId = pullId, ItemCode, VendorCode = storer, SortOrder = sort });
+                    NULL, 'normal', @Remark, @SortOrder, @ProductFamily);",
+            new { PullId = pullId, ItemCode, VendorCode = storer, SortOrder = sort,
+                  Remark = seedRemark, ProductFamily = seedFamily });
 
         conn.Execute(@"
             INSERT INTO dbo.PullItemWindows (Id, PullItemId, HourOfDay, ExpectedQty, ReceivedQty)
@@ -219,19 +249,43 @@ ErpSyncDraft BuildDraft(string sc, Guid whId)
         PullDate = DateTime.UtcNow.Date,
     };
 
-    var storers = sc == "withdraw-one-storer"
+    var storers = sc is "withdraw-one-storer" or "ownership-withdraw"
         ? new[] { StorerA }                  // B withdrawn: only B may cancel
         : new[] { StorerA, StorerB };
+
+    // db/052 — 'ownership-changed' is the run under test: ERP sends DIFFERENT
+    // values for every protectable field. A field an operator owns must still
+    // read its own value afterwards, and an unowned one must read these.
+    // That difference is what separates "operator wins permanently" from
+    // "operator wins until ERP changes" — under the latter, these values
+    // would win.
+    var changed = sc == "ownership-changed";
+    var draftRemark = changed ? "ERP-CHANGED" : "ERP-BASE";
+    var draftFamily = changed ? "PF-CHANGED" : "PF-BASE";
+    var draftDesc = changed ? "ERP DESC CHANGED" : "harness item";
+    var draftQty = changed ? 250 : 100;
 
     foreach (var storer in storers)
     {
         var item = new PullItemDraft
         {
             ItemCode = ItemCode,             // bare SKU on BOTH — that is the point
-            Description = "harness item",
+            Description = sc.StartsWith("ownership-", StringComparison.Ordinal)
+                ? draftDesc : "harness item",
             VendorCode = storer,
         };
-        item.Windows.Add(new PullItemWindowDraft { HourOfDay = 7, ExpectedQty = 100 });
+
+        if (sc.StartsWith("ownership-", StringComparison.Ordinal))
+        {
+            item.Remark = draftRemark;
+            item.ProductFamily = draftFamily;
+        }
+
+        item.Windows.Add(new PullItemWindowDraft
+        {
+            HourOfDay = 7,
+            ExpectedQty = sc.StartsWith("ownership-", StringComparison.Ordinal) ? draftQty : 100,
+        });
         pull.Items.Add(item);
     }
 
@@ -240,7 +294,13 @@ ErpSyncDraft BuildDraft(string sc, Guid whId)
     return draft;
 }
 
-sealed record ItemRow(string ItemCode, string? VendorCode, string Status, int SortOrder, int ExpectedQty);
+// Parameter order MUST match the SELECT's column order: Dapper materializes a
+// positional record by constructor signature, not by name, and reordering
+// either side without the other throws at runtime rather than mis-binding.
+sealed record ItemRow(
+    string ItemCode, string? VendorCode, string Status, int SortOrder,
+    string? Description, string? Remark, string? ProductFamily, string? Origin,
+    int ExpectedQty);
 
 sealed class HarnessConnectionFactory(string connStr) : IDbConnectionFactory
 {

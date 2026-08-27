@@ -37,6 +37,32 @@ SET QUOTED_IDENTIFIER ON;
 DELETE s FROM dbo.PullSignatures s
 INNER JOIN dbo.Pulls p ON p.Id = s.PullId
 WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%';
+-- db/052 ownership marks are keyed by row GUID with no FK, so they must go
+-- BEFORE the rows they point at -- afterwards the ids are unrecoverable and
+-- the table accumulates orphans one run at a time. This smoke edits window
+-- ExpectedQty through the real API, which is now a marking operation.
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItemWindow'
+  AND e.EntityId IN (SELECT w.Id FROM dbo.PullItemWindows w
+                       INNER JOIN dbo.PullItems pi ON pi.Id = w.PullItemId
+                       INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+                     WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItem'
+  AND e.EntityId IN (SELECT pi.Id FROM dbo.PullItems pi
+                       INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+                     WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'Pull'
+  AND e.EntityId IN (SELECT p.Id FROM dbo.Pulls p WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+-- This smoke edits a window and then DELETEs it through the API, so by the
+-- time the joins above run that window is already gone and its mark cannot be
+-- reached by id. Such a mark is inert -- nothing can ever match a GUID that no
+-- row carries -- but it would accumulate one per run, so sweep window marks
+-- with no surviving parent.
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItemWindow'
+  AND NOT EXISTS (SELECT 1 FROM dbo.PullItemWindows w WHERE w.Id = e.EntityId);
 UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
 INNER JOIN dbo.Pulls p ON p.Id = po.PullId
 WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%';

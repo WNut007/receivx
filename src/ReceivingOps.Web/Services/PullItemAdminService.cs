@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using ReceivingOps.Web.Data;
@@ -14,11 +15,25 @@ public class PullItemAdminService : IPullItemAdminService
 
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
+    private readonly IHttpContextAccessor _httpContext;
 
-    public PullItemAdminService(IDbConnectionFactory factory, IAuditService audit)
+    public PullItemAdminService(
+        IDbConnectionFactory factory, IAuditService audit, IHttpContextAccessor httpContext)
     {
         _factory = factory;
         _audit = audit;
+        _httpContext = httpContext;
+    }
+
+    /// <summary>
+    /// Actor for db/052 ownership marks. Best-effort and nullable: it returns
+    /// null off a request thread rather than throwing, because losing the
+    /// "who" must never fail the edit the operator actually asked for.
+    /// </summary>
+    private Guid? CurrentUserIdOrNull()
+    {
+        var idClaim = _httpContext.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(idClaim, out var id) ? id : null;
     }
 
     // ========================================================================
@@ -70,15 +85,24 @@ public class PullItemAdminService : IPullItemAdminService
                 "SELECT ISNULL(MAX(SortOrder), 0) + 1 FROM dbo.PullItems WHERE PullId = @PullId;",
                 new { PullId = pullId }, transaction: tx, cancellationToken: ct));
 
+            // db/052 — Origin='operator' is the provenance that exempts this
+            // row from the ETL cancel path. An operator-created item is BY
+            // DEFINITION never in the ERP draft, so without this stamp it is
+            // flipped to Status='canceled' on the next in-window sync.
+            //
+            // SortOrder is INSERT-only and has no operator update path today,
+            // so it carries no ownership mark. If a reorder endpoint is ever
+            // added it MUST mark ownership like the other fields, or ETL's
+            // nextSort arithmetic will silently renumber a hand-ordered pull.
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.PullItems
                        (Id, PullId, ItemCode, Description, VendorCode, VendorName,
-                        Tag, Status, Remark, SortOrder,
+                        Tag, Status, Remark, SortOrder, Origin,
                         ProductFamily, FromSubInventory, ToSubInventory,
                         SpecialControl, TrialId, Location, [Phase])
                 OUTPUT INSERTED.Id
                 VALUES (NEWID(), @PullId, @ItemCode, @Description, @VendorCode, @VendorName,
-                        @Tag, 'normal', @Remark, @SortOrder,
+                        @Tag, 'normal', @Remark, @SortOrder, @Origin,
                         @ProductFamily, @FromSubInventory, @ToSubInventory,
                         @SpecialControl, @TrialId, @Location, @Phase);",
                 new
@@ -86,6 +110,7 @@ public class PullItemAdminService : IPullItemAdminService
                     PullId = pullId, req.ItemCode, req.Description,
                     req.VendorCode, req.VendorName, req.Tag, req.Remark,
                     SortOrder = nextSort,
+                    Origin = OperatorFieldEdits.OriginOperator,
                     req.ProductFamily, req.FromSubInventory, req.ToSubInventory,
                     req.SpecialControl, req.TrialId, req.Location, req.Phase,
                 }, transaction: tx, cancellationToken: ct));
@@ -138,8 +163,15 @@ public class PullItemAdminService : IPullItemAdminService
             var pull = await LockPullAsync(conn, tx, pullId, ct);
             RefuseClosed(pull);
 
+            // Description / VendorCode / Remark are read so the db/052
+            // ownership diff below has the BEFORE values. Read here rather
+            // than through LockItemOnPullAsync because this method has always
+            // had its own lock read — extending only the shared helper leaves
+            // this path comparing against nulls and marking every field on
+            // every PUT, which is precisely the row-level collapse the diff
+            // exists to avoid.
             var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-                SELECT Id, PullId, ItemCode
+                SELECT Id, PullId, ItemCode, Description, VendorCode, Remark
                 FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -163,6 +195,32 @@ public class PullItemAdminService : IPullItemAdminService
                     req.Description, req.VendorCode, req.VendorName,
                     req.Tag, req.Status, req.Remark,
                 }, transaction: tx, cancellationToken: ct));
+
+            // db/052 — record ownership of the fields ETL also writes.
+            //
+            // From a VALUE DIFF, never from request presence. This is a
+            // bulk-overwrite PUT: every request carries all six fields and a
+            // blank means NULL, so "the request included Remark" is true on
+            // every call and says nothing about whether the operator changed
+            // it. Marking on presence would freeze the whole row on the first
+            // edit of any single field — field-level protection collapsing
+            // into row-level protection, with every test still green.
+            // Do not simplify this into marking what the request carried.
+            //
+            // VendorName, Tag and Status are absent deliberately: ETL never
+            // writes them, so they need no protection.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItem, itemId,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Description, item.Description, req.Description),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.VendorCode, item.VendorCode, req.VendorCode),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Remark, item.Remark, req.Remark),
+                },
+                CurrentUserIdOrNull(), ct);
 
             await _audit.WriteAsync(conn, tx, "update", "PullItem", itemId.ToString(),
                 $"Updated item {item.ItemCode} in pull {pull.PullNumber}", ct);
@@ -310,6 +368,22 @@ public class PullItemAdminService : IPullItemAdminService
                 new { Id = window.Id, req.ExpectedQty },
                 transaction: tx, cancellationToken: ct));
 
+            // db/052 — ExpectedQty is the one window column ETL writes
+            // (SyncWindowsAsync). ReceivedQty and the close/variance columns
+            // are on the static protected list already. Value diff as
+            // everywhere else: re-saving the same qty takes no ownership.
+            //
+            // Marked against the WINDOW's Id, not the item's — a pull item
+            // has one window per hour and they are protected independently.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItemWindow, window.Id,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ExpectedQty, window.ExpectedQty, req.ExpectedQty),
+                },
+                CurrentUserIdOrNull(), ct);
+
             await _audit.WriteAsync(conn, tx, "update", "PullItemWindow",
                 $"{itemId}:{hourOfDay:D2}",
                 $"Updated window {hourOfDay:D2}:00 on item {item.ItemCode} in pull {pull.PullNumber} (qty: {window.ExpectedQty}→{req.ExpectedQty})", ct);
@@ -406,6 +480,32 @@ public class PullItemAdminService : IPullItemAdminService
                     req.Location,
                     req.Phase,
                 }, transaction: tx, cancellationToken: ct));
+
+            // db/052 — same value-diff rule as UpdateAsync above. All seven of
+            // these are ERP-sourced AND in-app editable, so all seven are
+            // protectable. Presence is meaningless here too: this endpoint is
+            // bulk-overwrite, so a request that only meant to set TrialId
+            // still carries the other six.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItem, itemId,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ProductFamily, item.ProductFamily, req.ProductFamily),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.FromSubInventory, item.FromSubInventory, req.FromSubInventory),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ToSubInventory, item.ToSubInventory, req.ToSubInventory),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.SpecialControl, item.SpecialControl, req.SpecialControl),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.TrialId, item.TrialId, req.TrialId),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Location, item.Location, req.Location),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Phase, item.Phase, req.Phase),
+                },
+                CurrentUserIdOrNull(), ct);
 
             await _audit.WriteAsync(conn, tx, "update", "PullItem", itemId.ToString(),
                 $"Updated extended fields on item {item.ItemCode} in pull {pull.PullNumber}", ct);
@@ -557,8 +657,14 @@ public class PullItemAdminService : IPullItemAdminService
         System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
         Guid pullId, Guid itemId, CancellationToken ct)
     {
+        // The extra columns are read so the db/052 ownership diff has the
+        // BEFORE values without a second round trip. They are not otherwise
+        // used here.
         var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-            SELECT Id, PullId, ItemCode
+            SELECT Id, PullId, ItemCode,
+                   Description, VendorCode, Remark,
+                   ProductFamily, FromSubInventory, ToSubInventory,
+                   SpecialControl, TrialId, Location, [Phase]
             FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
             WHERE  Id = @Id;",
             new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -580,6 +686,20 @@ public class PullItemAdminService : IPullItemAdminService
         public Guid Id { get; set; }
         public Guid PullId { get; set; }
         public string ItemCode { get; set; } = "";
+
+        // BEFORE values for the db/052 ownership diff. Read under the same
+        // UPDLOCK as the row itself, so nothing can change between the read
+        // and the write that follows it.
+        public string? Description { get; set; }
+        public string? VendorCode { get; set; }
+        public string? Remark { get; set; }
+        public string? ProductFamily { get; set; }
+        public string? FromSubInventory { get; set; }
+        public string? ToSubInventory { get; set; }
+        public string? SpecialControl { get; set; }
+        public string? TrialId { get; set; }
+        public string? Location { get; set; }
+        public string? Phase { get; set; }
     }
 
     private sealed class WindowLockRow

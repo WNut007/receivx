@@ -288,27 +288,57 @@ public class ErpUpsertService : IErpUpsertService
     //              update of present items)
     //   PullItemWindows: ReceivedQty (only the receive/cancel services
     //              touch this; the cache is denormalized from Receipts)
+    //
+    // That list is STATIC and stays exactly as it is: it names columns ETL
+    // must never write for anybody. db/052 adds a second, orthogonal gate —
+    // dbo.OperatorFieldEdits, read per pull below — which is PER ROW and PER
+    // FIELD and decided at runtime: any field an operator has actually edited
+    // is never written again, for the life of the pull, even if ERP later
+    // sends a different value. The two do not overlap and neither replaces
+    // the other. Do not migrate entries from one to the other.
     // ------------------------------------------------------------------
     private async Task UpdatePullAsync(
         System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
         PullDraft pull, Guid pullId, string? pullOrigin, ErpUpsertResult result,
         Guid runId, string actorName, string srcTag, CancellationToken ct)
     {
+        // 0. db/052 — every operator ownership mark covering this pull, in ONE
+        // round trip, read INSIDE this transaction. The pull row is already
+        // UPDLOCK'd by the caller, so an operator edit cannot land between
+        // this read and the writes below. Reading once per RUN instead would
+        // be cheaper but would miss exactly that case — which is the failure
+        // this feature exists to prevent.
+        //
+        // A pull with no marks (every pre-db/052 row) yields an empty set and
+        // the writes below behave exactly as they did before.
+        var owned = await OperatorFieldEdits.ReadForPullAsync(conn, tx, pullId, ct);
+
         // 1. Pull header — only PullDate is mutable from ETL. WarehouseId
         // intentionally NOT updated even if the caller passes a different
         // one; warehouse changes for an existing pull would surprise ops
         // (operators trust the warehouse a pull was created under). 10.5
         // can add a conflict audit if WarehouseId differs.
-        await conn.ExecuteAsync(new CommandDefinition(@"
-            UPDATE dbo.Pulls
-               SET PullDate = @PullDate
-             WHERE Id = @Id;",
-            new { Id = pullId, pull.PullDate },
-            transaction: tx, cancellationToken: ct));
+        if (owned.IsOwned(OperatorFieldEdits.Pull, pullId, OperatorFieldEdits.Fields.PullDate))
+        {
+            result.NoteField(OperatorFieldEdits.Fields.PullDate, skipped: true);
+            result.RowsWithAnySkip++;
+        }
+        else
+        {
+            await conn.ExecuteAsync(new CommandDefinition(@"
+                UPDATE dbo.Pulls
+                   SET PullDate = @PullDate
+                 WHERE Id = @Id;",
+                new { Id = pullId, pull.PullDate },
+                transaction: tx, cancellationToken: ct));
+            result.NoteField(OperatorFieldEdits.Fields.PullDate, skipped: false);
+        }
 
         // 2. Items — fetch what's currently on the pull so we can diff.
+        // Origin joins the shape so the cancel path can tell an
+        // operator-created item from an ERP-sourced one (db/052).
         var existing = (await conn.QueryAsync<ExistingItem>(new CommandDefinition(@"
-            SELECT Id, ItemCode, VendorCode, Status
+            SELECT Id, ItemCode, VendorCode, Status, Origin
             FROM   dbo.PullItems WITH (UPDLOCK)
             WHERE  PullId = @PullId;",
             new { PullId = pullId }, transaction: tx, cancellationToken: ct))).AsList();
@@ -357,28 +387,59 @@ public class ErpUpsertService : IErpUpsertService
                 // intentionally NOT touched: an operator may have set it
                 // to 'canceled' or 'new', and we don't want ETL to flip it
                 // back to 'normal' on every run.
-                await conn.ExecuteAsync(new CommandDefinition(@"
-                    UPDATE dbo.PullItems
-                       SET Description      = @Description,
-                           VendorCode       = @VendorCode,
-                           Remark           = @Remark,
-                           ProductFamily    = @ProductFamily,
-                           FromSubInventory = @FromSubInventory,
-                           ToSubInventory   = @ToSubInventory,
-                           SpecialControl   = @SpecialControl,
-                           TrialId          = @TrialId,
-                           Location         = @Location,
-                           [Phase]          = @Phase
-                     WHERE Id = @Id;",
-                    new
-                    {
-                        Id = ex.Id,
-                        item.Description, item.VendorCode, item.Remark,
-                        item.ProductFamily, item.FromSubInventory, item.ToSubInventory,
-                        item.SpecialControl, item.TrialId, item.Location, item.Phase,
-                    }, transaction: tx, cancellationToken: ct));
+                // db/052 — the SET list is now built per row, dropping every
+                // field this item's operator owns. Ten candidates; a row with
+                // no marks gets all ten and behaves exactly as before.
+                //
+                // Column names come from OperatorFieldEdits.Fields, which are
+                // compile-time constants, never operator input — that is what
+                // makes interpolating them into the SET clause safe. The
+                // VALUES stay parameterised.
+                var candidates = new (string Field, string Column, object? Value)[]
+                {
+                    (OperatorFieldEdits.Fields.Description,      "Description",      item.Description),
+                    (OperatorFieldEdits.Fields.VendorCode,       "VendorCode",       item.VendorCode),
+                    (OperatorFieldEdits.Fields.Remark,           "Remark",           item.Remark),
+                    (OperatorFieldEdits.Fields.ProductFamily,    "ProductFamily",    item.ProductFamily),
+                    (OperatorFieldEdits.Fields.FromSubInventory, "FromSubInventory", item.FromSubInventory),
+                    (OperatorFieldEdits.Fields.ToSubInventory,   "ToSubInventory",   item.ToSubInventory),
+                    (OperatorFieldEdits.Fields.SpecialControl,   "SpecialControl",   item.SpecialControl),
+                    (OperatorFieldEdits.Fields.TrialId,          "TrialId",          item.TrialId),
+                    (OperatorFieldEdits.Fields.Location,         "Location",         item.Location),
+                    (OperatorFieldEdits.Fields.Phase,            "[Phase]",          item.Phase),
+                };
 
-                await SyncWindowsAsync(conn, tx, ex.Id, item.Windows, ct);
+                var setClauses = new List<string>(candidates.Length);
+                var parameters = new DynamicParameters();
+                parameters.Add("Id", ex.Id);
+                var skippedHere = 0;
+
+                foreach (var (field, column, value) in candidates)
+                {
+                    if (owned.IsOwned(OperatorFieldEdits.PullItem, ex.Id, field))
+                    {
+                        result.NoteField(field, skipped: true);
+                        skippedHere++;
+                        continue;
+                    }
+
+                    setClauses.Add($"{column} = @{field}");
+                    parameters.Add(field, value);
+                    result.NoteField(field, skipped: false);
+                }
+
+                if (skippedHere > 0) result.RowsWithAnySkip++;
+
+                // Every field owned → no UPDATE at all, rather than an UPDATE
+                // with an empty SET list (which is a syntax error).
+                if (setClauses.Count > 0)
+                {
+                    await conn.ExecuteAsync(new CommandDefinition(
+                        $"UPDATE dbo.PullItems SET {string.Join(", ", setClauses)} WHERE Id = @Id;",
+                        parameters, transaction: tx, cancellationToken: ct));
+                }
+
+                await SyncWindowsAsync(conn, tx, ex.Id, item.Windows, owned, result, ct);
             }
             else
             {
@@ -423,9 +484,29 @@ public class ErpUpsertService : IErpUpsertService
         var isSynthesised = string.Equals(
             pullOrigin, WipPullSynthesis.OriginPoImport, StringComparison.Ordinal);
 
+        // db/052 — operator-created items are exempt ENTIRELY: never canceled,
+        // never touched. Such an item is by definition absent from the ERP
+        // draft, so without this clause it was canceled on the very next
+        // in-window sync. One traceable victim in production: WIDGET-1000 on
+        // pull 0000015899, created 2026-06-11 08:32:46 and canceled by the
+        // 09:00:14 run 28 minutes later.
+        //
+        // This also settles a real inconsistency: the update path above
+        // deliberately preserves PullItems.Status so ETL never overrides an
+        // operator's decision, while this path overrode that same column.
+        //
+        // ERP-sourced items that later vanish from the draft keep the existing
+        // behaviour — flipped to 'canceled', never DELETEd (§2.5: receipts may
+        // FK the row).
+        var operatorCreated = existing
+            .Count(e => string.Equals(e.Origin, OperatorFieldEdits.OriginOperator, StringComparison.Ordinal)
+                        && !draftKeys.Contains(new ItemKey(e.ItemCode, e.VendorCode)));
+        result.ItemsExemptCreated += operatorCreated;
+
         foreach (var orphan in existing.Where(e =>
                      !draftKeys.Contains(new ItemKey(e.ItemCode, e.VendorCode)) &&
-                     !string.Equals(e.Status, "canceled", StringComparison.Ordinal)))
+                     !string.Equals(e.Status, "canceled", StringComparison.Ordinal) &&
+                     !string.Equals(e.Origin, OperatorFieldEdits.OriginOperator, StringComparison.Ordinal)))
         {
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.PullItems SET Status = 'canceled' WHERE Id = @Id;",
@@ -516,7 +597,9 @@ public class ErpUpsertService : IErpUpsertService
     // ------------------------------------------------------------------
     private static async Task SyncWindowsAsync(
         System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
-        Guid itemId, List<PullItemWindowDraft> windows, CancellationToken ct)
+        Guid itemId, List<PullItemWindowDraft> windows,
+        OperatorFieldEdits.OperatorEditSet owned, ErpUpsertResult result,
+        CancellationToken ct)
     {
         var existing = (await conn.QueryAsync<ExistingWindow>(new CommandDefinition(@"
             SELECT Id, HourOfDay, ExpectedQty, ReceivedQty
@@ -529,10 +612,28 @@ public class ErpUpsertService : IErpUpsertService
         {
             if (existingByHour.TryGetValue(win.HourOfDay, out var ex))
             {
+                // db/052 — an operator-set ExpectedQty is never overwritten.
+                // Checked before the clamp below so the skip is recorded even
+                // when ERP happens to agree with the operator this run.
+                if (owned.IsOwned(OperatorFieldEdits.PullItemWindow, ex.Id,
+                                  OperatorFieldEdits.Fields.ExpectedQty))
+                {
+                    result.NoteField(OperatorFieldEdits.Fields.ExpectedQty, skipped: true);
+                    result.RowsWithAnySkip++;
+                    continue;
+                }
+
                 // Don't drop ExpectedQty below ReceivedQty — CK_PIW_Caps
                 // would reject, and the operator's already-booked
                 // receipts would be implicitly orphaned. The operator
                 // adjusts manually via the Windows modal if needed.
+                // Counted as written whenever ETL HAS authority over the
+                // field, not only when the value happened to move. The
+                // PullItems path above writes every unowned field each run and
+                // counts each one, so counting only changes here would make
+                // "written" mean two different things in one report.
+                result.NoteField(OperatorFieldEdits.Fields.ExpectedQty, skipped: false);
+
                 var safeQty = Math.Max(win.ExpectedQty, ex.ReceivedQty);
                 if (safeQty != ex.ExpectedQty)
                 {
@@ -564,6 +665,9 @@ public class ErpUpsertService : IErpUpsertService
     // difference — see the etl-cancel-synth audit in UpdatePullAsync.
     private sealed record ExistingPull(Guid Id, string Status, Guid WarehouseId, string? Origin);
     // VendorCode joins the shape so the diff can key on (ItemCode, VendorCode).
-    private sealed record ExistingItem(Guid Id, string ItemCode, string? VendorCode, string Status);
+    // Origin (db/052) joins the shape so the cancel path can exempt
+    // operator-created items. NULL = ERP-fed or pre-migration.
+    private sealed record ExistingItem(
+        Guid Id, string ItemCode, string? VendorCode, string Status, string? Origin);
     private sealed record ExistingWindow(Guid Id, byte HourOfDay, int ExpectedQty, int ReceivedQty);
 }

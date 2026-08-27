@@ -244,6 +244,14 @@ public class ErpSyncJob
             var totals = new ErpSyncLogTotals();
             var sourceTotals = new Dictionary<string, PerSourceTotals>(StringComparer.Ordinal);
 
+            // db/052 — run-level field-protection accumulators.
+            var fieldsSkipped = 0;
+            var fieldsWritten = 0;
+            var rowsWithAnySkip = 0;
+            var itemsExemptCreated = 0;
+            var skippedByField = new Dictionary<string, int>(StringComparer.Ordinal);
+            var writtenByField = new Dictionary<string, int>(StringComparer.Ordinal);
+
             foreach (var plan in runnable)
             {
                 _log.LogInformation(
@@ -275,6 +283,16 @@ public class ErpSyncJob
                 totals.ItemsAdded    += outcome.ItemsAdded;
                 totals.ItemsCanceled += outcome.ItemsCanceled;
 
+                // db/052 — field-protection figures accumulate across sources
+                // so one run reports one set of numbers, matching how the
+                // scalar counters above already behave.
+                fieldsSkipped      += outcome.FieldsSkipped;
+                fieldsWritten      += outcome.FieldsWritten;
+                rowsWithAnySkip    += outcome.RowsWithAnySkip;
+                itemsExemptCreated += outcome.ItemsExemptCreated;
+                MergeCounts(skippedByField, outcome.SkippedByField);
+                MergeCounts(writtenByField, outcome.WrittenByField);
+
                 sourceTotals[plan.Source.SourceName] = new PerSourceTotals
                 {
                     SourceRowCount     = draft.SourceRowCount,
@@ -304,6 +322,29 @@ public class ErpSyncJob
             // log row by other means).
             await _logRepo.UpdateSourceTotalsAsync(runId,
                 JsonSerializer.Serialize(sourceTotals));
+
+            // db/052 — one summary per run naming counts and the affected
+            // fields. Never per row and never per field: 469 pulls x ~10
+            // fields an hour would be thousands of rows saying almost nothing.
+            await _logRepo.UpdateFieldProtectionAsync(runId, fieldsSkipped, fieldsWritten,
+                JsonSerializer.Serialize(new
+                {
+                    skipped = skippedByField,
+                    written = writtenByField,
+                    rowsWithAnySkip,
+                    itemsExemptCreated,
+                }));
+
+            if (fieldsSkipped > 0 || itemsExemptCreated > 0)
+            {
+                _log.LogInformation(
+                    "ErpSync {RunId}: operator-owned protection suppressed {Skipped} field write(s) " +
+                    "across {Rows} row(s) ({Fields}); {Exempt} operator-created item(s) exempt from cancel.",
+                    runId, fieldsSkipped, rowsWithAnySkip,
+                    string.Join(", ", skippedByField.OrderByDescending(k => k.Value)
+                                                    .Select(k => $"{k.Key}={k.Value}")),
+                    itemsExemptCreated);
+            }
 
             // The existing c/u/s/e tokens keep their spelling, so anything
             // parsing this line still finds them. Skip figures are appended.
@@ -394,6 +435,17 @@ public class ErpSyncJob
     // JSON shape stored in dbo.ErpSyncLog.SourceTotals. Property names are
     // camelCased by JsonSerializer defaults below — match the casing
     // contract the /api/admin/erp-sync responses use elsewhere.
+    /// <summary>
+    /// Adds one source's per-field counts into the run-level accumulator
+    /// (db/052). Sources are summed rather than kept apart: the run is the
+    /// reporting grain, matching the scalar counters.
+    /// </summary>
+    private static void MergeCounts(Dictionary<string, int> into, Dictionary<string, int> from)
+    {
+        foreach (var (field, count) in from)
+            into[field] = into.TryGetValue(field, out var n) ? n + count : count;
+    }
+
     private sealed class PerSourceTotals
     {
         public int SourceRowCount { get; set; }

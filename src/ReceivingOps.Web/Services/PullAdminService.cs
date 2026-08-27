@@ -86,13 +86,14 @@ public class PullAdminService : IPullAdminService
     // ========================================================================
     public async Task UpdateAsync(Guid id, PullUpdateRequest req, CancellationToken ct = default)
     {
+        var actorId = CurrentUserId();
         using var conn = _factory.Create();
         conn.Open();
         using var tx = conn.BeginTransaction();
         try
         {
             var pull = await conn.QuerySingleOrDefaultAsync<PullLockRow>(new CommandDefinition(@"
-                SELECT Id, PullNumber, Status, LockPoByPull, LockHourCap
+                SELECT Id, PullNumber, Status, LockPoByPull, LockHourCap, PullDate
                 FROM   dbo.Pulls WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = id }, transaction: tx, cancellationToken: ct))
@@ -127,6 +128,25 @@ public class PullAdminService : IPullAdminService
                     Id = id, req.PullDate, req.Eta, req.Notes,
                     ReferenceNumber = string.IsNullOrWhiteSpace(req.ReferenceNumber) ? null : req.ReferenceNumber.Trim(),
                 }, transaction: tx, cancellationToken: ct));
+
+            // db/052 — record ownership of PullDate so ETL stops writing it.
+            //
+            // From a VALUE DIFF, never from request presence: this is a
+            // bulk-overwrite PUT, so req.PullDate is populated on every call
+            // and its presence says nothing about whether the operator
+            // changed it. Marking on presence would freeze the field on the
+            // first edit of Notes or Eta. Do not simplify this away.
+            //
+            // PullDate is the only field here ETL also writes; Eta, Notes and
+            // ReferenceNumber need no protection.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.Pull, id,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.PullDate, pull.PullDate, req.PullDate),
+                },
+                actorId, ct);
 
             await _audit.WriteAsync(conn, tx, "update", "Pull", id.ToString(),
                 $"Updated pull {pull.PullNumber}", ct);
@@ -174,5 +194,8 @@ public class PullAdminService : IPullAdminService
         public string Status { get; set; } = "";
         public bool LockPoByPull { get; set; }
         public bool LockHourCap { get; set; }
+
+        /// <summary>Read only so UpdateAsync can diff it for ownership — see db/052.</summary>
+        public DateTime PullDate { get; set; }
     }
 }
