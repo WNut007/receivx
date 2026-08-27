@@ -85,3 +85,9 @@ src/ReceivingOps.Web/Reports/*.frx.tmp.*
 # snapshots here for visual review. Snapshots are runtime artifacts; the
 # script itself is committed.
 tools/parity-out/
+
+# Plaintext credential dump (live Gmail app password + the ERP SQL login for
+# 103.13.229.21). Deliberately EXCLUDED from the prod-2026-07-30 baseline
+# commit — see db/BASELINE_NOTES.md. Verified never committed in any history.
+# Keep it that way: this entry is what stops the next `git add -A`.
+secrets-backup.txt

@@ -12,10 +12,12 @@ namespace ReceivingOps.Web.Controllers;
 // at /api/reports/do/{id}/preview and /api/reports/do/{id}/export.pdf
 // (ReportsApiController).
 //
-// CanManagePulls = admin + supervisor (matches Phase 5c /Pos convention —
-// the operator who closed the pull also wants to print the paperwork; non-
-// admins on other warehouses are scoped out at the repo query.)
-[Authorize(Policy = "CanManagePulls")]
+// CanViewReports = admin + any recognized whRole (supervisor/operator/viewer/
+// customer/warehouse/production). Loosened from CanManagePulls for the digital-
+// signature feature so view-only viewers and the 3 signer roles can open the
+// DO reports; non-admins on other warehouses are still scoped out at the repo
+// query / EnsureWarehouseScopeAsync.
+[Authorize(Policy = "CanViewReports")]
 public class ReportsController : Controller
 {
     private readonly IPullRepository _pulls;
@@ -43,6 +45,16 @@ public class ReportsController : Controller
         var req = new PaginatedRequest { Page = page, PageSize = pageSize };
         var (items, total) = await _pulls.GetClosedWithReceiptsAsync(wh, req.Skip, req.Take, ct);
         ViewData["PageId"] = "reports";
+
+        // Phase 7e — the current user's signing capabilities (lowercase party
+        // peers from the canSign claims, 6b). Drives the per-row batch checkboxes,
+        // the batch-party selector, and the "unsigned for my role" filter. The
+        // list is already warehouse-scoped above, so every visible row is a pull
+        // this user could sign (scope-wise); eligibility narrows to unsigned boxes
+        // client-side. Warehouse is excluded from batch (auto-signed at close).
+        var signParties = User.FindAll("canSign").Select(c => c.Value).ToArray();
+        ViewData["SignPartiesArr"]  = signParties;
+        ViewData["SignPartiesJson"] = System.Text.Json.JsonSerializer.Serialize(signParties);
         return View(new PaginatedResponse<PullSummary>
         {
             Items = items,

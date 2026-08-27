@@ -7,7 +7,7 @@
     drawer on /Dashboard now carries an Items grid with Add / Edit / Delete
     + a Windows sub-modal. For interactive use, prefer the UI — it covers
     every contract this script enforces (closed-pull refusal, (PullId,
-    ItemCode) dedupe, window receipts-anchored deletion, audit row).
+    ItemCode, VendorCode) dedupe, window receipts-anchored deletion, audit row).
 
     This script remains in the tree for the cases the UI doesn't cover:
       • headless / CI / scripted seed extensions where opening a browser
@@ -29,7 +29,7 @@
                      (override allowed at the prompt).
            - miss -> warns ("receives will 409 No PO capacity") and asks
                      to add anyway.
-      3. Idempotency: if (PullId, ItemCode) already exists, shows the
+      3. Idempotency: if (PullId, ItemCode, VendorCode) already exists, shows the
          existing windows and offers a "replace windows" path. Refused
          when any existing window has ReceivedQty > 0 (would discard
          receive history); user must use raw SQL for that edge case.
@@ -179,20 +179,33 @@ WHERE  PullNumber = '$(SqlEscape $pullNumber)';
     }
     Ok ("Pull {0} found (status={1}, id={2}…)" -f $pullNumber, $pullStatus, $pullId.Substring(0,8))
 
-    # ---------------------------- ItemCode + idempotency check ----------------------------
+    # ---------------------------- ItemCode + storer + idempotency check ----------------------------
+    # The natural key is (PullId, ItemCode, VendorCode), NOT ItemCode alone.
+    # One pull sheet routinely carries the same SKU from two storers holding
+    # SEPARATE purchase orders, and the ETL now creates a row per storer. Asking
+    # for the storer BEFORE the lookup is what lets this script express the same
+    # thing — on the old key the second storer read as "already exists" and the
+    # operator was offered a window-replace on the wrong row.
     $itemCode = Prompt 'Item code' -Required
+    $vendorCode = Prompt 'Storer / vendor code (blank if none)' ''
+
+    $vendorPredicate = if ($vendorCode) {
+        "AND VendorCode = '$(SqlEscape $vendorCode)'"
+    } else {
+        'AND VendorCode IS NULL'
+    }
 
     $existingPi = SqlScalar @"
 SELECT CONVERT(NVARCHAR(36), Id)
 FROM   dbo.PullItems
 WHERE  PullId   = '$pullId'
-  AND  ItemCode = '$(SqlEscape $itemCode)';
+  AND  ItemCode = '$(SqlEscape $itemCode)'
+  $vendorPredicate;
 "@
 
     $mode        = $null   # 'create' | 'replace-windows'
     $pullItemId  = $null
     $description = ''
-    $vendorCode  = ''
     $vendorName  = ''
     $tag         = 'none'
 
@@ -249,7 +262,8 @@ ORDER BY po.OrderDate DESC;
         }
 
         $description = Prompt 'Description' $descDefault -Required
-        $vendorCode  = Prompt 'Vendor code (optional)' ''
+        # Vendor code was captured before the duplicate lookup — it is part of
+        # the natural key, so it cannot be asked for after it.
         $vendorName  = Prompt 'Vendor name (optional)' ''
 
         while ($true) {

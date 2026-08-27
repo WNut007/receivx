@@ -99,6 +99,15 @@ builder.Services.AddAuthorization(opts =>
         ctx.User.IsInRole("admin") ||
         ctx.User.HasClaim("whRole", "supervisor")));
 
+    // CanCloseWithSign (Phase 7a): closing a pull auto-signs the Warehouse
+    // box (Phase 7b) in the closer's name, so the closer must be a Warehouse
+    // signer. = CanManagePulls AND (admin OR canSign=warehouse). Admins bypass
+    // the bit (D1a — they may close any warehouse; the Warehouse box records
+    // the admin's name). A supervisor without CanSignWarehouse → 403.
+    opts.AddPolicy("CanCloseWithSign", p => p.RequireAssertion(ctx =>
+        (ctx.User.IsInRole("admin") || ctx.User.HasClaim("whRole", "supervisor")) &&
+        (ctx.User.IsInRole("admin") || ctx.User.HasClaim("canSign", "warehouse"))));
+
     opts.AddPolicy("CanReceive", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole("admin") ||
         new[] { "supervisor", "operator" }.Contains(
@@ -107,6 +116,31 @@ builder.Services.AddAuthorization(opts =>
     opts.AddPolicy("CanReopenPull", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole("admin") ||
         ctx.User.HasClaim("whRole", "supervisor")));
+
+    // ---- Digital signature (3-party, per-warehouse) ----
+    // CanViewReports: read-only access to the DO reports. Wider than
+    // CanManagePulls so view-only viewers and signers can open /Reports.
+    // Any authenticated user with a recognized operational whRole qualifies,
+    // OR anyone holding a signing capability (so a signer can see what they
+    // sign even if their operational role wouldn't otherwise grant view);
+    // admins always qualify.
+    var reportRoles = new[] { "supervisor", "operator", "viewer" };
+    opts.AddPolicy("CanViewReports", p => p.RequireAssertion(ctx =>
+        ctx.User.IsInRole("admin") ||
+        reportRoles.Contains(ctx.User.FindFirst("whRole")?.Value ?? "") ||
+        ctx.User.HasClaim(c => c.Type == "canSign")));
+
+    // CanSign{Party}: a user may sign a party's box only when they hold the
+    // matching canSign capability (db/043 flags → "canSign" claim, minted in
+    // 6b — additive, independent of the operational whRole). Warehouse-scope
+    // (session WH == pull WH) is enforced at the endpoint (Phase 3), not in
+    // the policy. No admin override (admins manage/view, not sign).
+    opts.AddPolicy("CanSignCustomer", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("canSign", "customer")));
+    opts.AddPolicy("CanSignWarehouse", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("canSign", "warehouse")));
+    opts.AddPolicy("CanSignProduction", p => p.RequireAssertion(ctx =>
+        ctx.User.HasClaim("canSign", "production")));
 });
 
 // ---- Data + repositories + services ----
@@ -117,10 +151,14 @@ builder.Services.AddScoped<IDbConnectionFactory, SqlConnectionFactory>();
 // so startup stays healthy even with ERP integration disabled.
 builder.Services.AddScoped<IErpDbConnectionFactory, ErpSqlConnectionFactory>();
 
+// In-memory cache for the dashboard warehouse code→id map (warehouses rarely change).
+builder.Services.AddMemoryCache();
+
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IWarehouseRepository, WarehouseRepository>();
 builder.Services.AddScoped<IAssignmentRepository, AssignmentRepository>();
 builder.Services.AddScoped<IPullRepository, PullRepository>();
+builder.Services.AddScoped<IPullSheetReportRepository, PullSheetReportRepository>();
 builder.Services.AddScoped<IReceiptRepository, ReceiptRepository>();
 builder.Services.AddScoped<IPurchaseOrderRepository, PurchaseOrderRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
@@ -128,6 +166,7 @@ builder.Services.AddScoped<IExportJobLogRepository, ExportJobLogRepository>();
 builder.Services.AddScoped<IErpSyncLogRepository, ErpSyncLogRepository>();
 builder.Services.AddScoped<IPoImportLogRepository, PoImportLogRepository>();
 builder.Services.AddScoped<IPreferencesRepository, PreferencesRepository>();
+builder.Services.AddScoped<IPullSignatureRepository, PullSignatureRepository>();
 // Phase 11.1 — admin-edited config storage. Repository is Scoped (matches
 // project convention); the service that wraps it is Singleton (see below).
 builder.Services.AddScoped<IAppSettingsRepository, AppSettingsRepository>();
@@ -136,11 +175,14 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IReceiptService, ReceiptService>();
 builder.Services.AddScoped<ICloseService, CloseService>();
+builder.Services.AddScoped<IPullSignatureService, PullSignatureService>();
 builder.Services.AddScoped<IMastersService, MastersService>();
 builder.Services.AddScoped<IPurchaseOrderAdminService, PurchaseOrderAdminService>();
 builder.Services.AddScoped<IPullAdminService, PullAdminService>();
 builder.Services.AddScoped<IPullItemAdminService, PullItemAdminService>();
 builder.Services.AddScoped<IDeliveryOrderService, DeliveryOrderService>();
+// Reports → Pull Sheets + the per-pull Export button share this one generator.
+builder.Services.AddScoped<ReceivingOps.Web.Services.Reports.IPullSheetExportService, ReceivingOps.Web.Services.Reports.PullSheetExportService>();
 
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
@@ -202,6 +244,7 @@ builder.Services.AddOptions<ExportOptions>()
     });
 builder.Services.AddSingleton<ExportTokenService>();
 builder.Services.AddScoped<TransactionsExportJob>();
+builder.Services.AddScoped<KtfExportJob>();
 builder.Services.AddScoped<PosExportJob>();
 builder.Services.AddScoped<AuditLogExportJob>();
 builder.Services.AddScoped<IExportService, ExportService>();
@@ -312,6 +355,13 @@ builder.Services.AddHangfireServer(opts =>
 
 var app = builder.Build();
 
+// ---- Receiving period map guard ----
+// The six periods in ReceivingPeriods must still tile the 24-hour day. They
+// drive the Receiving grid AND the Reports → Pull Sheets query, so an edit that
+// dropped or doubled an hour would quietly mis-scope every exported workbook
+// rather than fail. Cheap enough to run on every boot; fails the app if broken.
+ReceivingOps.Web.Models.ReceivingPeriodsSelfTest.Verify();
+
 // ---- v3.x Phase 11.1 — AppSettings seeder ----
 // Runs BEFORE any IOptions<T> consumer so the options binding (commit 5)
 // reads from a populated DB. Idempotent: no-ops when rows already exist.
@@ -368,7 +418,10 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthentication();

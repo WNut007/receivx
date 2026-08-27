@@ -3,6 +3,7 @@ using FastReport.Export.PdfSimple;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
 namespace ReceivingOps.Web.Controllers.Api;
@@ -11,17 +12,25 @@ namespace ReceivingOps.Web.Controllers.Api;
 //   GET /api/reports/do/{id}/preview     → HTML fragment from _DoPreview.cshtml
 //   GET /api/reports/do/{id}/export.pdf  → PDF stream (FastReport, multi-page)
 [ApiController]
-[Authorize(Policy = "CanManagePulls")]
+[Authorize(Policy = "CanViewReports")]
 [Route("api/reports")]
 public class ReportsApiController : Controller
 {
     private readonly IDeliveryOrderService _doService;
     private readonly IPullRepository _pulls;
+    private readonly IPullSignatureService _sign;
+    private readonly IAuthorizationService _authz;
 
-    public ReportsApiController(IDeliveryOrderService doService, IPullRepository pulls)
+    public ReportsApiController(
+        IDeliveryOrderService doService,
+        IPullRepository pulls,
+        IPullSignatureService sign,
+        IAuthorizationService authz)
     {
         _doService = doService;
         _pulls = pulls;
+        _sign = sign;
+        _authz = authz;
     }
 
     // GET /api/reports/do/{id}/preview → HTML fragment for the preview pane.
@@ -36,6 +45,7 @@ public class ReportsApiController : Controller
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
             var reportType = ParseReportType(type);
             var data = await _doService.GetReportDataAsync(id, reportType, ct);
+            ApplySignEligibility(data);
             // Full path — the api controller's view discovery would look under
             // Views/ReportsApi/ otherwise (controller name → folder mapping).
             var partial = reportType == ReportType.DeliveryOrder
@@ -58,18 +68,151 @@ public class ReportsApiController : Controller
         try
         {
             if (!await EnsureWarehouseScopeAsync(id, ct)) return Forbid();
-            using var report = await _doService.BuildAsync(id, ParseReportType(type), ct);
+            var reportType = ParseReportType(type);
+            var data = await _doService.GetReportDataAsync(id, reportType, ct);
+
+            // An empty Delivery Note (every line was a WDT transfer) must refuse
+            // rather than emit a blank PDF. 409 — the pull exists (not 404) and
+            // there is simply nothing to deliver.
+            if (data.Orders.Count == 0)
+                return Problem(
+                    detail: "There is no vendor records for this pull.",
+                    statusCode: StatusCodes.Status409Conflict);
+
+            using var report = _doService.Build(data, reportType);
             using var ms = new MemoryStream();
             using var pdf = new PDFSimpleExport();
             report.Export(pdf, ms);
 
+            // Filename after the active toggle + pull + a timestamp, e.g.
+            // "Delivery_Note_0000018871_20260716154230.pdf". The timestamp is
+            // LOCAL Bangkok wall time (UTC+7, no DST) — deliberately NOT
+            // DateTime.UtcNow; a fixed offset dodges the Windows/IANA tz-id split.
+            // Build with spaces, then a single Replace(' ', '_') guarantees no
+            // space survives (incl. any inside PullNumber) — and sidesteps any
+            // Content-Disposition %20/+ encoding concern.
             var detail = await _pulls.GetByIdAsync(id, ct);
-            var filename = $"{(detail?.PullNumber ?? id.ToString())}-DO.pdf";
+            var title = reportType == ReportType.DeliveryOrder ? "Delivery Order" : "Delivery Note";
+            var pull  = detail?.PullNumber ?? id.ToString();
+            var stamp = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).ToString("yyyyMMddHHmmss");
+            var filename = $"{title} {pull} {stamp}.pdf".Replace(' ', '_');
             Response.Headers["Content-Disposition"] = $"attachment; filename=\"{filename}\"";
             return File(ms.ToArray(), "application/pdf");
         }
         catch (NotFoundException) { return NotFound(); }
         catch (BusinessException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    // POST /api/reports/do/{id}/sign — sign one party box (Customer/Warehouse/
+    // Production) of a pull. Defense-in-depth: (1) the party-specific CanSign{Party}
+    // policy is checked here at runtime; (2) the service re-checks role + warehouse +
+    // immutability. Per-pull grain: one signature per (pull, party).
+    [HttpPost("do/{id:guid}/sign")]
+    public async Task<IActionResult> Sign(Guid id, [FromBody] SignPartyRequest req, CancellationToken ct)
+    {
+        var party = (req?.Party ?? "").Trim();
+        var policy = party.ToLowerInvariant() switch
+        {
+            "customer"   => "CanSignCustomer",
+            "warehouse"  => "CanSignWarehouse",
+            "production" => "CanSignProduction",
+            _            => null,
+        };
+        if (policy is null)
+            return Problem(
+                title: $"Invalid party '{party}'. Expected Customer, Warehouse, or Production.",
+                statusCode: 400);
+
+        // Defense-in-depth #1 — the party-specific signer policy (Phase 1).
+        var authz = await _authz.AuthorizeAsync(User, policy);
+        if (!authz.Succeeded)
+            return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
+
+        // Phase 8f — a DRAWN signature is required (empty → 400) and bounded
+        // (oversize → 413). Checked after the policy gate so wrong-role still
+        // 403s first. The close auto-sign path (CloseService) is separate and
+        // unaffected by this report-endpoint validation.
+        var sigErr = ValidateSignatureSvg(req?.SignatureSvg);
+        if (sigErr is not null) return sigErr;
+
+        try
+        {
+            // Defense-in-depth #2 — service re-checks role + warehouse + immutability.
+            return Ok(await _sign.SignAsync(id, party, req?.SignatureSvg, ct));
+        }
+        catch (NotFoundException ex)  { return Problem(title: ex.Message, statusCode: 404); }
+        catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 409); }
+    }
+
+    // POST /api/reports/sign-batch — sign one party (Customer/Production only) across
+    // many pulls. Warehouse is rejected (400) — it is auto-signed at pull close (7b).
+    // Partial success: per-pull outcomes (signed/skipped/error) + roll-up counts;
+    // an already-signed or cross-warehouse pull never fails the rest of the batch.
+    [HttpPost("sign-batch")]
+    public async Task<IActionResult> SignBatch([FromBody] SignBatchRequest req, CancellationToken ct)
+    {
+        var party = (req?.Party ?? "").Trim();
+        var policy = party.ToLowerInvariant() switch
+        {
+            "customer"   => "CanSignCustomer",
+            "production" => "CanSignProduction",
+            _            => null,   // Warehouse + anything else → not batchable
+        };
+        if (policy is null)
+            return Problem(
+                title: $"Party '{party}' cannot be batch-signed. Only Customer or Production are allowed (Warehouse is signed at close).",
+                statusCode: 400);
+
+        // Party-specific signer policy (same gate as single-sign).
+        var authz = await _authz.AuthorizeAsync(User, policy);
+        if (!authz.Succeeded)
+            return Problem(title: $"Your role does not permit signing the {party} box.", statusCode: 403);
+
+        // Phase 8f — drawn signature required (empty → 400) + bounded (413).
+        var sigErr = ValidateSignatureSvg(req?.SignatureSvg);
+        if (sigErr is not null) return sigErr;
+
+        try
+        {
+            return Ok(await _sign.SignBatchAsync(req!.PullIds, party, req.SignatureSvg, ct));
+        }
+        catch (ForbiddenException ex) { return Problem(title: ex.Message, statusCode: 403); }
+        catch (BusinessException ex)  { return Problem(title: ex.Message, statusCode: 400); }
+    }
+
+    // Sets per-party CanSign on the preview model: the current viewer may sign a
+    // box when they hold the matching canSign capability AND their session
+    // warehouse matches the pull's AND the box is unsigned. Mirrors the
+    // server-side sign guards so a "Sign as {Party}" button only appears when
+    // the POST would actually succeed.
+    private void ApplySignEligibility(Models.Dtos.DoReportData data)
+    {
+        var sessionWh = Guid.TryParse(User.FindFirstValue("warehouseId"), out var g) ? g : Guid.Empty;
+        var whMatch = sessionWh == data.Pull.WarehouseId;
+
+        foreach (var party in data.Pull.Signatures.All)
+            party.CanSign = whMatch
+                && !party.IsSigned
+                && User.HasClaim("canSign", party.Party.ToLowerInvariant());
+    }
+
+    // Same bound the service + close pad enforce (PullSignatureService.MaxSignatureLength).
+    private const int MaxSignatureLength = 200 * 1024;
+
+    /// <summary>
+    /// Phase 8f — validates the drawn signature payload for the sign endpoints:
+    /// required (empty/whitespace → 400) and bounded (over the cap → 413).
+    /// Returns null when the SVG is acceptable. The service keeps its own cap
+    /// check as defense-in-depth.
+    /// </summary>
+    private IActionResult? ValidateSignatureSvg(string? svg)
+    {
+        if (string.IsNullOrWhiteSpace(svg))
+            return Problem(title: "A signature drawing is required.", statusCode: 400);
+        if (svg.Length > MaxSignatureLength)
+            return Problem(title: $"Signature is too large (max {MaxSignatureLength} bytes).", statusCode: 413);
+        return null;
     }
 
     /// <summary>Returns false when the non-admin caller's warehouse claim doesn't match the pull's warehouse.</summary>

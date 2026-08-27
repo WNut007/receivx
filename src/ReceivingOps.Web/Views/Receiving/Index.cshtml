@@ -16,7 +16,6 @@
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@@0.18.5/dist/xlsx.full.min.js"></script>
 
     <link rel="stylesheet" href="~/css/receiving.css" asp-append-version="true">
 </head>
@@ -65,13 +64,16 @@
           <i class="bi bi-chevron-left"></i>
         </button>
         <div class="period-select-wrap">
+          @* Options render from ReceivingPeriods.All — the one definition of the
+             six periods (Models/ReceivingPeriods.cs). Do NOT re-hardcode them here;
+             the Reports → Pull Sheets report reads the same list, and a period that
+             disagreed between the grid and the report would silently mis-scope every
+             exported workbook. *@
           <select class="select" id="period-select">
-            <option value="07">07:00 — 10:00 · Morning</option>
-            <option value="11" selected>11:00 — 14:00 · Midday</option>
-            <option value="15">15:00 — 18:00 · Afternoon</option>
-            <option value="19">19:00 — 22:00 · Evening</option>
-            <option value="23">23:00 — 02:00 · Night</option>
-            <option value="03">03:00 — 06:00 · Pre-dawn</option>
+            @foreach (var period in ReceivingOps.Web.Models.ReceivingPeriods.All)
+            {
+              <option value="@period.Value" selected="@(period == ReceivingOps.Web.Models.ReceivingPeriods.Default)">@period.OptionText</option>
+            }
           </select>
           <!-- Shown by JS when the dropdown's selected period contains the current hour. -->
           <span class="period-now-badge" id="period-now-badge">NOW</span>
@@ -154,6 +156,16 @@
       <span class="stat-value" id="stat-out">5,616 <small>units</small></span>
       <span class="stat-trend warn" id="stat-out-sub">7 windows pending</span>
     </div>
+    @* db/047 — the settled difference between what arrived and what was planned,
+       signed like Receipts.VarianceQty (negative short, positive over). Without
+       it Expected / Received / Outstanding stop reconciling the moment a line is
+       written off, and three numbers that do not add up read as a bug. Muted,
+       not warn: over- and short-delivery are normal outcomes here. *@
+    <div class="stat">
+      <span class="stat-label">Variance · Settled</span>
+      <span class="stat-value" id="stat-var">0 <small>units</small></span>
+      <span class="stat-trend muted" id="stat-var-sub">no lines closed off-plan</span>
+    </div>
     <div class="progress-bar-host">
       <div class="progress-bar-head">
         <span>Period progress</span>
@@ -172,10 +184,13 @@
     <table id="grid">
       <thead>
         <tr>
-          <th style="min-width:100px">Status</th>
-          <th style="min-width:260px">Item · Description</th>
-          <th style="min-width:180px">Vendor</th>
-          <th style="min-width:140px">Remark</th>
+          @* Widths live in receiving.css next to the `left` offsets that are
+             derived from them — an inline min-width here would silently drift
+             out of sync with the frozen column maths. *@
+          <th class="freeze c-status">Status</th>
+          <th class="freeze c-item">Item · Description</th>
+          <th class="freeze c-vendor">Vendor</th>
+          <th class="freeze c-remark">Remark</th>
           <th class="hour-col" data-col="0"><span class="hour-num">11.00</span><span class="hour-tag">Window 1</span></th>
           <th class="hour-col current" data-col="1"><span class="hour-num">12.00</span><span class="hour-tag">▸ Active</span></th>
           <th class="hour-col" data-col="2"><span class="hour-num">13.00</span><span class="hour-tag">Window 3</span></th>
@@ -241,7 +256,54 @@
         </div>
       </div>
 
-      <div class="receive-input-host">
+      @* db/047 §2f (rev 11) — the planned hour figure, stated on open as context.
+         Originally added because nothing told the operator a pull was hour-cap locked
+         until they had typed an over-quantity and been refused. The lock no longer
+         changes the outcome, so the copy no longer mentions it: what the operator needs
+         on open is the figure the variance will be measured against, and the fact that
+         going over is possible with the final-receipt box. Neutral — nothing here is
+         wrong yet, and it stays visible after a refusal. *@
+      <div class="cap-lock" id="m-cap-lock" hidden>
+        <svg class="cap-lock-ico" width="11" height="11" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span id="m-cap-lock-text"></span>
+      </div>
+
+      @* db/047 §2d — CLOSED STATE. Clicking a closed window already opens this modal;
+         it opens in this state instead of showing a quantity field that cannot be used.
+         Replaces the quantity block entirely: no quantity controls, no checkbox, no note.
+         The close reason is shown in full — truncating to a tooltip would waste the one
+         thing the column exists to preserve. *@
+      <div class="slotclose-banner" id="m-closed-banner" hidden>
+        <div class="slotclose-head">
+          <span class="slotclose-pill">Line closed</span>
+          <span class="slotclose-who" id="m-closed-who"></span>
+        </div>
+        <div class="slotclose-figures" id="m-closed-figures"></div>
+        <div class="slotclose-reason-label">Close reason</div>
+        <div class="slotclose-reason" id="m-closed-reason"></div>
+        <button class="btn-slot-reopen" id="m-reopen-btn" type="button">Reopen line</button>
+      </div>
+
+      @* Reopen confirm. Reason required — the button stays disabled while it is empty,
+         and the server independently refuses with 400 REOPEN_REASON_REQUIRED. *@
+      <div class="reopen-confirm" id="m-reopen-confirm" hidden>
+        <div class="reopen-confirm-title">Reopen this line?</div>
+        <div class="reopen-confirm-sub" id="m-reopen-sub">
+          The line returns to the pending queue at its previous outstanding.
+        </div>
+        <label class="reopen-reason-label" for="m-reopen-reason">Reason · Required</label>
+        <textarea id="m-reopen-reason" placeholder="Why is this line being reopened?"></textarea>
+        <div class="reopen-confirm-actions">
+          <button class="btn-ghost" id="m-reopen-cancel" type="button">Cancel</button>
+          <button class="btn-slot-reopen" id="m-reopen-go" type="button" disabled>Reopen line</button>
+        </div>
+      </div>
+
+      <div class="receive-input-host" id="m-receive-block">
         <div class="receive-input-label">
           <div class="small">Receive Now</div>
           <div class="big">How many units?</div>
@@ -252,9 +314,55 @@
         </div>
       </div>
 
+      @* db/047 §7 — accept-variance. Inside the green band, below the input. Hidden by
+         default and shown by receiving.js only when the quantity differs from
+         outstanding; never pre-ticked, in any state. Hidden entirely on a multi-window
+         SKU (§2c guard), where the server refuses regardless and offering the box would
+         promise something confirm will not honour. §2f rev 11 removed the other
+         exclusion: a locked pull now offers the box like any other, because the tick is
+         the escape on every pull. *@
+      <div class="variance-accept" id="m-variance-block" hidden>
+        <label class="variance-accept-row">
+          <input type="checkbox" id="m-variance">
+          <span class="variance-accept-text">
+            <b id="m-variance-title">This is the final receipt — close the line at this quantity</b>
+            <span class="variance-accept-sub" id="m-variance-sub">
+              The line will be closed at the quantity entered and will not appear as
+              outstanding again.
+            </span>
+          </span>
+        </label>
+
+        @* db/049 — structured reason. Shown only once the tick is on AND the quantity
+           differs from outstanding, i.e. only when a variance is actually being accepted.
+           Options are injected by receiving.js from GET /api/receipts/variance-reasons and
+           filtered to the current direction; there are deliberately NO <option> elements
+           here, because a label in markup would be a second copy of the map.
+
+           The placeholder option is disabled + selected so the control starts on "choose
+           one" and cannot be submitted unchosen. A pre-selected real code would reproduce
+           the "." defect in a new shape: a required field satisfied without a decision. *@
+        <div class="variance-reason" id="m-reason-block" hidden>
+          <label class="variance-reason-label" for="m-reason">Reason · Required</label>
+          <select class="select" id="m-reason">
+            <option value="" disabled selected>— select a reason —</option>
+          </select>
+          <div class="note-required-msg" id="m-reason-required-msg" hidden>
+            Choose the reason this delivery differed from the plan.
+          </div>
+        </div>
+      </div>
+
       <div class="cap-hint" id="cap-hint">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span id="cap-hint-text">Maximum allowed: <b id="cap-hint-max">1,000</b> pcs. Cannot receive over expected.</span>
+        @* db/047 §7 — "Maximum allowed: N pcs. Cannot receive over expected." was false on
+           two counts: over-receipt is permitted (with an explicit acknowledgement), and the
+           JS overwrote this text on the first keystroke anyway, so the operator only ever
+           saw it before typing. Replaced with a neutral starting line; receiving.js swaps in
+           the live variance readout as the quantity changes. The <b id="cap-hint-max">
+           wrapper is retained because openModal and the cancel-refresh path both grab it by
+           id to update the outstanding figure. *@
+        <span id="cap-hint-text">Outstanding for this slot: <b id="cap-hint-max">1,000</b> pcs.</span>
       </div>
 
       <!-- v2 §7.2 — FIFO allocation preview (populated by receiving.js) -->
@@ -267,6 +375,14 @@
         <button data-fill="0">Mark zero</button>
       </div>
 
+      @* db/047 — Lot / Batch, Pallet ID, Bin / Location and QC Status carry no id
+         attributes, so confirmReceipt's fieldVal() never matches them and they post as
+         null. Left EXACTLY as they are, deliberately: two weeks of live production use
+         produced no complaint about them, which reframes the 243/243 NULLs as four
+         fields nobody fills in rather than data lost in transit. Nothing that was ever
+         captured is being dropped. The open question is whether these fields should
+         exist at all — a UI decision, not a bug fix. Recorded as an observation in
+         db/047_STATUS.md. The note field below IS wired, because variance depends on it. *@
       <div class="fields-grid">
         <div class="field">
           <label>Lot / Batch</label>
@@ -289,8 +405,20 @@
           </select>
         </div>
         <div class="field full">
-          <label>Note (optional)</label>
-          <textarea placeholder="Any discrepancy, damage, or instruction…"></textarea>
+          @* db/047 — this textarea had NO id, so confirmReceipt's fieldVal('m-note')
+             never found it and the note was posted as null on every receipt ever taken
+             through this modal. Wired now because the note is the mandatory audit
+             reason whenever variance is accepted. The same is true of m-lot, m-pallet,
+             m-bin and m-qc — flagged separately, not fixed here. *@
+          @* db/049 — label, placeholder and message text are all set by receiving.js, which
+             renders three distinct states: no variance, variance with a specific code
+             (optional — invites detail), variance with OTHER (required). The markup carries
+             the neutral state only. *@
+          <label id="m-note-label">Note (optional)</label>
+          <textarea id="m-note" placeholder="Any discrepancy, damage, or instruction…"></textarea>
+          <div class="note-required-msg" id="m-note-required-msg" hidden>
+            “อื่นๆ” needs a short description — at least 3 characters. Pick a specific reason instead if one fits.
+          </div>
         </div>
       </div>
 
@@ -532,6 +660,7 @@
 
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="~/js/components/signature-pad.js" asp-append-version="true"></script>
 <script src="~/js/receiving.js" asp-append-version="true"></script>
 
 </body>

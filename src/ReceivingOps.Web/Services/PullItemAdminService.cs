@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using ReceivingOps.Web.Data;
@@ -14,11 +15,25 @@ public class PullItemAdminService : IPullItemAdminService
 
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
+    private readonly IHttpContextAccessor _httpContext;
 
-    public PullItemAdminService(IDbConnectionFactory factory, IAuditService audit)
+    public PullItemAdminService(
+        IDbConnectionFactory factory, IAuditService audit, IHttpContextAccessor httpContext)
     {
         _factory = factory;
         _audit = audit;
+        _httpContext = httpContext;
+    }
+
+    /// <summary>
+    /// Actor for db/052 ownership marks. Best-effort and nullable: it returns
+    /// null off a request thread rather than throwing, because losing the
+    /// "who" must never fail the edit the operator actually asked for.
+    /// </summary>
+    private Guid? CurrentUserIdOrNull()
+    {
+        var idClaim = _httpContext.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(idClaim, out var id) ? id : null;
     }
 
     // ========================================================================
@@ -37,29 +52,67 @@ public class PullItemAdminService : IPullItemAdminService
             RefuseClosed(pull);
 
             // Natural-key duplicate check. No DB UNIQUE — the app is the enforcement layer.
-            var dup = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
-                "SELECT 1 FROM dbo.PullItems WITH (UPDLOCK, HOLDLOCK) WHERE PullId = @PullId AND ItemCode = @ItemCode;",
-                new { PullId = pullId, req.ItemCode }, transaction: tx, cancellationToken: ct));
+            //
+            // The key is (PullId, ItemCode, VendorCode): storer is part of item
+            // identity. One pull sheet routinely carries the same SKU from two
+            // storers with separate purchase orders, and since the ETL now
+            // creates both rows, refusing an operator the same thing by hand
+            // would leave the manual path unable to express what the automatic
+            // one produces. NULL VendorCode is its own bucket — two rows with no
+            // storer still collide, which is the pre-storer-grain behaviour for
+            // hand-created items.
+            var dup = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(@"
+                SELECT 1 FROM dbo.PullItems WITH (UPDLOCK, HOLDLOCK)
+                WHERE  PullId = @PullId
+                  AND  ItemCode = @ItemCode
+                  AND  ((VendorCode IS NULL AND @VendorCode IS NULL) OR VendorCode = @VendorCode);",
+                new { PullId = pullId, req.ItemCode, req.VendorCode }, transaction: tx, cancellationToken: ct));
             if (dup.HasValue)
                 throw new BusinessException(
-                    $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}.");
+                    string.IsNullOrWhiteSpace(req.VendorCode)
+                        // The blank-vendor case is the one the drawer's duplicate action
+                        // lands on: duplicating a row that has no storer reproduces the
+                        // existing key exactly. Naming the field to fill in turns the
+                        // refusal into an instruction; without it the operator is told
+                        // only that they are wrong, which they are not — they duplicated
+                        // a row and have not yet said whose goods it is.
+                        ? $"Item '{req.ItemCode}' already exists on pull {pull.PullNumber}. " +
+                          "Set a storer (vendor code) to tell the two rows apart."
+                        : $"Item '{req.ItemCode}' from storer '{req.VendorCode}' already exists on pull {pull.PullNumber}. " +
+                          "Change the storer to add another row for this item.");
 
             var nextSort = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
                 "SELECT ISNULL(MAX(SortOrder), 0) + 1 FROM dbo.PullItems WHERE PullId = @PullId;",
                 new { PullId = pullId }, transaction: tx, cancellationToken: ct));
 
+            // db/052 — Origin='operator' is the provenance that exempts this
+            // row from the ETL cancel path. An operator-created item is BY
+            // DEFINITION never in the ERP draft, so without this stamp it is
+            // flipped to Status='canceled' on the next in-window sync.
+            //
+            // SortOrder is INSERT-only and has no operator update path today,
+            // so it carries no ownership mark. If a reorder endpoint is ever
+            // added it MUST mark ownership like the other fields, or ETL's
+            // nextSort arithmetic will silently renumber a hand-ordered pull.
             var newId = await conn.QuerySingleAsync<Guid>(new CommandDefinition(@"
                 INSERT INTO dbo.PullItems
                        (Id, PullId, ItemCode, Description, VendorCode, VendorName,
-                        Tag, Status, Remark, SortOrder)
+                        Tag, Status, Remark, SortOrder, Origin,
+                        ProductFamily, FromSubInventory, ToSubInventory,
+                        SpecialControl, TrialId, Location, [Phase])
                 OUTPUT INSERTED.Id
                 VALUES (NEWID(), @PullId, @ItemCode, @Description, @VendorCode, @VendorName,
-                        @Tag, 'normal', @Remark, @SortOrder);",
+                        @Tag, 'normal', @Remark, @SortOrder, @Origin,
+                        @ProductFamily, @FromSubInventory, @ToSubInventory,
+                        @SpecialControl, @TrialId, @Location, @Phase);",
                 new
                 {
                     PullId = pullId, req.ItemCode, req.Description,
                     req.VendorCode, req.VendorName, req.Tag, req.Remark,
                     SortOrder = nextSort,
+                    Origin = OperatorFieldEdits.OriginOperator,
+                    req.ProductFamily, req.FromSubInventory, req.ToSubInventory,
+                    req.SpecialControl, req.TrialId, req.Location, req.Phase,
                 }, transaction: tx, cancellationToken: ct));
 
             foreach (var w in req.Windows)
@@ -110,8 +163,15 @@ public class PullItemAdminService : IPullItemAdminService
             var pull = await LockPullAsync(conn, tx, pullId, ct);
             RefuseClosed(pull);
 
+            // Description / VendorCode / Remark are read so the db/052
+            // ownership diff below has the BEFORE values. Read here rather
+            // than through LockItemOnPullAsync because this method has always
+            // had its own lock read — extending only the shared helper leaves
+            // this path comparing against nulls and marking every field on
+            // every PUT, which is precisely the row-level collapse the diff
+            // exists to avoid.
             var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-                SELECT Id, PullId, ItemCode
+                SELECT Id, PullId, ItemCode, Description, VendorCode, Remark
                 FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -135,6 +195,32 @@ public class PullItemAdminService : IPullItemAdminService
                     req.Description, req.VendorCode, req.VendorName,
                     req.Tag, req.Status, req.Remark,
                 }, transaction: tx, cancellationToken: ct));
+
+            // db/052 — record ownership of the fields ETL also writes.
+            //
+            // From a VALUE DIFF, never from request presence. This is a
+            // bulk-overwrite PUT: every request carries all six fields and a
+            // blank means NULL, so "the request included Remark" is true on
+            // every call and says nothing about whether the operator changed
+            // it. Marking on presence would freeze the whole row on the first
+            // edit of any single field — field-level protection collapsing
+            // into row-level protection, with every test still green.
+            // Do not simplify this into marking what the request carried.
+            //
+            // VendorName, Tag and Status are absent deliberately: ETL never
+            // writes them, so they need no protection.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItem, itemId,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Description, item.Description, req.Description),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.VendorCode, item.VendorCode, req.VendorCode),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Remark, item.Remark, req.Remark),
+                },
+                CurrentUserIdOrNull(), ct);
 
             await _audit.WriteAsync(conn, tx, "update", "PullItem", itemId.ToString(),
                 $"Updated item {item.ItemCode} in pull {pull.PullNumber}", ct);
@@ -282,6 +368,22 @@ public class PullItemAdminService : IPullItemAdminService
                 new { Id = window.Id, req.ExpectedQty },
                 transaction: tx, cancellationToken: ct));
 
+            // db/052 — ExpectedQty is the one window column ETL writes
+            // (SyncWindowsAsync). ReceivedQty and the close/variance columns
+            // are on the static protected list already. Value diff as
+            // everywhere else: re-saving the same qty takes no ownership.
+            //
+            // Marked against the WINDOW's Id, not the item's — a pull item
+            // has one window per hour and they are protected independently.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItemWindow, window.Id,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ExpectedQty, window.ExpectedQty, req.ExpectedQty),
+                },
+                CurrentUserIdOrNull(), ct);
+
             await _audit.WriteAsync(conn, tx, "update", "PullItemWindow",
                 $"{itemId}:{hourOfDay:D2}",
                 $"Updated window {hourOfDay:D2}:00 on item {item.ItemCode} in pull {pull.PullNumber} (qty: {window.ExpectedQty}→{req.ExpectedQty})", ct);
@@ -379,6 +481,32 @@ public class PullItemAdminService : IPullItemAdminService
                     req.Phase,
                 }, transaction: tx, cancellationToken: ct));
 
+            // db/052 — same value-diff rule as UpdateAsync above. All seven of
+            // these are ERP-sourced AND in-app editable, so all seven are
+            // protectable. Presence is meaningless here too: this endpoint is
+            // bulk-overwrite, so a request that only meant to set TrialId
+            // still carries the other six.
+            await OperatorFieldEdits.MarkChangedAsync(
+                conn, tx, OperatorFieldEdits.PullItem, itemId,
+                new[]
+                {
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ProductFamily, item.ProductFamily, req.ProductFamily),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.FromSubInventory, item.FromSubInventory, req.FromSubInventory),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.ToSubInventory, item.ToSubInventory, req.ToSubInventory),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.SpecialControl, item.SpecialControl, req.SpecialControl),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.TrialId, item.TrialId, req.TrialId),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Location, item.Location, req.Location),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Phase, item.Phase, req.Phase),
+                },
+                CurrentUserIdOrNull(), ct);
+
             await _audit.WriteAsync(conn, tx, "update", "PullItem", itemId.ToString(),
                 $"Updated extended fields on item {item.ItemCode} in pull {pull.PullNumber}", ct);
 
@@ -428,6 +556,17 @@ public class PullItemAdminService : IPullItemAdminService
         if (req.Remark is not null && req.Remark.Length > 255)
             throw new ValidationException("Remark is too long (≤ 255 chars)");
 
+        // The seven Phase 9.1 columns are NVARCHAR(50) (db/024). Checked here so an
+        // over-long value is a 400 naming the field rather than a SqlException
+        // truncation error naming nothing.
+        ValidateErpField(req.ProductFamily,    nameof(req.ProductFamily));
+        ValidateErpField(req.FromSubInventory, nameof(req.FromSubInventory));
+        ValidateErpField(req.ToSubInventory,   nameof(req.ToSubInventory));
+        ValidateErpField(req.SpecialControl,   nameof(req.SpecialControl));
+        ValidateErpField(req.TrialId,          nameof(req.TrialId));
+        ValidateErpField(req.Location,         nameof(req.Location));
+        ValidateErpField(req.Phase,            nameof(req.Phase));
+
         if (req.Windows is null || req.Windows.Count == 0)
             throw new ValidationException("At least one window is required");
         var dup = req.Windows.GroupBy(w => w.HourOfDay).FirstOrDefault(g => g.Count() > 1);
@@ -437,9 +576,37 @@ public class PullItemAdminService : IPullItemAdminService
         {
             if (w.HourOfDay > 23)
                 throw new ValidationException($"HourOfDay {w.HourOfDay} out of range (0..23)");
+            // Stays > 0, deliberately, and the drawer's duplicate action is why it
+            // was examined rather than why it changed.
+            //
+            // Duplicate pre-fills the source row's HOURS and leaves each quantity
+            // blank and required. An earlier draft carried the hours with
+            // ExpectedQty = 0 instead; zero already means something here and it is
+            // not "not yet known". isSettled() returns true for e <= 0
+            // ("nothing scheduled is nothing owed"), the console's period status
+            // skips such a window entirely and reports 'received', the close gate
+            // and WindowsPending both test ExpectedQty > ReceivedQty, and since
+            // db/047 rev 11 removed the hour cap, outstanding = 0 makes ANY receipt
+            // an over-delivery needing the variance tick and a reason code.
+            //
+            // A freshly duplicated row would therefore have looked finished the
+            // moment it existed, and its first genuine receipt would have been
+            // recorded as a variance. Making the operator type a number they were
+            // going to type anyway costs one field and avoids all of it.
             if (w.ExpectedQty <= 0)
                 throw new ValidationException($"ExpectedQty for hour {w.HourOfDay} must be positive");
         }
+    }
+
+    /// <summary>
+    /// Phase 9.1 columns are NVARCHAR(50); anything longer is a 400, not a
+    /// truncation. Blank is allowed and stored as-is — the create path does not
+    /// coalesce, so an omitted field stays NULL.
+    /// </summary>
+    private static void ValidateErpField(string? value, string fieldName)
+    {
+        if (value is not null && value.Length > 50)
+            throw new ValidationException($"{fieldName} is too long (\u2264 50 chars)");
     }
 
     private static void ValidateUpdate(PullItemUpdateRequest req)
@@ -490,8 +657,14 @@ public class PullItemAdminService : IPullItemAdminService
         System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
         Guid pullId, Guid itemId, CancellationToken ct)
     {
+        // The extra columns are read so the db/052 ownership diff has the
+        // BEFORE values without a second round trip. They are not otherwise
+        // used here.
         var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-            SELECT Id, PullId, ItemCode
+            SELECT Id, PullId, ItemCode,
+                   Description, VendorCode, Remark,
+                   ProductFamily, FromSubInventory, ToSubInventory,
+                   SpecialControl, TrialId, Location, [Phase]
             FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
             WHERE  Id = @Id;",
             new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -513,6 +686,20 @@ public class PullItemAdminService : IPullItemAdminService
         public Guid Id { get; set; }
         public Guid PullId { get; set; }
         public string ItemCode { get; set; } = "";
+
+        // BEFORE values for the db/052 ownership diff. Read under the same
+        // UPDLOCK as the row itself, so nothing can change between the read
+        // and the write that follows it.
+        public string? Description { get; set; }
+        public string? VendorCode { get; set; }
+        public string? Remark { get; set; }
+        public string? ProductFamily { get; set; }
+        public string? FromSubInventory { get; set; }
+        public string? ToSubInventory { get; set; }
+        public string? SpecialControl { get; set; }
+        public string? TrialId { get; set; }
+        public string? Location { get; set; }
+        public string? Phase { get; set; }
     }
 
     private sealed class WindowLockRow

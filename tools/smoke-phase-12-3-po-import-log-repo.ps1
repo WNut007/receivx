@@ -5,7 +5,7 @@
 # at that point a smoke can drive the upload endpoint and SELECT the
 # PoImportLog row at each transition. 12.3's purpose is to verify:
 #
-#   1. DTO (PoImportLogRow) is present in Models/Dtos with all 20 cols
+#   1. DTO (PoImportLogRow) is present in Models/Dtos with all 22 cols
 #   2. IPoImportLogRepository interface has the 8-method surface
 #   3. Repository impl has the 7 SQL paths (insert + 6 mark-* updates)
 #   4. None of the UPDATEs touch immutable identity columns
@@ -14,7 +14,7 @@
 #   5. ErrorMessage is truncated in C# (NVARCHAR(MAX) is on the column,
 #      but we cap at 4000 to keep the list-view payload bounded)
 #   6. Program.cs registers IPoImportLogRepository in DI
-#   7. dbo.PoImportLog exists with the 20 expected columns (sqlcmd probe;
+#   7. dbo.PoImportLog exists with the 22 expected columns (sqlcmd probe;
 #      SKIPs if no Default connection string is configured)
 #
 # Build cleanliness proven behaviorally by the other 50+ smokes end-to-end.
@@ -41,9 +41,9 @@ $ifaceFile = Join-Path $webRoot 'Data\Repositories\IPoImportLogRepository.cs'
 $implFile  = Join-Path $webRoot 'Data\Repositories\PoImportLogRepository.cs'
 
 # ----------------------------------------------------------------------------
-# 1. DTO present with all 20 columns
+# 1. DTO present with all 22 columns
 # ----------------------------------------------------------------------------
-Step "PoImportLogRow DTO present with all 20 cols"
+Step "PoImportLogRow DTO present with all 22 cols"
 AssertFile $dtoFile 'public class PoImportLogRow'
 $cols = @(
     'public Guid RunId',
@@ -64,11 +64,14 @@ $cols = @(
     'public string? ValidationErrors',
     'public int? PosInserted',
     'public int? LinesInserted',
+    # db/046 — skip-duplicates reporting
+    'public int? PosSkipped',
+    'public string? SkippedPoNumbers',
     'public string? ErrorMessage',
     'public string? HangfireJobId'
 )
 foreach ($c in $cols) { AssertFile $dtoFile $c }
-OK "All 20 properties on PoImportLogRow"
+OK "All 22 properties on PoImportLogRow"
 
 # ----------------------------------------------------------------------------
 # 2. Interface has the full 8-method state-machine surface
@@ -157,9 +160,11 @@ if ($program -notmatch 'AddScoped<IPoImportLogRepository, PoImportLogRepository>
 OK "DI registration present"
 
 # ----------------------------------------------------------------------------
-# 7. dbo.PoImportLog exists with the 20 columns + 3 indexes
+# 7. dbo.PoImportLog exists with the 22 columns + 3 indexes
 # ----------------------------------------------------------------------------
-Step "dbo.PoImportLog exists with 20 cols + 3 indexes"
+# 20 from db/030 + 2 from db/046 (PosSkipped, SkippedPoNumbers — the
+# skip-duplicates reporting columns).
+Step "dbo.PoImportLog exists with 22 cols + 3 indexes"
 $secretsList = & dotnet user-secrets list --project (Join-Path $webRoot 'ReceivingOps.Web.csproj') 2>$null
 $hasDefault = $secretsList | Where-Object { $_ -match '^ConnectionStrings:Default' }
 if (-not $hasDefault) {
@@ -196,9 +201,9 @@ $nums = ($probeRaw | Where-Object { $_ -match '^\s*\d+\s*$' } | ForEach-Object {
 if ($nums.Count -lt 2) {
     Fail "sqlcmd response did not return two counts. Raw: $($probeRaw -join ' / ')"
 }
-if ($nums[0] -ne 20) { Fail "dbo.PoImportLog has $($nums[0]) columns, expected 20" }
+if ($nums[0] -ne 22) { Fail "dbo.PoImportLog has $($nums[0]) columns, expected 22 (20 from db/030 + 2 from db/046)" }
 if ($nums[1] -ne 3)  { Fail "dbo.PoImportLog has $($nums[1]) IX_PoImportLog* indexes, expected 3" }
-OK "dbo.PoImportLog: 20 columns + 3 IX_PoImportLog* indexes confirmed"
+OK "dbo.PoImportLog: 22 columns + 3 IX_PoImportLog* indexes confirmed"
 
 Write-Host ""
 Write-Host "ALL PASS — Phase 12.3: repo surface + DI + DB schema verified." -ForegroundColor Green

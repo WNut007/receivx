@@ -138,10 +138,14 @@
     position: relative;
     z-index: 1;
     height: 100vh;
-    display: grid;
-    grid-template-rows: auto auto auto 1fr auto;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
+    overflow: hidden;
   }
+  /* Sticky top block — title bar + summary tiles + toolbar + custom-date row.
+     Never grows, never scrolls; the board below is the only region that does. */
+  .top-region { flex: 0 0 auto; }
 
   /* ============ BOOTSTRAP OVERRIDES — theme-aware ============ */
   .form-select, .form-control {
@@ -442,10 +446,16 @@
   }
 
   /* ============ KANBAN ============ */
+  /* Board fills the remaining viewport height and is the flex row that grows.
+     overflow-y is hidden so vertical scrolling happens ONLY inside each column
+     body (kills the old double scrollbar); overflow-x stays auto so the fixed
+     1280px min-width board can still pan horizontally on narrow screens. */
   .kanban-wrap {
-    overflow: auto;
-    padding: 20px 22px;
+    flex: 1 1 auto;
     min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 20px 22px;
   }
   .kanban {
     display: grid;
@@ -453,6 +463,7 @@
     gap: 16px;
     min-width: 1280px;
     height: 100%;
+    min-height: 0;
   }
   .column {
     display: flex;
@@ -465,6 +476,7 @@
   }
   .column-head {
     padding: 14px 16px;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -517,7 +529,7 @@
     flex-direction: column;
     gap: 12px;
     overflow-y: auto;
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
   }
   .column-body::-webkit-scrollbar { width: 6px; }
@@ -531,6 +543,53 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
   }
+
+  /* ============ INFINITE-SCROLL SENTINEL (per column) ============ */
+  /* One sentinel sits at the bottom of each column body. An IntersectionObserver
+     whose root IS that column body watches it; when it scrolls into view the next
+     page for that column's status is fetched + inserted above it. */
+  .col-sentinel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 8px 4px;
+    min-height: 20px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .col-sentinel .col-sentinel-spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--border-bright);
+    border-top-color: var(--text-muted);
+    border-radius: 50%;
+    animation: col-sentinel-spin 0.7s linear infinite;
+    flex: 0 0 auto;
+  }
+  @keyframes col-sentinel-spin { to { transform: rotate(360deg); } }
+  .col-sentinel.done  { color: var(--text-dim); }
+  .col-sentinel.error {
+    flex-direction: column;
+    gap: 8px;
+    color: var(--over);   /* dashboard danger red — defined in all three themes */
+  }
+  .col-sentinel-retry {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-bright);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .col-sentinel-retry:hover { background: var(--surface-2); }
 
   /* ============ CARD ============ */
   .card-pull {
@@ -664,8 +723,9 @@
 
   /* ============ FOOTER ============ */
   .footer {
-    padding: 12px 28px;
-    border-top: 1px solid var(--border);
+    padding: 12px 28px;          /* horizontal 28px matches .topbar */
+    flex: 0 0 auto;              /* pinned to the bottom of the .app flex column; never grows */
+    border-top: 0.5px solid var(--border);
     background: var(--surface-2);
     display: flex;
     justify-content: space-between;
@@ -735,6 +795,44 @@
      width below the breakpoint as a fallback). */
   #detailDrawer.offcanvas { width: min(900px, 95vw); }
 
+  /* Maximize. The items table carries 13 data columns plus an actions column
+     and does not fit 900px, so reading a row means panning sideways and losing
+     the code column. Toggling .is-maximized widens the panel to the viewport,
+     at which point .items-table-wrap's overflow-x has nothing left to scroll.
+
+     The id is repeated deliberately. The rule above is (id + class); a bare
+     .is-maximized would lose the cascade to it, and the toggle would look
+     wired up while nothing moved.
+
+     width: 100%, NOT 100vw. For a fixed-position element a percentage resolves
+     against the viewport EXCLUDING the scrollbar gutter, while 100vw includes
+     it — 100vw pushes the panel past the right edge and that is exactly how
+     the page behind starts panning sideways. */
+  #detailDrawer.offcanvas.is-maximized { width: 100%; }
+
+  /* Two icon controls in the drawer header. .btn-close keeps Bootstrap's own
+     treatment; the maximize control is sized to sit level with it. */
+  .drawer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .btn-drawer-max {
+    background: none;
+    border: 0;
+    padding: 2px 5px;
+    line-height: 1;
+    border-radius: 4px;
+    color: var(--text-muted);
+    transition: color .12s ease, background .12s ease;
+  }
+  .btn-drawer-max:hover,
+  .btn-drawer-max:focus-visible {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .btn-drawer-max i { font-size: 15px; }
+
   /* v2.1 Phase 6.3 — items grid + add/edit/windows modals */
   .items-table-wrap { overflow-x: auto; }
   .items-table { font-size: 13px; }
@@ -752,7 +850,32 @@
     border-bottom: 1px solid var(--border);
     padding: 8px 10px;
   }
-  .items-table .actions-col { width: 110px; text-align: right; white-space: nowrap; }
+  /* 162px: six controls — copy, duplicate, windows, ERP, edit, delete. Was
+     138px for five and 110px for the original four. nowrap would have grown the
+     column anyway; stating it keeps the width predictable instead of dependent
+     on icon metrics. */
+  .items-table .actions-col { width: 162px; text-align: right; white-space: nowrap; }
+
+  /* Copy-row trigger: revealed on row hover, but ALWAYS shown on focus so it
+     is reachable by keyboard, and held visible while it reports success or
+     failure so the confirmation is not lost the moment the pointer moves off.
+     opacity rather than display/visibility — the button has to stay in the tab
+     order, and it must not reflow the row when it appears. */
+  .items-table td.actions-col .copy-row-btn,
+  .items-table td.actions-col .dup-row-btn {
+    opacity: 0;
+    transition: opacity .12s ease, color .12s ease;
+  }
+  .items-table tr:hover td.actions-col .copy-row-btn,
+  .items-table tr:hover td.actions-col .dup-row-btn,
+  .items-table td.actions-col .copy-row-btn:focus,
+  .items-table td.actions-col .dup-row-btn:focus,
+  .items-table td.actions-col .copy-row-btn:focus-visible,
+  .items-table td.actions-col .dup-row-btn:focus-visible,
+  .items-table td.actions-col .copy-row-btn.is-done,
+  .items-table td.actions-col .copy-row-btn.is-failed { opacity: 1; }
+  .items-table td.actions-col .copy-row-btn.is-done   { color: var(--complete); }
+  .items-table td.actions-col .copy-row-btn.is-failed { color: var(--over); }
   /* Phase 9.1 — ERP-sourced columns sit in a visually grouped band so they
      read as "external metadata" rather than another row of operator inputs. */
   .items-table th.erp-col,

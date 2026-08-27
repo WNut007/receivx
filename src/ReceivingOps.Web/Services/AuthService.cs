@@ -59,6 +59,11 @@ public class AuthService : IAuthService
 
         var isGlobalAdmin = string.Equals(user.Role, "admin", StringComparison.Ordinal);
         string whRole;
+        // Digital-signature capabilities at the chosen warehouse (db/043). Additive
+        // and independent of whRole; admins do not sign (they manage/view).
+        var canSignCustomer = false;
+        var canSignWarehouse = false;
+        var canSignProduction = false;
 
         if (isGlobalAdmin)
         {
@@ -66,10 +71,13 @@ public class AuthService : IAuthService
         }
         else
         {
-            var assignedRole = await _assignments.GetRoleAsync(user.Id, warehouse.Id, ct);
-            if (assignedRole is null)
+            var access = await _assignments.GetAccessAsync(user.Id, warehouse.Id, ct);
+            if (access is null)
                 return new AuthResult.Failure(403, "You don't have access to that warehouse");
-            whRole = assignedRole;
+            whRole = access.Role;
+            canSignCustomer = access.CanSignCustomer;
+            canSignWarehouse = access.CanSignWarehouse;
+            canSignProduction = access.CanSignProduction;
         }
 
         // §5.1 step 6: cookie sign-in
@@ -85,6 +93,14 @@ public class AuthService : IAuthService
             new("whRole",                  whRole),
             new(ClaimTypes.Role,           user.Role),
         };
+
+        // Sign-capability claims — one "canSign" claim per party the user may sign
+        // at this warehouse. Multi-valued: a user may hold any combination. The
+        // CanSign{Party} policies (Phase 6c) and PullSignatureService gate consume
+        // these (lowercase party peer matches the PullSignatures Title-case Party).
+        if (canSignCustomer)   claims.Add(new Claim("canSign", "customer"));
+        if (canSignWarehouse)  claims.Add(new Claim("canSign", "warehouse"));
+        if (canSignProduction) claims.Add(new Claim("canSign", "production"));
         var principal = new ClaimsPrincipal(
             new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme));
 

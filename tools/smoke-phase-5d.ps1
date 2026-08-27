@@ -30,9 +30,29 @@ function Fail($m) { Write-Host "FAIL: $m" -ForegroundColor Red; SqlCleanup; exit
 function SqlCleanup {
     $sql = @'
 SET NOCOUNT ON;
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-5D-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-5D-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SMOKE-5D-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 # Pre-test cleanup (idempotent)

@@ -92,7 +92,8 @@ public class UserRepository : IUserRepository
         // masters.js doesn't N+1 the detail endpoint per row.
         var assignSql = $@"
             SELECT a.UserId, a.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
-                   a.Role, a.AssignedAt
+                   a.Role, a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction,
+                   a.AssignedAt
             FROM   dbo.UserWarehouseAssignments a
             INNER JOIN dbo.Warehouses w ON w.Id = a.WarehouseId
             WHERE  a.UserId IN (SELECT u.Id FROM dbo.Users u {whereSql})
@@ -114,6 +115,9 @@ public class UserRepository : IUserRepository
                 WarehouseCode = a.WarehouseCode,
                 WarehouseName = a.WarehouseName,
                 Role = a.Role,
+                CanSignCustomer = a.CanSignCustomer,
+                CanSignWarehouse = a.CanSignWarehouse,
+                CanSignProduction = a.CanSignProduction,
                 AssignedAt = a.AssignedAt
             }).ToList());
 
@@ -132,6 +136,9 @@ public class UserRepository : IUserRepository
         public string WarehouseCode { get; set; } = "";
         public string WarehouseName { get; set; } = "";
         public string Role { get; set; } = "";
+        public bool CanSignCustomer { get; set; }
+        public bool CanSignWarehouse { get; set; }
+        public bool CanSignProduction { get; set; }
         public DateTime AssignedAt { get; set; }
     }
 
@@ -145,7 +152,8 @@ public class UserRepository : IUserRepository
 
         const string assignSql = @"
             SELECT a.WarehouseId, w.Code AS WarehouseCode, w.Name AS WarehouseName,
-                   a.Role, a.AssignedAt
+                   a.Role, a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction,
+                   a.AssignedAt
             FROM   dbo.UserWarehouseAssignments a
             INNER JOIN dbo.Warehouses w ON w.Id = a.WarehouseId
             WHERE  a.UserId = @Id

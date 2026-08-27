@@ -90,14 +90,37 @@ OK "Job iterates enabled IErpSource instances + calls ReadAndTransformAsync"
 #    NOT part of item identity. Earlier builds synthesized "SKU-TRIAL_ID"
 #    which broke the receive link; guard against regressing to it.
 # ----------------------------------------------------------------------------
-Step "ItemCode = bare SKU (no TRIAL_ID concat)"
+Step "ItemCode = bare SKU (no TRIAL_ID concat), keyed by (SKU, storer)"
 AssertFile (Join-Path $webRoot 'Services\ErpSync\BpiPrsSource.cs') 'NormalizeItemCode'
 $svc = Get-Content -Raw -LiteralPath (Join-Path $webRoot 'Services\ErpSync\BpiPrsSource.cs')
 if ($svc -match 'SynthesizeItemCode' -or $svc -match '\$"\{s\}-\{t\}"') {
     Fail "Regression: SKU-TRIAL_ID synthesis still present (ItemCode must be bare SKU)"
 }
-if ($svc -notmatch 'GroupBy\(r => NormalizeItemCode\(r\.SKU!\)\)') {
-    Fail "Item grouping is not keyed on bare-SKU NormalizeItemCode"
+# SUPERSEDED ASSERTION, kept visible so the change is legible rather than
+# silent:
+#
+#     if ($svc -notmatch 'GroupBy\(r => NormalizeItemCode\(r\.SKU!\)\)') {
+#         Fail "Item grouping is not keyed on bare-SKU NormalizeItemCode"
+#     }
+#
+# The storer-grain change widened the grouping key from the bare SKU to
+# ItemKey(ItemCode, VendorCode) — one pull sheet routinely carries the same SKU
+# from two storers holding separate purchase orders, and grouping on SKU alone
+# silently merged them. The assertion above went stale at that commit and was
+# never updated, so this smoke has been failing on a known cause ever since,
+# which is exactly how a red stops being read.
+#
+# What the assertion was actually protecting is unchanged and still checked:
+# ItemCode is the BARE SKU. Only the KEY widened. So the check below asserts
+# NormalizeItemCode is still what produces the ItemCode half of the key, and
+# that the vendor half sits beside it rather than being concatenated into it.
+if ($svc -notmatch 'GroupBy\(r => new ItemKey\(NormalizeItemCode\(r\.SKU!\), NullIfBlank\(r\.VENDOR\)\)\)') {
+    Fail "Item grouping is not keyed on ItemKey(bare-SKU NormalizeItemCode, VENDOR)"
+}
+# ItemCode itself must stay the bare SKU — the §7.15 FIFO match is against
+# bare-SKU PO lines, and a composite ItemCode breaks receiving outright.
+if ($svc -notmatch 'ItemCode = itemGroup\.Key\.ItemCode') {
+    Fail "PullItemDraft.ItemCode is not taken from the key's bare-SKU half"
 }
 OK "ItemCode keyed on bare SKU; TRIAL_ID not concatenated"
 

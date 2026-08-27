@@ -81,7 +81,9 @@ range under `UPDLOCK + ROWLOCK` for a global PoNumber duplicate
 re-check (PoNumber is globally UNIQUE per db/010 — a WH filter
 would miss cross-warehouse races), groups rows by PoNumber, and
 INSERTs one PurchaseOrder + N PurchaseOrderLines per group inside
-ONE transaction with rollback on any error (Q3=A atomic). State
+ONE transaction with rollback on any error (Q3=A atomic) — **that
+sentence describes v3.2 as shipped and is no longer true of Stage 2;
+see `## Corrections to this file` → "Stage 2 atomicity"**. State
 machine: `validating → validation_failed | validated → queued →
 running → succeeded | failed`. Schema decisions: `PullId=NULL`
 on imported POs (the spec's "PullId = PRS_ID" idea conflicted with
@@ -616,6 +618,76 @@ preserved. 29/29 smoke battery green at v2.1.3 tip. See
 `docs/migration/v1-to-v2.md` for the v2 runbook + rollback steps; v2.1
 spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 
+## Corrections to this file
+
+A ledger, not an eraser. Claims in the status blocks above were true when
+written and are kept as written; where the code has since moved, the
+correction is recorded here with what actually happens now. Same treatment
+as `db/047_STATUS.md`. Do not delete the original claim — a reader who
+remembers the old behaviour needs to see that it changed.
+
+### Stage 2 atomicity (PO import) — recorded 2026-08-18
+
+**Stale claim** (v3.2 status block, ~line 84): Stage 2 "INSERTs one
+PurchaseOrder + N PurchaseOrderLines per group inside ONE transaction with
+rollback on any error (Q3=A atomic)".
+
+**What Stage 2 actually does** on `feat/digital-signature`
+(`PoImportJob.ImportGroupsAsync`, and documented in that class's own XML
+docs):
+
+- **One transaction per PO group**, not one per file. Each `PoNumber`
+  group commits independently.
+- **Duplicates are skipped, not failed.** A pre-read collects existing
+  `PoNumber`s; a group whose number already exists is recorded in
+  `PoImportLog.PosSkipped` / `SkippedPoNumbers` (db/046) and the run still
+  reports `succeeded` (ActionType `po-import-partial` when anything was
+  skipped). A lost race is caught as SQL 2627/2601 and skipped the same
+  way — `UQ_PurchaseOrders_PoNumber` is the sole authority on duplicates,
+  and the pre-read is an optimisation, not the guarantee.
+- **A failure part-way through leaves earlier POs committed.** The failing
+  group rolls back and the run is marked failed, but POs that committed
+  before it are real rows. Operator recovery is to re-upload: the landed
+  POs now skip as duplicates.
+- There is deliberately **no upsert-into-existing path** — merging a
+  re-uploaded file into a PO that may already carry receipts would put
+  `ReceivedQty` and `OrderedQty` into conflict.
+
+**Q3=A still holds where it was actually decided — Stage 1 validation.**
+One bad row rejects the whole file before anything is written; there is no
+partial accept of a workbook that failed validation. The change is to what
+happens *after* the operator confirms a file that already passed.
+
+**WIP synthesis follows the same rule** (v3.6): a WIP pull sheet is
+created, repaired, or skipped as one unit inside that sheet's own
+transaction — pull, items, windows and PO commit or roll back together.
+
+### smoke-hourcap-6.2 case 7 "fails by design" — recorded 2026-08-19
+
+**Stale claim** (v2 invariants, LockHourCap bullet, ~line 731):
+"`smoke-hourcap-6.2.ps1` case 7 asserts the pre-db/047 loose-pull behaviour
+(unticked over-receipt → 200) and now fails by design. Cases 1-6 and 8 pass
+unmodified."
+
+**What is true now:** the smoke passes in full. Measured 2026-08-19 on
+`feat/digital-signature` at `dc9f001`, standalone run, exit 0.
+
+Both halves of the claim have moved:
+
+- **It does not fail.** Case 7 was rewritten when db/047 landed, and again by
+  brief rev 11 ("the tick is the escape on every pull"). The file's own header
+  records both moves and the numbers behind the second: 11,588 of 11,594 open
+  pulls with outstanding work carry `LockHourCap = 1`, and
+  `ErpUpsertService.cs:189` writes a hardcoded 1, so the flag was never a
+  per-pull choice and honouring it made the over-receipt path unreachable on
+  live data. The assertions went stale, not the product.
+- **The case numbering is gone.** There is no single "case 7" any more — it
+  split into 7a/7b. The header lists cases 1, 3, 5, 6 and 7a/7b as holding
+  unchanged, so "cases 1-6 and 8" no longer describes the file either.
+
+A reader treating this smoke as an expected fail would discount a real
+regression in it. Nothing in the battery is currently failing by design.
+
 ## Stack
 - .NET 8 LTS, C# 12
 - Dapper (no EF Core, no string concat in SQL)
@@ -651,12 +723,40 @@ spec lives in `BUILD_PROMPT.md` (§4.4/§4.6/§7.1/§7.2/§7.15/§6 API).
 - **PO cap is always the hard limit (§7.1).** No matter the per-pull
   hour-cap setting, total received against a PO line can never exceed
   `OrderedQty`.
-- **Per-hour cap is configurable per pull (v2.1, §7.1).**
+- **Per-hour cap is configurable per pull (v2.1, §7.1; amended by db/047).**
   `Pulls.LockHourCap` set at create-time and immutable thereafter. Default
-  `true` (strict). When `false`, per-hour `ExpectedQty` is a planning hint
-  only — legacy v2 behavior. The Phase 6.1 backfill set every existing pull
-  to `true`; pre-existing over-state is preserved as-is but FUTURE receives
-  on the same window are now blocked.
+  `true` (strict). The Phase 6.1 backfill set every existing pull to `true`;
+  pre-existing over-state is preserved as-is but FUTURE receives on the same
+  window are blocked.
+  - `LockHourCap = true` — **the lock stays a lock.** An over-receipt is
+    refused outright with 409 (`HOUR_CAP_EXCEEDED`), and `VarianceAccepted`
+    does **not** override it. Were the tick able to bypass the cap, anyone
+    holding `CanReceive` could walk through it and the feature would be
+    retired rather than merely re-coded.
+  - `LockHourCap = false` — per-hour `ExpectedQty` is **no longer a bare
+    planning hint** (this is the db/047 amendment). Exceeding it now requires
+    an explicit acknowledgement: unticked over-receipt is refused with 400
+    `OVER_RECEIPT_NOT_ACCEPTED`; ticked, it is recorded at the entered figure
+    and **closes the line**. Before db/047 an unticked over-receipt was
+    silently accepted here — though never reachable from the product, because
+    `receiving.js:752` clamped every pull to outstanding regardless of the
+    lock.
+  - **WIP-synthesised pulls are created with `LockHourCap = false`** (the PO
+    import's WIP path, `WipSynthesisWriter.InsertPullAsync`). Everything else
+    on those pulls follows `ErpUpsertService` — status `pending`,
+    `LockPoByPull = 1` — but the cap is the one value the importer genuinely
+    chooses rather than inherits: `ErpUpsertService` hard-codes `true` on
+    every ERP-fed pull as a blanket default, and a synthesised window's
+    `ExpectedQty` is a summed `OPEN QTY` from a planning spreadsheet, not a
+    counted quantity. Strict would leave WIP goods receivable short but never
+    over, on goods where over-delivery is the norm — the tick cannot override
+    a strict cap. **Do not "restore symmetry" by flipping this to true**;
+    `smoke-wip-pull-synthesis.ps1` §2 and §6b fail if it moves.
+  - **A short close is unaffected by the lock on both settings.** A cap
+    constrains how much may arrive, not how little.
+  - `smoke-hourcap-6.2.ps1` case 7 asserts the pre-db/047 loose-pull
+    behaviour (unticked over-receipt → 200) and now fails by design. Cases
+    1-6 and 8 pass unmodified.
 - **FIFO is server-only (§7.14).** The modal MUST NOT expose a PO selector.
   The server allocates by `PurchaseOrders.OrderDate ASC, PoNumber ASC`.
 - **One receive call may produce multiple `Receipts` rows (§7.2a)** when the
@@ -703,6 +803,13 @@ breadcrumb). Production must use Managed Identity or a vault — never a
 hardcoded SQL login.
 
 ## Tooling
+- **`docs/smoke-conventions.md` — read before writing or editing a smoke.**
+  Two rules learned from smokes that were green while proving nothing:
+  (1) when a check's subject is SOURCE TEXT, prove the assertion fails when
+  that subject changes, and prove your detector watches the same signal the
+  battery does (exit code, not a grep for `FAIL:`); (2) a smoke leaves the
+  database as it found it — namespace the fixture, purge on entry AND exit,
+  clean up on the failure path, and never `2>&1 | Out-Null` a cleanup.
 - `tools/run-smokes.ps1` — aggregate smoke runner (PowerShell 7+).
   Default battery = 16 suites; verify + phase smokes + legacy smokes.
   See `## Smoke test inventory` in memory's `receivx_build_state.md`.

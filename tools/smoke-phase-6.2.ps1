@@ -29,9 +29,55 @@ function SqlCleanup {
     $sql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%';
+-- db/052 ownership marks are keyed by row GUID with no FK, so they must go
+-- BEFORE the rows they point at -- afterwards the ids are unrecoverable and
+-- the table accumulates orphans one run at a time. This smoke edits window
+-- ExpectedQty through the real API, which is now a marking operation.
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItemWindow'
+  AND e.EntityId IN (SELECT w.Id FROM dbo.PullItemWindows w
+                       INNER JOIN dbo.PullItems pi ON pi.Id = w.PullItemId
+                       INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+                     WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItem'
+  AND e.EntityId IN (SELECT pi.Id FROM dbo.PullItems pi
+                       INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+                     WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'Pull'
+  AND e.EntityId IN (SELECT p.Id FROM dbo.Pulls p WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%');
+-- This smoke edits a window and then DELETEs it through the API, so by the
+-- time the joins above run that window is already gone and its mark cannot be
+-- reached by id. Such a mark is inert -- nothing can ever match a GUID that no
+-- row carries -- but it would accumulate one per run, so sweep window marks
+-- with no surviving parent.
+DELETE e FROM dbo.OperatorFieldEdits e
+WHERE e.EntityType = 'PullItemWindow'
+  AND NOT EXISTS (SELECT 1 FROM dbo.PullItemWindows w WHERE w.Id = e.EntityId);
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-6.2-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SMOKE-6.2-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 SqlCleanup
@@ -187,7 +233,15 @@ UPDATE dbo.PullItemWindows
    SET ReceivedQty = 50
  WHERE PullItemId = '$itemId' AND HourOfDay = 9;
 "@
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { Fail "SQL poke failed" }
 
 $lowBody = @{ expectedQty = 25 } | ConvertTo-Json
@@ -218,7 +272,15 @@ $resetSql = @"
 SET QUOTED_IDENTIFIER ON;
 UPDATE dbo.PullItemWindows SET ReceivedQty = 0 WHERE PullItemId = '$itemId' AND HourOfDay = 9;
 "@
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $resetSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $resetSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
 # 11. DELETE happy path → 204

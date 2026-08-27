@@ -18,11 +18,15 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@@1.11.3/font/bootstrap-icons.min.css">
     <script src="https://cdn.jsdelivr.net/npm/xlsx@@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <link rel="stylesheet" href="~/css/dashboard.css">
+    <link rel="stylesheet" href="~/css/dashboard.css" asp-append-version="true">
 </head>
 <body data-app-page="pull">
 
 <div class="app">
+
+    <!-- STICKY TOP REGION — title bar + summary tiles + toolbar. flex:0 0 auto;
+         never scrolls. Only the column bodies below scroll. -->
+    <div class="top-region">
 
     <!-- TOP BAR -->
     <header class="topbar">
@@ -142,6 +146,8 @@
         <button type="button" class="btn btn-outline-secondary" id="date-clear"><i class="bi bi-x me-1"></i> Clear</button>
     </div>
 
+    </div><!-- /top-region -->
+
     <!-- KANBAN -->
     <div class="kanban-wrap">
         <div class="kanban" id="kanban"></div>
@@ -166,7 +172,18 @@
             <div class="drawer-title" id="d-title">—</div>
             <div class="drawer-subtitle" id="d-subtitle">—</div>
         </div>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        @* Maximize / restore. Two states only — no drag handle, no stored width.
+           Labels are Thai per the brief and swap with state; aria-pressed carries
+           the state for assistive tech. Esc is NOT wired here: Bootstrap's own
+           offcanvas keyboard handling closes the drawer, and someone hitting Esc
+           out of a maximized drawer expects to be out, not merely restored. *@
+        <div class="drawer-header-actions">
+            <button type="button" class="btn-drawer-max" id="d-maximize"
+                    aria-label="ขยายเต็มจอ" title="ขยายเต็มจอ" aria-pressed="false">
+                <i class="bi bi-arrows-angle-expand"></i>
+            </button>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
     </div>
 
     <div class="offcanvas-body">
@@ -281,6 +298,12 @@
                 <div class="timeline-row">
                     <span class="timeline-label">Hour cap</span>
                     <span class="timeline-value" id="d-hcap-mode">—</span>
+                </div>
+                @* db/050 — provenance. Hidden for ERP-fed and hand-created pulls;
+                   only a synthesised pull has something to explain. *@
+                <div class="timeline-row" id="d-origin-row" hidden>
+                    <span class="timeline-label">Origin</span>
+                    <span class="timeline-value" id="d-origin">—</span>
                 </div>
                 <div class="timeline-row">
                     <span class="timeline-label">Linked POs</span>

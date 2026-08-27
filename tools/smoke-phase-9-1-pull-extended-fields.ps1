@@ -273,11 +273,18 @@ Remove-Item $file -Force -ErrorAction SilentlyContinue
 # 10. Cleanup — NULL out the test fields so the smoke is rerunnable
 # ----------------------------------------------------------------------------
 Step "Cleanup: NULL the test ERP fields"
+# The ownership marks go too (db/052). This smoke edits through the real API,
+# so those seven fields are now genuinely operator-owned and ETL would stop
+# updating them on a REAL ERP-fed pull — permanently, and as a side effect of
+# running a test. NULLing the values without clearing the marks would leave the
+# pull quietly frozen.
 $cleanup = @"
 UPDATE dbo.PullItems SET
     ProductFamily = NULL, FromSubInventory = NULL, ToSubInventory = NULL,
     SpecialControl = NULL, TrialId = NULL, Location = NULL, [Phase] = NULL
 WHERE Id = '$itemId';
+DELETE FROM dbo.OperatorFieldEdits
+WHERE EntityType = 'PullItem' AND EntityId = '$itemId';
 "@
 Sql $cleanup | Out-Null
 OK "Test data NULLed"

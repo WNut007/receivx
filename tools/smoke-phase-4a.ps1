@@ -100,9 +100,21 @@ try {
 }
 
 # ============================================================================
-# (e) qty <= 0 → 400 (ValidationException)
+# (e) qty = 0 → 400, but no longer because zero is invalid
+#
+# db/047 §2d turned qty=0 into a legitimate operation: a short close, recording no
+# Receipts row. So "Quantity must be positive" is gone — zero is refused only when
+# the operator has NOT ticked accept-variance, and the message now names the remedy.
+# The status is unchanged at 400; only the reason moved.
+#
+# Rewriting an assertion to match the code is normally a warning sign. It is right
+# here because the behaviour change was deliberate, is documented in CLAUDE.md and
+# in ReceiptService's §2d comment, and already shipped in the sibling smokes
+# (smoke-variance-section8, smoke-receive step 3). The assertion went stale; the
+# product did not regress. The ticked counterpart below is asserted too, so this
+# step now covers the decision rather than just its refusal half.
 # ============================================================================
-Step "(e) qty=0 → 400 ValidationException"
+Step "(e) qty=0 without the tick → 400 ZERO_QTY_WITHOUT_VARIANCE"
 try {
     Invoke-WebRequest -Uri "$base/api/receipts/preview?pullItemId=$PI_2847_PCBA&qty=0" -WebSession $session | Out-Null
     Fail "Expected 400, got success"
@@ -110,8 +122,33 @@ try {
     $code = $_.Exception.Response.StatusCode.value__
     if ($code -ne 400) { Fail "Expected 400, got $code" }
     $body = $_.ErrorDetails.Message
-    if ($body -notmatch 'positive') { Fail "Expected title to mention 'positive'. Got: $body" }
-    OK "400 'Quantity must be positive'"
+    $pd = $null; try { $pd = $body | ConvertFrom-Json } catch { }
+    if ($pd.code -ne 'ZERO_QTY_WITHOUT_VARIANCE') { Fail "Expected code ZERO_QTY_WITHOUT_VARIANCE. Got: $body" }
+    # The remedy has to be in the message or the operator has no way to discover it.
+    if ($body -notmatch 'accept variance') { Fail "Expected the message to name the tick. Got: $body" }
+    OK "400 ZERO_QTY_WITHOUT_VARIANCE, message names the tick"
+}
+
+Step "(e'') qty=0 WITH the tick → 200 close-only preview, no allocation"
+# No hour parameter: PL-2847's PCBA is scheduled across several windows, and a
+# variance close is a SKU-level act — see (e''') for the guard that enforces that.
+$prev0 = Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$PI_2847_PCBA&qty=0&varianceAccepted=true" -WebSession $session
+# A short close consumes no PO capacity, so the plan must be empty rather than a
+# zero-quantity slice — that is what makes §2d "records nothing" true on the wire.
+if ($prev0.allocations.Count -ne 0) { Fail "close-only preview should allocate nothing, got $($prev0.allocations.Count) slice(s)" }
+if ($prev0.shortage -ne 0)          { Fail "close-only preview should report no shortage, got $($prev0.shortage)" }
+OK "200 with an empty allocation plan (scope=$($prev0.scope), allocatable=$($prev0.totalAllocatable))"
+
+Step "(e''') qty=0 + tick + a single hour on a multi-window SKU → 400 MULTI_WINDOW_NOT_SUPPORTED"
+try {
+    Invoke-WebRequest -Uri "$base/api/receipts/preview?pullItemId=$PI_2847_PCBA&qty=0&hour=7&varianceAccepted=true" -WebSession $session | Out-Null
+    Fail "Expected 400, got success"
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -ne 400) { Fail "Expected 400, got $code" }
+    $pd = $null; try { $pd = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+    if ($pd.code -ne 'MULTI_WINDOW_NOT_SUPPORTED') { Fail "Expected MULTI_WINDOW_NOT_SUPPORTED. Got: $($_.ErrorDetails.Message)" }
+    OK "400 MULTI_WINDOW_NOT_SUPPORTED — closing one slot of a multi-window SKU is refused"
 }
 
 Step "(e') qty=-3 → 400 ValidationException"
@@ -153,4 +190,4 @@ OK "Receive untouched (receiptId=$cleanupId)"
 $cancelBody = @{ reason = 'other'; note = 'phase-4a smoke cleanup' } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/receipts/$cleanupId/cancel" -Method POST -Body $cancelBody -ContentType 'application/json' -WebSession $session | Out-Null
 
-Write-Host "`nPhase 4a smoke passed (all 7 scenarios)." -ForegroundColor Green
+Write-Host "`nPhase 4a smoke passed (all 9 scenarios)." -ForegroundColor Green

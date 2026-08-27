@@ -12,8 +12,18 @@ namespace ReceivingOps.Web.Services;
 
 public class MastersService : IMastersService
 {
+    // Global role (dbo.Users.Role) — gated by CK_Users_Role. Unchanged by the
+    // digital-signature feature: signers keep an operator/viewer global role.
     private static readonly HashSet<string> ValidRoles =
         new(StringComparer.OrdinalIgnoreCase) { "admin", "supervisor", "operator", "viewer" };
+
+    // Per-warehouse operational role (dbo.UserWarehouseAssignments.Role, →
+    // "whRole" claim) — gated by CK_UWA_Role. Operational-only since db/043
+    // re-tightened the constraint: digital-signature capability is now carried
+    // by the additive CanSign* flags, NOT by overloading this role.
+    private static readonly HashSet<string> ValidAssignmentRoles =
+        new(StringComparer.OrdinalIgnoreCase)
+            { "admin", "supervisor", "operator", "viewer" };
 
     private readonly IDbConnectionFactory _factory;
     private readonly IAuditService _audit;
@@ -81,9 +91,13 @@ public class MastersService : IMastersService
                 foreach (var a in req.Assignments)
                 {
                     await conn.ExecuteAsync(new CommandDefinition(@"
-                        INSERT INTO dbo.UserWarehouseAssignments (UserId, WarehouseId, Role, AssignedAt)
-                        VALUES (@UserId, @WarehouseId, @Role, SYSUTCDATETIME());",
-                        new { UserId = newId, a.WarehouseId, a.Role },
+                        INSERT INTO dbo.UserWarehouseAssignments
+                            (UserId, WarehouseId, Role,
+                             CanSignCustomer, CanSignWarehouse, CanSignProduction, AssignedAt)
+                        VALUES (@UserId, @WarehouseId, @Role,
+                             @CanSignCustomer, @CanSignWarehouse, @CanSignProduction, SYSUTCDATETIME());",
+                        new { UserId = newId, a.WarehouseId, a.Role,
+                              a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction },
                         transaction: tx, cancellationToken: ct));
                 }
             }
@@ -183,9 +197,13 @@ public class MastersService : IMastersService
             foreach (var a in assignments)
             {
                 await conn.ExecuteAsync(new CommandDefinition(@"
-                    INSERT INTO dbo.UserWarehouseAssignments (UserId, WarehouseId, Role, AssignedAt)
-                    VALUES (@UserId, @WarehouseId, @Role, SYSUTCDATETIME());",
-                    new { UserId = userId, a.WarehouseId, a.Role },
+                    INSERT INTO dbo.UserWarehouseAssignments
+                        (UserId, WarehouseId, Role,
+                         CanSignCustomer, CanSignWarehouse, CanSignProduction, AssignedAt)
+                    VALUES (@UserId, @WarehouseId, @Role,
+                         @CanSignCustomer, @CanSignWarehouse, @CanSignProduction, SYSUTCDATETIME());",
+                    new { UserId = userId, a.WarehouseId, a.Role,
+                          a.CanSignCustomer, a.CanSignWarehouse, a.CanSignProduction },
                     transaction: tx, cancellationToken: ct));
             }
 
@@ -429,7 +447,7 @@ public class MastersService : IMastersService
         {
             if (a.WarehouseId == Guid.Empty)
                 throw new BusinessException("Assignment warehouseId is required");
-            if (!ValidRoles.Contains(a.Role))
+            if (!ValidAssignmentRoles.Contains(a.Role))
                 throw new BusinessException($"Invalid assignment role '{a.Role}'");
         }
         // Reject duplicate warehouses in the same payload (composite PK would block it anyway).

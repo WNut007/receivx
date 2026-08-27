@@ -43,6 +43,7 @@ public class DeliveryOrderService : IDeliveryOrderService
 {
     private readonly IPullRepository _pulls;
     private readonly IWarehouseRepository _warehouses;
+    private readonly IPullSignatureRepository _signatures;
     private readonly CompanyInfo _company;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<DeliveryOrderService> _log;
@@ -50,12 +51,14 @@ public class DeliveryOrderService : IDeliveryOrderService
     public DeliveryOrderService(
         IPullRepository pulls,
         IWarehouseRepository warehouses,
+        IPullSignatureRepository signatures,
         IOptions<CompanyInfo> company,
         IWebHostEnvironment env,
         ILogger<DeliveryOrderService> log)
     {
         _pulls = pulls;
         _warehouses = warehouses;
+        _signatures = signatures;
         _company = company.Value;
         _env = env;
         _log = log;
@@ -78,8 +81,17 @@ public class DeliveryOrderService : IDeliveryOrderService
                 "Delivery Order can only be rendered for closed pulls. " +
                 "Close the pull first (it must be fully received and signed off).");
 
-        var rows = await _pulls.GetDoReportRowsAsync(pullId, ct);
-        if (rows.Count == 0)
+        // The Delivery Note tab shows ONLY WDT-transfer lines (Note = the WDT
+        // sentinel); the Delivery Order tab keeps every line. Phase 15.4 DN
+        // auto-generation inherits this whitelist for free — it just needs to
+        // call the DN build path (ReportType.DeliveryNote) so wdtOnly stays true.
+        var wdtOnly = reportType == ReportType.DeliveryNote;
+        var rows = await _pulls.GetDoReportRowsAsync(pullId, wdtOnly, ct);
+
+        // A DN with no WDT-eligible lines is the common, valid empty case — never
+        // an error, no warning/throw (most pulls have zero eligible lines). Only
+        // the DO path treats "no delivered receipts" as an error.
+        if (rows.Count == 0 && !wdtOnly)
             throw new BusinessException(
                 "This pull has no delivered receipts. A Delivery Order requires at least one " +
                 "non-cancelled receipt to render.");
@@ -91,6 +103,11 @@ public class DeliveryOrderService : IDeliveryOrderService
         // Per-warehouse logo + address for the DSV header — null when unset.
         var wh = await _warehouses.GetByIdAsync(pull.WarehouseId, ct);
 
+        // 3-party digital signatures (per-pull). Map the stored rows onto the
+        // fixed Customer/Warehouse/Production set; unsigned parties stay blank.
+        var sigRows = await _signatures.GetByPullAsync(pullId, ct);
+        var signatures = BuildSignatureSet(sigRows);
+
         return new DoReportData
         {
             Pull = new DoPullHeader
@@ -99,6 +116,7 @@ public class DeliveryOrderService : IDeliveryOrderService
                 PullNumber           = pull.PullNumber,
                 PullDate             = pull.PullDate,
                 ReferenceNumber      = pull.ReferenceNumber,
+                WarehouseId          = pull.WarehouseId,
                 WarehouseCode        = pull.WarehouseCode,
                 WarehouseName        = pull.WarehouseName,
                 WarehouseAddress     = wh?.Address,
@@ -108,10 +126,31 @@ public class DeliveryOrderService : IDeliveryOrderService
                 ClosedByRole         = pull.ClosedByRole,
                 SignatureSvg         = pull.SignatureSvg,
                 TotalQty             = orders.Sum(o => o.TotalQty),
+                Signatures           = signatures,
             },
             Orders  = orders,
             Company = _company,
         };
+    }
+
+    /// <summary>Folds stored PullSignature rows onto the fixed 3-party set.</summary>
+    private static DoSignatureSet BuildSignatureSet(
+        IReadOnlyList<Models.Entities.PullSignature> rows)
+    {
+        var set = new DoSignatureSet();
+        foreach (var party in set.All)
+        {
+            var row = rows.FirstOrDefault(r =>
+                string.Equals(r.Party, party.Party, StringComparison.OrdinalIgnoreCase));
+            if (row is not null)
+            {
+                party.IsSigned    = true;
+                party.SignerName  = row.SignerName;
+                party.SignedAt    = row.SignedAt;
+                party.SignatureSvg = row.SignatureSvg;
+            }
+        }
+        return set;
     }
 
     // ------------------------------------------------------------------
@@ -169,6 +208,11 @@ public class DeliveryOrderService : IDeliveryOrderService
                     TotalQty       = lines.Sum(l => l.TotalQty),
                 };
             })
+            // Prune any group left with zero lines (only WDT-eligible lines
+            // survive the repo whitelist, so a vendor group with no eligible
+            // lines never renders as an empty page). TotalQty above is already
+            // summed from surviving lines only — no pre-filter carry.
+            .Where(o => o.Lines.Count > 0)
             .OrderBy(o => o.DeliveryNoteNo, StringComparer.Ordinal)
             .ToList();
 
@@ -262,7 +306,7 @@ public class DeliveryOrderService : IDeliveryOrderService
         return Build(data, reportType);
     }
 
-    private Report Build(DoReportData data, ReportType reportType)
+    public Report Build(DoReportData data, ReportType reportType = ReportType.DeliveryNote)
     {
         EnsureFrxExists(reportType);
 

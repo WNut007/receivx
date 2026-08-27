@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -20,8 +21,13 @@ namespace ReceivingOps.Web.Controllers.Api;
 [Authorize(Roles = "admin")]
 public class AdminEmailController : ControllerBase
 {
+    /// <summary>Shown to the admin whenever the key ring can't decrypt the password.</summary>
+    private const string KeyRingHelp =
+        "The Data Protection key that encrypted Smtp:Password is missing from the key ring. " +
+        "Re-enter the password via /Config → Email to re-encrypt it under the current key.";
+
     private readonly IEmailService _email;
-    private readonly SmtpOptions _smtp;
+    private readonly IOptions<SmtpOptions> _smtpOpts;
     private readonly ILogger<AdminEmailController> _log;
 
     public AdminEmailController(
@@ -30,8 +36,31 @@ public class AdminEmailController : ControllerBase
         ILogger<AdminEmailController> log)
     {
         _email = email;
-        _smtp = smtp.Value;
+        // Same rule as MailKitEmailService: never bind SmtpOptions in a
+        // constructor. Binding decrypts Smtp:Password, so a missing key ring
+        // threw CryptographicException during controller activation and both
+        // endpoints 500'd — precisely when an admin came here to find out why
+        // email was broken. Resolve per-request via TryResolveSmtp instead.
+        _smtpOpts = smtp;
         _log = log;
+    }
+
+    /// <summary>
+    /// Binds SmtpOptions on demand, returning null when the key ring can't
+    /// decrypt the password. Only CryptographicException is caught — any other
+    /// binding failure is a real bug and must surface as a 500.
+    /// </summary>
+    private SmtpOptions? TryResolveSmtp()
+    {
+        try
+        {
+            return _smtpOpts.Value;
+        }
+        catch (CryptographicException ex)
+        {
+            _log.LogWarning(ex, "SMTP options could not be decrypted. {Help}", KeyRingHelp);
+            return null;
+        }
     }
 
     public class EmailTestRequest
@@ -50,6 +79,16 @@ public class AdminEmailController : ControllerBase
         public bool PasswordConfigured { get; set; }
         /// <summary>True when MailKitEmailService would attempt real SMTP send (Host + FromAddress + Username + Password all set).</summary>
         public bool FullyConfigured { get; set; }
+
+        /// <summary>
+        /// False when the settings could not be read at all — currently only when
+        /// the Data Protection key ring can't decrypt Smtp:Password. The other
+        /// fields are meaningless in that case; read <see cref="Error"/> instead.
+        /// </summary>
+        public bool ConfigReadable { get; set; } = true;
+
+        /// <summary>Why the config is unreadable, when <see cref="ConfigReadable"/> is false.</summary>
+        public string? Error { get; set; }
     }
 
     public class EmailTestResponse
@@ -71,18 +110,32 @@ public class AdminEmailController : ControllerBase
     [HttpGet("smtp-config")]
     public IActionResult GetSmtpConfig()
     {
+        var smtp = TryResolveSmtp();
+        if (smtp is null)
+        {
+            // 200, not 500: "the password can't be decrypted" IS the diagnosis
+            // this endpoint exists to deliver. A 500 would tell the admin
+            // nothing. The key failure is still logged as a warning above and
+            // still crits at startup — nothing is being hidden here.
+            return Ok(new SmtpConfigResponse
+            {
+                ConfigReadable = false,
+                Error = KeyRingHelp,
+            });
+        }
+
         return Ok(new SmtpConfigResponse
         {
-            Host                = _smtp.Host ?? "",
-            Port                = _smtp.Port,
-            UseStartTls         = _smtp.UseStartTls,
-            FromAddress         = _smtp.FromAddress ?? "",
-            FromName            = _smtp.FromName ?? "",
-            UsernameConfigured  = !string.IsNullOrWhiteSpace(_smtp.Username),
-            PasswordConfigured  = !string.IsNullOrWhiteSpace(_smtp.Password),
-            FullyConfigured     = _smtp.IsConfigured
-                                  && !string.IsNullOrWhiteSpace(_smtp.Username)
-                                  && !string.IsNullOrWhiteSpace(_smtp.Password),
+            Host                = smtp.Host ?? "",
+            Port                = smtp.Port,
+            UseStartTls         = smtp.UseStartTls,
+            FromAddress         = smtp.FromAddress ?? "",
+            FromName            = smtp.FromName ?? "",
+            UsernameConfigured  = !string.IsNullOrWhiteSpace(smtp.Username),
+            PasswordConfigured  = !string.IsNullOrWhiteSpace(smtp.Password),
+            FullyConfigured     = smtp.IsConfigured
+                                  && !string.IsNullOrWhiteSpace(smtp.Username)
+                                  && !string.IsNullOrWhiteSpace(smtp.Password),
         });
     }
 
@@ -102,14 +155,30 @@ public class AdminEmailController : ControllerBase
             });
         }
 
+        // Resolve BEFORE sending. MailKitEmailService silently no-ops when the
+        // password can't be decrypted, so without this check the test would
+        // report "Email sent successfully" while nothing left the building —
+        // the worst possible answer from a diagnostic.
+        var smtp = TryResolveSmtp();
+        if (smtp is null)
+        {
+            return BadRequest(new EmailTestResponse
+            {
+                Success   = false,
+                SentTo    = req.To,
+                Error     = $"SMTP password could not be decrypted — no email was sent. {KeyRingHelp}",
+                ErrorType = nameof(CryptographicException),
+            });
+        }
+
         var sender = User.Identity?.Name ?? "(unknown)";
         var html = $@"<!DOCTYPE html><html><body style='font-family: Arial, sans-serif; color: #1a1d20; max-width: 600px;'>
 <p>This is a <b>test email</b> from ReceivingOps.</p>
 <p>If you received this, SMTP is configured correctly.</p>
 <table style='border-collapse: collapse; font-size: 12px; color: #5a626c;'>
   <tr><td style='padding: 4px 12px 4px 0;'>Sent at</td><td>{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC</td></tr>
-  <tr><td style='padding: 4px 12px 4px 0;'>SMTP host</td><td>{System.Net.WebUtility.HtmlEncode(_smtp.Host ?? "(not set)")}</td></tr>
-  <tr><td style='padding: 4px 12px 4px 0;'>From</td><td>{System.Net.WebUtility.HtmlEncode(_smtp.FromAddress ?? "(not set)")}</td></tr>
+  <tr><td style='padding: 4px 12px 4px 0;'>SMTP host</td><td>{System.Net.WebUtility.HtmlEncode(smtp.Host ?? "(not set)")}</td></tr>
+  <tr><td style='padding: 4px 12px 4px 0;'>From</td><td>{System.Net.WebUtility.HtmlEncode(smtp.FromAddress ?? "(not set)")}</td></tr>
   <tr><td style='padding: 4px 12px 4px 0;'>Triggered by</td><td>{System.Net.WebUtility.HtmlEncode(sender)}</td></tr>
 </table>
 <p style='color: #8a8f97; font-size: 11px; margin-top: 24px;'>Safe to delete. ReceivingOps — email diagnostic.</p>
@@ -122,13 +191,13 @@ public class AdminEmailController : ControllerBase
             return Ok(new EmailTestResponse
             {
                 Success  = true,
-                Message  = _smtp.IsConfigured
+                Message  = smtp.IsConfigured
                     ? "Email sent successfully."
                     : "SMTP not configured — email was logged instead of sent. Set Smtp:* user-secrets to send real emails.",
                 SentAt   = DateTime.UtcNow,
                 SentTo   = req.To,
-                SmtpHost = _smtp.Host ?? "",
-                SmtpFrom = _smtp.FromAddress ?? "",
+                SmtpHost = smtp.Host ?? "",
+                SmtpFrom = smtp.FromAddress ?? "",
             });
         }
         catch (Exception ex)

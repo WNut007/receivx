@@ -47,6 +47,17 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-6.1.ps1'
         'smoke-phase-6.2.ps1'
         'smoke-phase-6.3.ps1'
+        # Drawer maximize + copy-row. Sits next to 6.3 because it covers the
+        # same surface, but is its own file: 6.3 is scoped to the v2.1
+        # items-grid wiring and should not start failing for later features.
+        # Lifts the row serialiser out of dashboard.js and runs it in node, so
+        # NODE MUST BE ON PATH. The live section skips without the dev server.
+        'smoke-pull-drawer-actions.ps1'
+        # Guards the ADD ITEM binding: openAddItemModal must never be handed to
+        # the DOM bare, or the PointerEvent arrives as its prefill argument and
+        # the button goes inert. Lifts the function into node, so NODE MUST BE
+        # ON PATH. No dev server, no database.
+        'smoke-add-item-binding.ps1'
         'smoke-confirm-modal.ps1'
         'verify-hourcap-6.1.ps1'
         'smoke-hourcap-6.2.ps1'
@@ -58,6 +69,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-pull-reference.ps1'
         'smoke-fastreport-bootstrap.ps1'
         'smoke-do-report.ps1'
+        'smoke-dn-wdt-transfer-only.ps1'
         'smoke-pos-date-filter.ps1'
         'smoke-phase-8.1-pagination.ps1'
         'smoke-phase-8.2-pagination-component.ps1'
@@ -66,6 +78,7 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-email-test.ps1'
         'smoke-export-extensions.ps1'
         'smoke-my-exports.ps1'
+        'smoke-ktf-export.ps1'
         'smoke-exports-badge.ps1'
         'smoke-exports-2tab.ps1'
         'smoke-phase-9-extended-fields.ps1'
@@ -80,6 +93,12 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-10-7-erp-bpi.ps1'
         'smoke-phase-13-7-erp-prb.ps1'
         'smoke-phase-13-9-trigger-config.ps1'
+        # The ERP feed must not create, update, or take over a WIP pull —
+        # those come from the PO import, which builds the pull AND the PO it
+        # receives against. Sections 1-2 always run (source shape + a DB-free
+        # Transform via ErpUpsertHarness); sections 3-7 need the ERP host and
+        # skip cleanly without it.
+        'smoke-erp-wip-skip.ps1'
         'smoke-phase-11-1-app-settings.ps1'
         'smoke-phase-11-2-config-ui.ps1'
         'smoke-phase-12-2-po-import-reader.ps1'
@@ -89,13 +108,53 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-phase-12-6-nav-entry.ps1'
         'smoke-phase-12-7-integration.ps1'
         'smoke-phase-12-8-import-ui.ps1'
+        'smoke-import-template.ps1'
+        # Shares the WIPTEST-% namespace with nothing else; purges it on entry
+        # and exit. Requires db/050 (Origin on Pulls + PurchaseOrders).
+        'smoke-wip-pull-synthesis.ps1'
+        # Blank-ROUND default (hour 07) on the MANUAL upload path only. Owns
+        # the WIPRND-% namespace so it cannot collide with the smoke above.
+        'smoke-wip-round-default.ps1'
+        # Drives tools/ErpUpsertHarness, which executes the real Transform +
+        # UpsertAsync against the dev DB with no ERP host. Build it first:
+        # dotnet build tools/ErpUpsertHarness.
+        'smoke-storer-grain.ps1'
+        # db/052 — operator edits win permanently over ERP sync. Drives the
+        # same harness in two phases (HARNESS_NO_PURGE) with real API edits
+        # between them. Owns the HARNESS-OWNER-% namespace.
+        'smoke-operator-owns-edits.ps1'
+        # Read-path companion to storer-grain: the console grid orders by
+        # (ItemCode, VendorCode, SortOrder) so a SKU's storer rows sit together.
+        # Seeds its own SKUORD-% pulls via SQL; needs node on PATH for step 6.
+        'smoke-receiving-sku-order.ps1'
+        # Shares smoke-phase-12-7's P127TEST-% fixture namespace. Both purge
+        # the prefix on entry and exit; they must not run concurrently.
+        'smoke-po-import-skip-duplicates.ps1'
         'smoke-phase-14-vendor-at-line.ps1'
         'smoke-phase-14-do-multi-do.ps1'
+        'smoke-do-signatures.ps1'
         'smoke-receive.ps1'
         'smoke-pull-status-forward-transition.ps1'
         'smoke-stage-b.ps1'
         'smoke-transactions.ps1'
         'smoke-close-reopen.ps1'
+        # db/047 accept-variance. -outstanding-queries joined the battery on
+        # 2026-08-18 after the client-side copies of the outstanding arithmetic
+        # shipped a bug it would have caught (pull 0000028388: server ready to
+        # close, CLOSE PULL SHEET disabled). FOUR remain hand-run —
+        # smoke-variance-section8 / -preview-confirm-agreement / -reopen, and
+        # smoke-hourcap-6.2's 7a/7b split — see db/047_STATUS.md.
+        'smoke-over-receipt-own-po.ps1'
+        'smoke-variance-outstanding-queries.ps1'
+        'smoke-variance-reason.ps1'          # db/049
+        # Reports -> Pull Sheets (xlsx export by date + period). The period map
+        # smoke reads the RENDERED picker on both /Reports and /Receiving, so it
+        # also guards that the two pages still share one definition.
+        'smoke-pull-sheets-period-map.ps1'
+        'smoke-pull-sheets-night-rollover.ps1'
+        'smoke-pull-sheets-period-scoping.ps1'
+        'smoke-pull-sheets-nbsp.ps1'
+        'smoke-pull-sheets-building.ps1'
     )
 }
 

@@ -266,6 +266,19 @@
     background: var(--error-bg); color: var(--error);
     border-radius: 8px; font-size: 13px;
   }
+  /* Empty Delivery Note — no line on the pull is marked "Transferred from WDT".
+     Muted-surface card reusing the same theme tokens as the rest of the pane. */
+  .dn-empty-state {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    gap: 8px; padding: 40px 24px;
+  }
+  .dn-empty-headline {
+    color: var(--text); font-size: 16px; font-weight: 600;
+  }
+  .dn-empty-sub {
+    color: var(--text-muted); font-size: 13px; max-width: 420px;
+  }
 
   /* ============ DO document (paper-like card) ============ */
   .do-document {
@@ -849,3 +862,310 @@
   .dord-sig-box { flex: 1; display: flex; align-items: center; justify-content: center; padding: 4px; }
   .dord-sig-box svg, .dord-sig-box img { max-height: 56px; max-width: 100%; object-fit: contain; }
   .dord-sig-caption { font-size: 8px; color: #6b7280; border-top: 1px dashed #c9ccd1; padding-top: 3px; }
+
+/* ===========================================================================
+   Digital signature — 3-party box row (Customer / Warehouse / Production).
+   Shared by both DO previews (_DoPreview + _DsvOrderPreview) via the
+   _SignatureBoxes partial. Replaces the old 2-box footers. Always 3 boxes;
+   signed shows name+timestamp, unsigned shows a blank box or a Sign button.
+   =========================================================================== */
+.do-sign-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+.do-sign-box {
+  display: flex;
+  flex-direction: column;
+  min-height: 96px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+}
+.do-sign-label {
+  font-size: 8pt;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.do-sign-area {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 4px 0;
+}
+.do-sign-name { font-size: 10pt; font-weight: 600; color: var(--text); }
+.do-sign-date { font-size: 7.5pt; color: var(--text-muted); }
+.do-sign-caption {
+  font-size: 7pt;
+  color: var(--text-muted);
+  text-align: center;
+  border-top: 1px dashed var(--border);
+  padding-top: 3px;
+}
+.do-sign-btn {
+  font: inherit;
+  font-size: 8.5pt;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.do-sign-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.do-sign-btn[disabled] { opacity: 0.6; cursor: default; }
+
+/* Print: hide the interactive button (paper shows a blank box to hand-sign
+   any party not yet digitally signed). */
+@media print {
+  .do-sign-btn { display: none !important; }
+}
+
+/* ===========================================================================
+   Phase 7e — Reports list signature UI: N/3 badge, party chips, batch-select,
+   sign-status filter + the Warehouse drawn-signature in the preview boxes.
+   =========================================================================== */
+
+/* Row top realigns to group [checkbox · pull# · badge] on the left; the badge
+   pushes any trailing PO-LOCK chip to the right. */
+.pull-row .row-top { align-items: center; justify-content: flex-start; }
+.pull-row .pull-check {
+  width: 15px; height: 15px; margin: 0 2px 0 0;
+  accent-color: var(--accent); cursor: pointer; flex: 0 0 auto;
+}
+.pull-row .pull-check:disabled { cursor: not-allowed; opacity: 0.45; }
+.pull-row .pull-lock-badge { margin-left: auto; }
+
+.sig-badge {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 2px 6px; border-radius: 999px;
+  background: color-mix(in srgb, #d97706 22%, transparent);
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #d97706 45%, transparent);
+}
+.sig-badge.is-complete {
+  background: color-mix(in srgb, var(--ok, #16a34a) 20%, transparent);
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 45%, transparent);
+}
+
+.sig-chips { display: inline-flex; gap: 3px; margin-left: auto; }
+.sig-chip {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 9px; font-weight: 700; line-height: 1;
+  width: 15px; height: 15px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.sig-chip.on {
+  background: color-mix(in srgb, var(--ok, #16a34a) 18%, transparent);
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
+}
+
+/* Batch-sign bar (revealed when ≥1 pull is checked). */
+.batch-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin: 0 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.batch-bar .batch-count { font-size: 12px; font-weight: 600; color: var(--text); }
+.batch-bar .batch-party-wrap { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
+.batch-bar .batch-party { width: auto; min-width: 110px; }
+.batch-bar .batch-result { font-size: 11px; color: var(--text-muted); flex-basis: 100%; }
+
+/* Warehouse drawn signature in the preview box (D4). */
+.do-sign-drawn { margin-bottom: 2px; }
+.do-sign-drawn img {
+  max-height: 38px; max-width: 100%;
+  object-fit: contain; display: block;
+}
+
+/* Per-document completeness line under the 3 boxes. */
+.do-sign-complete {
+  margin-top: 6px; font-size: 8pt; color: var(--text-muted); text-align: right;
+}
+.do-sign-complete.is-complete { color: var(--ok, #16a34a); font-weight: 600; }
+
+/* ===========================================================================
+   Phase 8b — signature pad modal (single sign; batch reuses it in 8c). The
+   .signature-* classes mirror the close pad (receiving.css), which the Reports
+   page doesn't load.
+   =========================================================================== */
+.sign-pad-modal {
+  position: fixed; inset: 0; z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); padding: 20px;
+}
+.sign-pad-modal[hidden] { display: none; }
+.sign-pad-dialog {
+  background: var(--surface); border: 1px solid var(--border-bright, var(--border));
+  border-radius: 14px; padding: 20px; width: 100%; max-width: 460px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.sign-pad-head { font-size: 16px; font-weight: 700; color: var(--text); }
+.sign-pad-sub  { font-size: 12px; color: var(--text-muted); margin: 4px 0 14px; }
+.sign-pad-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+.signature-host {
+  background: var(--surface); border: 1px dashed var(--border-bright, var(--border));
+  border-radius: 10px; padding: 4px; margin-bottom: 8px; position: relative;
+}
+.signature-canvas {
+  width: 100%; height: 140px; display: block;
+  cursor: crosshair; touch-action: none; border-radius: 8px;
+}
+.signature-placeholder {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none; color: var(--text-dim);
+  font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.signature-host.signed .signature-placeholder { display: none; }
+.signature-foot { display: flex; align-items: center; margin-bottom: 14px; }
+.signature-foot .line { flex: 1; border-bottom: 1px solid var(--border); margin-right: 12px; }
+.clear-sig-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+  padding: 4px 10px; border-radius: 6px;
+  font-family: 'Roboto Mono', monospace; font-size: 11px; cursor: pointer;
+}
+.clear-sig-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* ============================================================================
+   REPORTS → PULL SHEETS  (Planning section)
+
+   Pill tabs mirror .exports-tab / .config-tab so the third switcher in the app
+   looks like the other two. Everything below themes off the existing tokens —
+   no new colours, so light / midnight / slate all track automatically.
+   ============================================================================ */
+
+.reports-section-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin-top: 12px; padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.section-tab {
+  background: transparent; border: none;
+  padding: 7px 16px;
+  font: inherit; font-size: 13px; color: var(--text-dim);
+  cursor: pointer; border-radius: 7px;
+  transition: background 140ms ease, color 140ms ease;
+}
+.section-tab:hover { color: var(--text); background: var(--surface-2); }
+.section-tab.active,
+.section-tab.active:hover {
+  background: var(--accent); color: var(--accent-fg); font-weight: 500;
+}
+
+/* ---- Filter bar --------------------------------------------------------- */
+/* Deliberately its own bar, not a variant of .reports-filter-bar: the two
+   sections share no filters and coupling them would mean every future change
+   to one had to be checked against the other. */
+.pull-sheets-filter-bar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+  margin-bottom: 14px;
+}
+.ps-field { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.ps-label {
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+}
+.ps-field .form-select, .ps-field .form-control { min-width: 170px; }
+.pull-sheets-filter-bar .btn { height: 38px; }
+
+/* ---- Inline message ----------------------------------------------------- */
+/* Sits under the filter bar because the thing it usually reports — too many
+   rows — is a filter problem, and the fix is two controls away. */
+.ps-message {
+  padding: 9px 13px; border-radius: 8px; font-size: 13px;
+  margin-bottom: 14px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-dim);
+}
+.ps-message.is-warn {
+  border-color: color-mix(in srgb, #d08a1a 45%, var(--border));
+  background: color-mix(in srgb, #d08a1a 10%, var(--surface));
+  color: var(--text);
+}
+.ps-message.is-error {
+  border-color: color-mix(in srgb, #c0392b 45%, var(--border));
+  background: color-mix(in srgb, #c0392b 10%, var(--surface));
+  color: var(--text);
+}
+
+/* ---- Metric cards ------------------------------------------------------- */
+.ps-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 12px;
+}
+.ps-metric {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.ps-metric-label {
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+}
+.ps-metric-value {
+  font-size: 24px; font-weight: 600; line-height: 1.1; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Resolved-criteria line --------------------------------------------- */
+/* Spells out the hour set and, for Night, both calendar dates — the one place
+   on screen that shows the rollover actually happened. */
+.ps-resolved {
+  font-family: 'Roboto Mono', monospace; font-size: 11px;
+  color: var(--text-dim); margin-bottom: 14px; min-height: 16px;
+}
+
+/* ---- Preview card ------------------------------------------------------- */
+.ps-preview-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.ps-preview-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.ps-preview-title {
+  font-family: 'Roboto Mono', monospace; font-size: 11px;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim);
+}
+.ps-table-wrap { overflow-x: auto; max-height: 560px; overflow-y: auto; }
+.ps-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-3); color: var(--text-dim);
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
+  letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+  text-align: left; padding: 9px 12px; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.ps-table tbody td {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  color: var(--text); vertical-align: top;
+}
+.ps-table tbody tr:last-child td { border-bottom: none; }
+.ps-table tbody tr:hover td { background: var(--surface-2); }
+.ps-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ps-table .mono { font-family: 'Roboto Mono', monospace; font-size: 12px; }
+.ps-empty { text-align: center; color: var(--text-muted); padding: 28px 12px; }
+.ps-more {
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-dim);
+  font-size: 12px; text-align: center;
+}

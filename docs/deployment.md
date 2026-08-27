@@ -40,6 +40,46 @@ If `ConnectionStrings:Default` is missing at startup, Hangfire
 initialization throws — the app refuses to start with no DB. That is
 deliberate.
 
+> ### ⚠ A machine-level `ConnectionStrings__Default` outranks user-secrets
+>
+> **Known on the current dev box (`LAPTOP-CSB3KO3E`), 2026-08-18.** A
+> *machine/user-level* environment variable is set:
+>
+> ```
+> ConnectionStrings__Default = Server=147.50.228.160;Database=CUSTOMS_FZ_WD;User Id=nut;...
+> ConnectionStrings__Cmm     = Server=147.50.228.160;Database=CUSTOMS_FZ_WD;User Id=nut;...
+> ```
+>
+> Environment variables sit **above** user-secrets in the precedence chain
+> (env > DB > user-secrets > appsettings.json — `docs/configuration.md §2`),
+> so this silently replaces the `ReceivingOps` connection string every
+> smoke script and every `db/` migration assumes. Symptom: `dotnet run`
+> dies at startup with
+> `SqlException: Invalid object name 'dbo.AppSettings'` from
+> `AppSettingsSeeder.RunAsync` — a schema error that points nowhere near
+> the actual cause.
+>
+> Workaround when running the app or the battery locally — override it for
+> the child process only, do not unset the machine value:
+>
+> ```powershell
+> $env:ConnectionStrings__Default = "Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Integrated Security=True;TrustServerCertificate=True;Encrypt=False;Application Name=ReceivingOps;"
+> dotnet run --launch-profile http --project src/ReceivingOps.Web
+> ```
+>
+> **This is the same failure shape ruled out for production config** (§7 and
+> `docs/security.md`): an ambient, machine-scoped value that outranks the
+> intended source, is invisible in the repo, and is shared by every process
+> and every user on the box. On a shared host it also means one project's
+> connection string — credentials included — is readable by every other
+> process running as that account. Treat a machine-level
+> `ConnectionStrings__*` as a deployment smell wherever it appears; scope
+> the variable to the service/process instead.
+>
+> **Do not remove or edit the existing machine-level variables without
+> asking the box owner first** — something else on this machine is
+> presumably relying on them. Documented here rather than changed.
+
 ### 2.2 Migration order
 
 Run as a `sqlcmd` script in this order. Every file is re-runnable
@@ -276,6 +316,10 @@ pwsh -File tools/run-smokes.ps1
 ```
 
 Expected at v3.0: **49/49 PASS**.
+
+If the battery fails wholesale with connection or "Invalid object name"
+errors, check for a machine-level `ConnectionStrings__Default` before
+debugging anything else — see the warning in §2.1.
 
 Production-relevant subset if you can't run the full battery:
 

@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Options;
 using ReceivingOps.Web.Data;
+using ReceivingOps.Web.Services.PoImport;
 
 namespace ReceivingOps.Web.Services.ErpSync;
 
@@ -60,7 +61,26 @@ public class PrbPrsSource : IErpSource
             "PRB_PRS read {Count} rows since {SinceUtc:yyyy-MM-dd}",
             rows.Count, sinceUtc);
 
-        return Transform(warehouseId, rows);
+        var draft = Transform(warehouseId, rows);
+
+        // Operator-visible at the run level via SourceTotals + the etl-end audit
+        // row; logged here too because a 24%-of-rows filter that leaves no trace
+        // in the log reads as a shrinking feed.
+        if (draft.WipSkippedRowCount > 0)
+        {
+            _log.LogInformation(
+                "{Src} WIP filter skipped {Rows} rows across {Sheets} pull sheet(s) — " +
+                "WIP pulls are built by the PO import, not this feed. " +
+                "{Mixed} of those sheet(s) also carried {NonWipRows} non-WIP row(s) / " +
+                "{NonWipQty} units, dropped with them{Sample}.",
+                SourceName, draft.WipSkippedRowCount, draft.WipSkippedPullCount,
+                draft.WipMixedPullCount, draft.WipMixedNonWipRowCount, draft.WipMixedNonWipQty,
+                draft.WipMixedPullNumbers.Count > 0
+                    ? " (" + string.Join(", ", draft.WipMixedPullNumbers) + ")"
+                    : "");
+        }
+
+        return draft;
     }
 
     internal ErpSyncDraft Transform(Guid warehouseId, IReadOnlyList<PrbPrsRow> rows)
@@ -73,6 +93,45 @@ public class PrbPrsSource : IErpSource
             if (string.IsNullOrWhiteSpace(pullGroup.Key))
             {
                 skipped += pullGroup.Count();
+                continue;
+            }
+
+            // ------------------------------------------------------------------
+            // WIP sheets belong to the PO import, not to this feed.
+            //
+            // The filter is at SHEET grain — one WIP row anywhere on a PRS_ID
+            // drops the whole sheet — and the grain is the entire point. Dropping
+            // only the WIP rows would leave the sheet in the draft carrying its
+            // non-WIP items, and ErpUpsertService's orphan pass cancels anything
+            // on the pull that the draft no longer mentions. That leaves a
+            // canceled pull item with live ReceivedQty still booked against its
+            // PO line and nothing to detect the mismatch — the exact failure this
+            // filter exists to prevent, reintroduced by the filter itself.
+            //
+            // Two mixed sheets exist upstream (measured 2026-08-20, all-time):
+            // 0000023492 (37 WIP rows + 1 non-WIP row) and 0000028412 (1 WIP row
+            // + 2 non-WIP rows, 1,640 units). 0000023492 survives a row-grain
+            // filter today only because its one non-WIP row has QTY = 0, which
+            // the qty guard below drops anyway, leaving an empty sheet. That is
+            // accidental safety: someone editing that 0 upstream re-arms the bug
+            // with no code change. Sheet grain makes the outcome structurally
+            // impossible instead of luckily avoided.
+            //
+            // The predicate is WipPullSynthesis.IsWipStorerCode — the same one
+            // the importer uses to decide a sheet is WIP. A second copy here
+            // would let the two sides drift on what WIP means, and the failure
+            // mode is a sheet that NEITHER path builds a pull for.
+            //
+            // Non-WIP rows on a mixed sheet are dropped too. That is a real cost,
+            // so it is counted and reported rather than absorbed silently.
+            if (pullGroup.Any(r => WipPullSynthesis.IsWipStorerCode(r.VENDOR)))
+            {
+                var nonWip = pullGroup
+                    .Where(r => !WipPullSynthesis.IsWipStorerCode(r.VENDOR))
+                    .ToList();
+                draft.NoteWipSkippedSheet(
+                    pullGroup.Key!, pullGroup.Count(), nonWip.Count,
+                    nonWip.Sum(r => r.QTY ?? 0));
                 continue;
             }
 
@@ -98,11 +157,22 @@ public class PrbPrsSource : IErpSource
             // NOT part of item identity. (Previously this synthesized
             // "SKU-TRIAL_ID", which broke the §7.15 FIFO match against the
             // bare-SKU PO lines and left receives blocked.)
+            // Storer grain: the key is (ItemCode, VendorCode), NOT ItemCode alone.
+            // One pull sheet routinely carries the same SKU from two storers —
+            // 107 such (pull, SKU) pairs in a single day, 2,500,523 units — and the
+            // two storers hold SEPARATE purchase orders. Grouping on SKU alone kept
+            // whichever VENDOR sorted first, summed both quantities into one item,
+            // and left receiving unable to say whose goods arrived. Nothing errored;
+            // the second storer was simply gone before anything was written.
+            //
+            // ItemCode itself STAYS the bare SKU (see the note above) — only the
+            // grouping key widens, so the §7.15 FIFO match against bare-SKU PO lines
+            // is untouched. VendorCode stays the stripped ERP form on PullItems.
             foreach (var itemGroup in pullGroup
                 .Where(r => !string.IsNullOrWhiteSpace(r.SKU))
-                .GroupBy(r => NormalizeItemCode(r.SKU!)))
+                .GroupBy(r => new ItemKey(NormalizeItemCode(r.SKU!), NullIfBlank(r.VENDOR))))
             {
-                if (string.IsNullOrWhiteSpace(itemGroup.Key))
+                if (string.IsNullOrWhiteSpace(itemGroup.Key.ItemCode))
                 {
                     skipped += itemGroup.Count();
                     continue;
@@ -111,11 +181,15 @@ public class PrbPrsSource : IErpSource
                 var sample = itemGroup.First();
                 var item = new PullItemDraft
                 {
-                    ItemCode = itemGroup.Key,
+                    ItemCode = itemGroup.Key.ItemCode,
                     Description = !string.IsNullOrWhiteSpace(sample.DESCR)
                         ? sample.DESCR!
                         : sample.SKU ?? "(no description)",
-                    VendorCode = NullIfBlank(sample.VENDOR),
+                    // From the KEY, not the sample: the group is now storer-scoped,
+                    // so every row in it carries this vendor. Reading the sample
+                    // again would work but would re-introduce the "first row wins"
+                    // shape that caused the defect.
+                    VendorCode = itemGroup.Key.VendorCode,
                     Remark = NullIfBlank(sample.REMARK),
                     ProductFamily = NullIfBlank(sample.PRODUCT_FAMILY),
                     FromSubInventory = NullIfBlank(sample.FROM_SUB),

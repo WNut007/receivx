@@ -48,4 +48,12 @@ public interface IDeliveryOrderService
     /// </summary>
     Task<Report> BuildAsync(
         Guid pullId, ReportType reportType = ReportType.DeliveryNote, CancellationToken ct = default);
+
+    /// <summary>
+    /// Builds + prepares the FastReport.Report from already-loaded data. Lets a
+    /// caller inspect the data first (e.g. refuse an empty Delivery Note with
+    /// 409 rather than emit a zero-page PDF) without a second DB round trip.
+    /// Caller owns the Report and is responsible for disposing it.
+    /// </summary>
+    Report Build(DoReportData data, ReportType reportType = ReportType.DeliveryNote);
 }

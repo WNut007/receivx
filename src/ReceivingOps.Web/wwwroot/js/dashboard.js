@@ -28,10 +28,10 @@
 
   // ============ STATE ============
   const COLUMNS = [
-    { key: 'pending',        label: 'Pending' },
-    { key: 'in_progress',    label: 'In Progress' },
-    { key: 'fully_received', label: 'Fully Received' },
-    { key: 'closed',         label: 'Closed' },
+    { key: 'pending',        label: 'Pending',        aggKey: 'pending' },
+    { key: 'in_progress',    label: 'In Progress',    aggKey: 'inProgress' },
+    { key: 'fully_received', label: 'Fully Received', aggKey: 'fullyReceived' },
+    { key: 'closed',         label: 'Closed',         aggKey: 'closed' },
   ];
   let pulls = [];                // current server result, adapted to mockup shape
   let selectedPullId = null;
@@ -127,6 +127,8 @@
       signatureSvg:  s.signatureSvg || null,
       // v2.x Phase 7.1 — vendor invoice / delivery-batch ID. Editable post-create.
       referenceNumber: s.referenceNumber || null,
+      // db/050 — 'po-import' when the WIP synthesis built this pull, null otherwise.
+      origin:        s.origin || null,
     };
   }
 
@@ -136,71 +138,132 @@
   function currentLockFilter() { return document.getElementById('lock-filter')?.value || 'all'; }
   function currentSearch()     { return document.getElementById('search-input').value.trim(); }
 
-  async function loadPulls() {
-    const myId = ++inflight;
+  // Paging state — the board is server-paged PER COLUMN now. Summary tiles +
+  // column badges come from ONE no-status aggregate over the FULL filtered set;
+  // each column then infinite-scrolls its own status slice independently.
+  const PAGE_SIZE = 20;
+  let aggregates = null;
+  // Per-column runtime state, keyed by status. Rebuilt on every filter reset:
+  //   { col, loadId, total, loaded, page, loading, done,
+  //     bodyEl, badgeEl, sentinelEl, observer }
+  let colState = {};
+
+  // Resolve a named date bucket to concrete [from,to] using the SAME local-midnight
+  // thresholds as classifyDateGroup, so server row membership == today's client set.
+  // Local Y-M-D formatting (NOT toISOString) to avoid a UTC day-shift in +07:00.
+  function fmtLocal(x) {
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  }
+  function resolveDateRange(bucket) {
+    const base = new Date(); base.setHours(0, 0, 0, 0);
+    const back = n => { const x = new Date(base); x.setDate(x.getDate() - n); return fmtLocal(x); };
+    switch (bucket) {
+      case 'today':       return { from: back(0),  to: back(0)  };
+      case 'yesterday':   return { from: back(1),  to: back(1)  };
+      case 'last_2_days': return { from: back(1),  to: back(0)  };  // today OR yesterday
+      case 'this_week':   return { from: back(6),  to: back(2)  };  // diff 2..6 (preserves current quirk)
+      case 'last_week':   return { from: back(13), to: back(7)  };  // diff 7..13
+      case 'custom':      return customRange;                       // may be null
+      default:            return null;                              // 'all'
+    }
+  }
+
+  // Build the server filter from the current toolbar state. Every filter is now
+  // applied server-side; the default sort (PullDate DESC) is fixed on the server.
+  function buildFilterParams(pageSize = PAGE_SIZE) {
     const params = new URLSearchParams();
-    const wh = currentWhFilter();
-    if (wh && wh !== 'all') params.set('warehouse', wh);  // server treats as code → ignored unless wired
+    const wh = currentWhFilter();                    // warehouse CODE, or 'all'
+    if (wh && wh !== 'all') params.set('warehouse', wh);
     const q = currentSearch();
     if (q) params.set('q', q);
+    const lk = currentLockFilter();
+    if (lk && lk !== 'all') params.set('lock', lk);
+    const range = resolveDateRange(currentDateFilter());
+    if (range) { params.set('dateFrom', range.from); params.set('dateTo', range.to); }
+    params.set('pageSize', pageSize);
+    return params;
+  }
 
-    // Date filter — only "custom" sends server-side from/to; the named buckets
-    // (today/yesterday/this_week/last_week) are computed client-side so a user
-    // typing in search doesn't blow away last-week pulls server-side.
-    const d = currentDateFilter();
-    if (d === 'custom' && customRange) {
-      params.set('dateFrom', customRange.from);
-      params.set('dateTo',   customRange.to);
-    }
+  // No-status "overview" fetch — its aggregates cover the FULL filtered set across
+  // ALL statuses (tiles + every column total). A status-scoped call narrows the
+  // aggregates to that one status, so it can't drive the cross-status tiles.
+  // pageSize=1: we only consume .aggregates, not the item row.
+  async function fetchOverview() {
+    const params = buildFilterParams(1);
+    params.set('page', 1);
+    const r = await fetch('/api/pulls?' + params.toString(), { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/Account/Login'; return null; }
+    if (!r.ok) throw new Error('Pulls overview fetch failed: ' + r.status);
+    return r.json();
+  }
 
+  // One page of a single column's status slice (same PullDate DESC, PullNumber
+  // DESC order — stable via UNIQUE PullNumber). We only consume .items here.
+  async function fetchColumnPage(statusKey, page) {
+    const params = buildFilterParams();          // pageSize defaults to PAGE_SIZE
+    params.set('status', statusKey);
+    params.set('page', page);
+    const r = await fetch('/api/pulls?' + params.toString(), { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/Account/Login'; return null; }
+    if (!r.ok) throw new Error('Pulls fetch failed: ' + r.status);
+    return r.json();
+  }
+
+  // Filter change / initial load → tear down + rebuild every column at page 1,
+  // clear their bodies, refetch the overview aggregate, then (re)observe each
+  // non-empty column so it can infinite-scroll on its own.
+  async function loadPulls() {
+    const myId = ++inflight;
+    buildBoard(myId);                 // clears bodies, resets per-column state
+    let overview;
     try {
-      const r = await fetch('/api/pulls?' + params.toString(), { credentials: 'same-origin' });
-      if (myId !== inflight) return;  // stale
-      if (r.status === 401) { window.location.href = '/Account/Login'; return; }
-      if (!r.ok) throw new Error('Pulls fetch failed: ' + r.status);
-      const data = await r.json();
-      pulls = data.map(adapt);
-      render();
+      overview = await fetchOverview();
     } catch (err) {
       console.error(err);
       showToast('Could not load pulls', err.message || 'Network error');
+      return;
     }
+    if (myId !== inflight || !overview) return;   // stale / 401 handled
+    aggregates = overview.aggregates;
+    updateSummary();                  // 5 tiles from the full-set aggregate
+    applyColumnBadges();              // per-column count badges + totals
+    COLUMNS.forEach(initColumn);      // empty-state OR sentinel + first page
   }
 
-  // ============ FILTERS (client-side, after fetch) ============
-  function pullPasses(p) {
-    if (currentWhFilter() !== 'all' && p.warehouse !== currentWhFilter()) return false;
-    const d = currentDateFilter();
-    if (d !== 'all') {
-      if (d === 'custom') {
-        if (!customRange) return true;
-        if (p.dateISO < customRange.from || p.dateISO > customRange.to) return false;
-      } else if (d === 'last_2_days') {
-        // Calendar-day semantics: today OR yesterday. Matches the warehouse
-        // mental model ("วันนี้กับเมื่อวาน") — NOT rolling 48 hours, which
-        // would clip into day-before-yesterday and confuse operators.
-        if (p.dateGroup !== 'today' && p.dateGroup !== 'yesterday') return false;
-      } else if (p.dateGroup !== d) return false;
+  // Fetch the ENTIRE filtered set (all pages, 500/page) for Excel export, so the
+  // export still covers the full filter — not just the cards currently loaded.
+  async function fetchAllFiltered() {
+    const all = [];
+    let page = 1, total = Infinity;
+    while (all.length < total) {
+      const params = buildFilterParams(500);
+      params.set('page', page);
+      const r = await fetch('/api/pulls?' + params.toString(), { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('Export fetch failed: ' + r.status);
+      const data = await r.json();
+      total = data.total;
+      if (!data.items.length) break;
+      all.push(...data.items);
+      page++;
     }
-    const lock = currentLockFilter();
-    if (lock === 'locked'   && !p.lockPoByPull) return false;
-    if (lock === 'unlocked' &&  p.lockPoByPull) return false;
-    const q = currentSearch().toLowerCase();
-    if (q) {
-      const h = `${p.id} ${p.warehouse} ${p.whName} ${p.operator}`.toLowerCase();
-      if (!h.includes(q)) return false;
-    }
-    return true;
+    return all.map(adapt);
   }
 
-  // ============ KANBAN RENDER ============
-  function render() {
+  // (Client-side pullPasses filter removed — all filtering is now server-side via
+  // buildFilterParams. The former calendar-day bucket + lock + search logic is
+  // reproduced in SQL; date buckets are resolved to concrete from/to in
+  // resolveDateRange so row membership is identical.)
+
+  // ============ KANBAN RENDER (per-column infinite scroll) ============
+  // Build the 4-column skeleton: header (title + badge) + a scrollable body with
+  // a bottom sentinel. Tears down any observers from the previous board first.
+  function buildBoard(loadId) {
+    pulls = [];
+    Object.values(colState).forEach(st => st.observer && st.observer.disconnect());
+    colState = {};
     const board = document.getElementById('kanban');
     board.innerHTML = '';
-    const filtered = pulls.filter(pullPasses);
-
     COLUMNS.forEach(col => {
-      const colItems = filtered.filter(p => p.status === col.key);
       const column = document.createElement('div');
       column.className = 'column';
       column.innerHTML = `
@@ -209,20 +272,128 @@
             <span class="column-dot ${col.key}"></span>
             <span class="column-name">${col.label}</span>
           </div>
-          <span class="column-count-badge status-${col.key.replace(/_/g, '-')}">${colItems.length}</span>
+          <span class="column-count-badge status-${col.key.replace(/_/g, '-')}">—</span>
         </div>
         <div class="column-body"></div>
       `;
       board.appendChild(column);
-      const body = column.querySelector('.column-body');
-      if (colItems.length === 0) {
-        body.innerHTML = `<div class="empty-col">No pulls</div>`;
-      } else {
-        colItems.forEach(p => body.appendChild(renderCard(p)));
-      }
+      colState[col.key] = {
+        col, loadId,
+        total: 0, loaded: 0, page: 0,
+        loading: false, done: false,
+        bodyEl:     column.querySelector('.column-body'),
+        badgeEl:    column.querySelector('.column-count-badge'),
+        sentinelEl: null,
+        observer:   null,
+      };
     });
+  }
 
-    updateSummary(filtered);
+  // Column count badges + per-column totals, straight off the full-set aggregate.
+  function applyColumnBadges() {
+    COLUMNS.forEach(col => {
+      const st = colState[col.key];
+      if (!st) return;
+      st.total = aggregates ? (aggregates[col.aggKey] || 0) : 0;
+      if (st.badgeEl) st.badgeEl.textContent = st.total;
+    });
+  }
+
+  // Empty column → static "No pulls", no sentinel, no observer. Otherwise create
+  // the sentinel + an IntersectionObserver rooted at THIS column's body, then
+  // kick the first page. observe() fires immediately when the sentinel is already
+  // visible (empty body); the loading guard dedupes that vs. the eager first call.
+  function initColumn(col) {
+    const st = colState[col.key];
+    if (!st) return;
+    if (st.total === 0) {
+      st.bodyEl.innerHTML = `<div class="empty-col">No pulls</div>`;
+      return;
+    }
+    st.sentinelEl = document.createElement('div');
+    st.sentinelEl.className = 'col-sentinel';
+    st.bodyEl.appendChild(st.sentinelEl);
+    st.observer = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { loadColumnPage(col); break; }
+      }
+    }, { root: st.bodyEl, rootMargin: '100px 0px' });
+    st.observer.observe(st.sentinelEl);
+    loadColumnPage(col);   // eager first page (don't wait for a scroll event)
+  }
+
+  // Fetch + append the next page for one column. Guards against (a) duplicate
+  // concurrent fetches — IntersectionObserver fires repeatedly — and (b) stale
+  // appends after a filter reset. On failure it renders an inline Retry in the
+  // sentinel instead of silently dying (transient 500s stay visible + recoverable).
+  async function loadColumnPage(col) {
+    const st = colState[col.key];
+    if (!st || st.loading || st.done) return;
+    if (st.loaded >= st.total) { markColumnDone(st); return; }
+    st.loading = true;
+    setSentinelLoading(st);
+    try {
+      const data = await fetchColumnPage(col.key, st.page + 1);
+      if (st.loadId !== inflight) { st.loading = false; return; }  // board replaced
+      if (!data) { st.loading = false; return; }                  // 401 redirect
+      st.page += 1;
+      const adapted = data.items.map(adapt);
+      adapted.forEach(p => {
+        pulls.push(p);                                    // keep the flat lookup list
+        st.bodyEl.insertBefore(renderCard(p), st.sentinelEl);
+      });
+      st.loaded += adapted.length;
+      st.loading = false;
+      if (st.loaded >= st.total || adapted.length === 0) {
+        markColumnDone(st);
+      } else {
+        setSentinelIdle(st);
+        // If the sentinel is still in view after a short page, the observer won't
+        // re-fire (no intersection *change*). Re-observe to force a fresh callback
+        // so a column that fits its whole slice on screen still converges.
+        if (st.observer) {
+          st.observer.unobserve(st.sentinelEl);
+          st.observer.observe(st.sentinelEl);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      st.loading = false;
+      setSentinelError(st, col);
+    }
+  }
+
+  function markColumnDone(st) {
+    st.done = true;
+    if (st.observer) { st.observer.disconnect(); st.observer = null; }
+    if (st.sentinelEl) {
+      st.sentinelEl.className = 'col-sentinel done';
+      st.sentinelEl.textContent = `All ${st.total} loaded`;
+    }
+  }
+
+  function setSentinelLoading(st) {
+    if (!st.sentinelEl) return;
+    st.sentinelEl.className = 'col-sentinel';
+    st.sentinelEl.innerHTML =
+      `<span class="col-sentinel-spinner"></span>` +
+      `<span>Loading more… ${st.loaded} of ${st.total}</span>`;
+  }
+
+  function setSentinelIdle(st) {
+    if (!st.sentinelEl) return;
+    st.sentinelEl.className = 'col-sentinel';
+    st.sentinelEl.textContent = `${st.loaded} of ${st.total} loaded`;
+  }
+
+  function setSentinelError(st, col) {
+    if (!st.sentinelEl) return;
+    st.sentinelEl.className = 'col-sentinel error';
+    st.sentinelEl.innerHTML =
+      `<span>Couldn’t load more (${st.loaded} of ${st.total}).</span>` +
+      `<button type="button" class="col-sentinel-retry">Retry</button>`;
+    const btn = st.sentinelEl.querySelector('.col-sentinel-retry');
+    if (btn) btn.addEventListener('click', () => loadColumnPage(col));
   }
 
   function renderCard(p) {
@@ -286,16 +457,19 @@
     return card;
   }
 
-  function updateSummary(filtered) {
-    document.getElementById('sum-total').textContent = filtered.length;
-    document.getElementById('sum-inprogress').textContent = filtered.filter(p => p.status === 'in_progress').length;
-    document.getElementById('sum-ready').textContent = filtered.filter(p => p.status === 'fully_received').length;
-    const totalItems = filtered.reduce((a, p) => a + p.itemCount, 0);
-    const totalExp = filtered.reduce((a, p) => a + p.expected, 0);
-    const totalRec = filtered.reduce((a, p) => a + p.received, 0);
+  // All tiles come from the server aggregate over the FULL filtered set — never
+  // from the loaded page. Formulas + rounding kept bit-for-bit vs the old reduces.
+  function updateSummary() {
+    const a = aggregates || {};
+    document.getElementById('sum-total').textContent      = a.totalPulls ?? 0;      // COUNT(*)
+    document.getElementById('sum-inprogress').textContent = a.inProgress ?? 0;      // status='in_progress'
+    document.getElementById('sum-ready').textContent      = a.fullyReceived ?? 0;   // status='fully_received'
+    const totalItems = a.itemsTotal ?? 0;      // Σ all PullItems (active + canceled) = Σ p.itemCount
+    const totalExp   = a.expectedTotal ?? 0;
+    const totalRec   = a.receivedTotal ?? 0;
     document.getElementById('sum-items').innerHTML = `${totalItems} <small>SKUs</small>`;
-    document.getElementById('sum-thru').innerHTML = `${totalRec.toLocaleString()} <small>units</small>`;
-    const pct = totalExp > 0 ? ((totalRec / totalExp) * 100).toFixed(1) : 0;
+    document.getElementById('sum-thru').innerHTML  = `${totalRec.toLocaleString()} <small>units</small>`;
+    const pct = totalExp > 0 ? ((totalRec / totalExp) * 100).toFixed(1) : 0;   // identical formula + rounding
     document.getElementById('sum-thru-sub').textContent = `${pct}% of expected`;
   }
 
@@ -365,6 +539,24 @@
         ? `<span class="lock-mode-pill hcap-strict"><i class="bi bi-clock-fill"></i> Strict</span>`
         : `<span class="lock-mode-pill hcap-loose"><i class="bi bi-clock"></i> Loose (over-receive allowed)</span>`;
     }
+    // db/050 — provenance. For WIP storer codes the ERP sends no Receive feed,
+    // so the PO import builds the pull and its PO itself. Without this row the
+    // only answer to "who issued this PO?" is the audit trail, which is not
+    // where anyone looks first.
+    const originRow = document.getElementById('d-origin-row');
+    const originEl = document.getElementById('d-origin');
+    if (originRow && originEl) {
+      if (p.origin === 'po-import') {
+        originRow.hidden = false;
+        originEl.innerHTML =
+          `<span class="lock-mode-pill hcap-loose" title="Created by the PO Excel import because the ERP sends no Receive feed for WIP storer codes. The purchase order was created by the same import.">` +
+          `<i class="bi bi-magic"></i> Synthesised from PO import</span>`;
+      } else {
+        originRow.hidden = true;
+        originEl.textContent = '—';
+      }
+    }
+
     const linkedLinkEl = document.getElementById('d-linked-pos-link');
     const linkedEl = document.getElementById('d-linked-pos');
     if (linkedEl && linkedLinkEl) {
@@ -546,8 +738,33 @@
     }
   }
 
+  // ---- maximize / restore -------------------------------------------------
+  //
+  // Two states, no drag handle, no stored width. Nothing here binds a key: Esc
+  // stays Bootstrap's, which CLOSES the drawer. Overloading it to restore first
+  // would strand someone who hit Esc to get out.
+  const maxBtn = document.getElementById('d-maximize');
+  const MAX_LABEL = { expand: 'ขยายเต็มจอ', restore: 'ย่อกลับ' };
+  function setMaximized(on) {
+    drawerEl.classList.toggle('is-maximized', on);
+    if (!maxBtn) return;
+    const label = on ? MAX_LABEL.restore : MAX_LABEL.expand;
+    maxBtn.setAttribute('aria-label', label);
+    maxBtn.setAttribute('title', label);
+    maxBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const i = maxBtn.querySelector('i');
+    if (i) i.className = on ? 'bi bi-arrows-angle-contract' : 'bi bi-arrows-angle-expand';
+  }
+  maxBtn?.addEventListener('click', () => {
+    setMaximized(!drawerEl.classList.contains('is-maximized'));
+  });
+
   drawerEl.addEventListener('hidden.bs.offcanvas', () => {
     selectedPullId = null;
+    // The state does not persist across opens — a different pull starts
+    // restored. Resetting on hide rather than on show also covers the Esc path,
+    // which never goes through openDrawer.
+    setMaximized(false);
     document.querySelectorAll('.card-pull.selected').forEach(c => c.classList.remove('selected'));
   });
 
@@ -769,6 +986,140 @@
     renderItemsTable();
   }
 
+  // ---- clipboard: one row, tab-separated ---------------------------------
+  //
+  // Serialised from the ITEM OBJECT, never from the rendered cells. Reading the
+  // DOM would inherit the em-dash placeholders and would depend on which columns
+  // happen to be scrolled into view, so the result would change with scroll
+  // position — a wrong paste nobody notices.
+  //
+  // These four functions are lifted out of this file and executed in node by
+  // smoke-pull-drawer-actions.ps1, so they must stay free of the DOM, of esc(),
+  // and of anything else that needs a browser. Keep them that way.
+
+  // Placeholder cells render an em-dash on screen; on the clipboard they must be
+  // EMPTY. A dash in a spreadsheet cell is data — it breaks any formula or filter
+  // downstream, and it turns an empty field into a non-empty one for anything
+  // counting blanks.
+  //
+  // Tabs and newlines inside a value collapse to a single space. Description is
+  // free text straight from the ERP, and one stray newline would turn a one-row
+  // copy into two lines that paste as two rows.
+  function cleanCell(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v).trim();
+    if (s === '' || s === '—') return '';
+    return s.replace(/[\t\r\n]+/g, ' ');
+  }
+
+  // "CODE · NAME", falling back to whichever half exists. Shared with
+  // renderItemsTable so the copied value cannot drift from the displayed one.
+  function vendorDisplay(it) {
+    const code = cleanCell(it.vendorCode);
+    const name = cleanCell(it.vendorName);
+    if (code && name) return code + ' · ' + name;
+    return code || name;
+  }
+
+  // Column order follows the ITEMS table header, with one deliberate exception:
+  // WINDOWS renders as "1 · 2,100 exp · 0 rcv" and copies as THREE fields —
+  // count, expected, received — as raw integers.
+  //
+  // Split, not one cell, for two reasons. The export sheets are the tiebreaker
+  // and they write quantities as numeric cells, never as a composite string
+  // (PosExportJob.cs:157/222, TransactionsExportJob.cs:163). And the displayed
+  // form runs through toLocaleString(), so "2,100" would paste as text whose
+  // meaning depends on the reader's locale — the exact "formatting Excel then
+  // misreads" case. A composite string is neither readable as a number nor
+  // computable.
+  //
+  // 13 header columns -> 15 fields. The actions column carries controls, not
+  // data, and contributes nothing.
+  function itemRowValues(it) {
+    const wins = it.windows || [];
+    let exp = 0;
+    let rcv = 0;
+    for (const w of wins) {
+      exp += w.expectedQty || 0;
+      rcv += w.receivedQty || 0;
+    }
+    return [
+      cleanCell(it.itemCode),
+      cleanCell(it.description),
+      vendorDisplay(it),
+      cleanCell(it.tag),
+      cleanCell(it.status),
+      String(wins.length),
+      String(exp),
+      String(rcv),
+      cleanCell(it.productFamily),
+      cleanCell(it.fromSubInventory),
+      cleanCell(it.toSubInventory),
+      cleanCell(it.trialId),
+      cleanCell(it.location),
+      cleanCell(it.phase),
+      cleanCell(it.specialControl)
+    ];
+  }
+
+  function serializeItemRow(it) {
+    return itemRowValues(it).join('\t');
+  }
+
+  // ---- duplicate: map a source row to Add Item's initial values ------------
+  //
+  // Lifted out of this file and executed in node by
+  // smoke-pull-drawer-actions.ps1, so it must stay free of the DOM and of
+  // esc(), same rule as the serialiser above. It shares cleanCell with it, so
+  // an em-dash placeholder can never become the literal value of a duplicated
+  // field.
+  //
+  // CARRIED: the fields an operator duplicates a row in order to keep —
+  // identity, description, tag, remark, and the seven Phase 9.1 ERP columns.
+  // Sub-inventory, location and trial are the whole point; the four that the
+  // create payload already accepted are the ones easiest to retype.
+  //
+  // CLEARED:
+  //   vendorCode/vendorName — a different storer is the usual reason to
+  //     duplicate, and blank keeps the new row clear of the
+  //     (PullId, ItemCode, VendorCode) guard. When the SOURCE row has no
+  //     storer either, the pre-filled form reproduces the existing key exactly
+  //     and the server's 409 is what says so, at save time. That is deliberate:
+  //     a client-side pre-check would be guessing at the server's rule.
+  //   status — a duplicate of a canceled row is a new live row.
+  //   sortOrder — assigned by the server as for any new item.
+  //   receipts, close state, variance reason — those describe events that
+  //     happened to the source row, not properties of it.
+  //
+  // WINDOWS: the source row's HOURS carry; each quantity comes back blank and
+  // required. Zero is not "not yet known" in this system — isSettled() treats
+  // e <= 0 as settled, the console reports such a window as 'received', and the
+  // close gate and pending badge both test ExpectedQty > ReceivedQty. A row
+  // duplicated at zero would look finished the moment it existed, and its first
+  // real receipt would surface as an over-delivery needing a reason code.
+  function buildDuplicatePrefill(it) {
+    const hours = (it.windows || [])
+      .map(w => w.hourOfDay)
+      .filter(h => h !== null && h !== undefined)
+      .sort((a, b) => a - b);
+    return {
+      itemCode: cleanCell(it.itemCode),
+      description: cleanCell(it.description),
+      tag: cleanCell(it.tag),
+      remark: cleanCell(it.remark),
+      vendorCode: '',
+      vendorName: '',
+      productFamily: cleanCell(it.productFamily),
+      fromSubInventory: cleanCell(it.fromSubInventory),
+      toSubInventory: cleanCell(it.toSubInventory),
+      specialControl: cleanCell(it.specialControl),
+      trialId: cleanCell(it.trialId),
+      location: cleanCell(it.location),
+      phase: cleanCell(it.phase),
+      hours: hours
+    };
+  }
+
   function renderItemsTable() {
     const tbody = document.getElementById('d-items-tbody');
     const empty = document.getElementById('d-items-empty');
@@ -785,9 +1136,9 @@
       const windows = it.windows || [];
       const exp = windows.reduce((a, w) => a + (w.expectedQty || 0), 0);
       const rcv = windows.reduce((a, w) => a + (w.receivedQty || 0), 0);
-      const vendor = it.vendorCode
-        ? esc(it.vendorCode) + (it.vendorName ? ' · ' + esc(it.vendorName) : '')
-        : (it.vendorName ? esc(it.vendorName) : '—');
+      // Same string the clipboard gets, so the two can never disagree.
+      const vendorText = vendorDisplay(it);
+      const vendor = vendorText ? esc(vendorText) : '—';
       const tagCell = it.tag
         ? '<span class="badge tag-' + esc(it.tag) + '">' + esc(it.tag) + '</span>'
         : '<span class="text-muted">—</span>';
@@ -812,6 +1163,8 @@
         erp(it.phase) +
         erp(it.specialControl) +
         '<td class="actions-col">' +
+          '<button class="btn btn-link copy-row-btn" data-act="copy" title="Copy row" aria-label="Copy row"><i class="bi bi-clipboard"></i></button>' +
+          '<button class="btn btn-link dup-row-btn" data-act="duplicate" title="Duplicate row" aria-label="Duplicate row"><i class="bi bi-files"></i></button>' +
           '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
           '<button class="btn btn-link" data-act="erp" title="Edit ERP fields"><i class="bi bi-tag"></i></button>' +
           '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
@@ -833,31 +1186,120 @@
     else if (act === 'delete') deleteItem(itemId);
     else if (act === 'windows') openWindowsModal(itemId);
     else if (act === 'erp') openExtendedFieldsModal(itemId);
+    else if (act === 'copy') copyItemRow(itemId, btn);
+    else if (act === 'duplicate') duplicateItemRow(itemId);
   });
 
+  // Opens the existing Add Item modal pre-filled. Deliberately does NOT write a
+  // row: the operator's reason for duplicating is to change something, so an
+  // immediate insert would leave a no-vendor row on the pull for however long it
+  // took them to notice. It also goes through the ordinary create path, so the
+  // duplicate guard, the validation and the audit row are all the same ones a
+  // manual add gets.
+  function duplicateItemRow(itemId) {
+    const it = drawerItems.find(x => String(x.id) === String(itemId));
+    if (!it) return;
+    openAddItemModal(buildDuplicatePrefill(it));
+  }
+
+  // Brief feedback on the button itself — no toast. A silent success is
+  // indistinguishable from a failure, which for a clipboard write is the one
+  // outcome the feature cannot have.
+  function flashCopyState(btn, cls, icon) {
+    const i = btn.querySelector('i');
+    btn.classList.remove('is-done', 'is-failed');
+    btn.classList.add(cls);
+    if (i) i.className = 'bi ' + icon;
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => {
+      btn.classList.remove('is-done', 'is-failed');
+      if (i) i.className = 'bi bi-clipboard';
+    }, 1500);
+  }
+
+  async function copyItemRow(itemId, btn) {
+    const it = drawerItems.find(x => String(x.id) === String(itemId));
+    if (!it) return;
+    // writeText needs a secure context. Production is HTTPS and localhost
+    // counts as secure, so this branch is the unusual one — but an absent API
+    // would otherwise be a silent no-op that looks exactly like a copy.
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      flashCopyState(btn, 'is-failed', 'bi-x-lg');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(serializeItemRow(it));
+      flashCopyState(btn, 'is-done', 'bi-check-lg');
+    } catch {
+      flashCopyState(btn, 'is-failed', 'bi-x-lg');
+    }
+  }
+
   // ---- Add Item modal ----------------------------------------------------
-  function openAddItemModal() {
-    if (!itemAddModal || !selectedPullId) return;
+  // `prefill` is optional. Omitted (a plain Add item click) the form opens empty
+  // exactly as before; supplied (the duplicate action) every field is seeded from
+  // it. The seven ERP fields have no inputs in this modal — they ride along in
+  // erpPrefill and go straight into the create payload, which is what the
+  // PullItemCreateRequest extension is for.
+  let erpPrefill = null;
+
+  function openAddItemModal(prefill) {
+    // Bound as `() => openAddItemModal()`, never bare. A bare listener hands the
+    // DOM its PointerEvent as `prefill`, and an Event is truthy, so the
+    // `prefill ? ... : ''` reads below would all pull fields off the event.
+    // Normalising here too means a future re-binding degrades to the empty form
+    // rather than throwing halfway through populating it.
+    if (prefill instanceof Event) prefill = null;
+    // These three used to return silently. A dead button with no console line and
+    // no toast looks exactly like a broken one — which is how the PointerEvent
+    // bug above cost a full debugging session.
+    if (!itemAddModal) {
+      console.warn('[add-item] modal not initialised — bootstrap Modal instance missing');
+      return;
+    }
+    if (!selectedPullId) {
+      console.warn('[add-item] no pull selected');
+      showToast('Open a pull first', 'Select a pull before adding an item');
+      return;
+    }
     const p = pulls.find(x => x.pullId === selectedPullId);
-    if (!p) return;
+    if (!p) {
+      console.warn('[add-item] selected pull not in the loaded list', selectedPullId);
+      showToast('Pull not found', 'Refresh the dashboard and try again');
+      return;
+    }
     drawerPullIdForItems = selectedPullId;
     document.getElementById('iam-pull-label').textContent = p.id;
-    document.getElementById('iam-item-code').value = '';
-    document.getElementById('iam-description').value = '';
+    document.getElementById('iam-item-code').value = prefill ? prefill.itemCode : '';
+    document.getElementById('iam-description').value = prefill ? prefill.description : '';
+    // Always blank, prefill or not — see buildDuplicatePrefill.
     document.getElementById('iam-vendor-code').value = '';
     document.getElementById('iam-vendor-name').value = '';
-    document.getElementById('iam-tag').value = '';
-    document.getElementById('iam-remark').value = '';
-    // Seed with one empty row so the user sees the table shape.
+    document.getElementById('iam-tag').value = prefill ? prefill.tag : '';
+    document.getElementById('iam-remark').value = prefill ? prefill.remark : '';
+
+    erpPrefill = prefill || null;
+
     document.getElementById('iam-windows-tbody').innerHTML = '';
-    appendAddWindowRow();
+    // `prefill?.hours` rather than `prefill.hours`: a prefill shape that ever
+    // loses `hours` should fall through to the one-empty-row path, not throw.
+    if (Array.isArray(prefill?.hours) && prefill.hours.length) {
+      // Hours carry; quantities come back blank and required. The operator is
+      // changing the quantity anyway — that is one of the two reasons to
+      // duplicate — and a zero would make the row read as settled everywhere.
+      prefill.hours.forEach(h => appendAddWindowRow(h));
+    } else {
+      // Seed with one empty row so the user sees the table shape.
+      appendAddWindowRow();
+    }
     itemAddModal.show();
   }
 
-  function appendAddWindowRow() {
+  function appendAddWindowRow(hourOfDay) {
     const tbody = document.getElementById('iam-windows-tbody');
     const hourOpts = Array.from({ length: 24 }, (_, h) =>
-      '<option value="' + h + '">' + String(h).padStart(2, '0') + ':00</option>').join('');
+      '<option value="' + h + '"' + (h === hourOfDay ? ' selected' : '') + '>' +
+      String(h).padStart(2, '0') + ':00</option>').join('');
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td><select class="form-select iam-w-hour">' + hourOpts + '</select></td>' +
@@ -908,6 +1350,21 @@
       windows,
     };
 
+    // Duplicate only. These have no inputs in this modal, so a plain add sends
+    // nothing for them and the columns stay NULL, as before. Blank maps to null
+    // so an unset field on the source row does not become an empty string on the
+    // new one — the ERP-vs-Receivx comparison Phase 9.1 exists for depends on
+    // NULL meaning "never set".
+    if (erpPrefill) {
+      body.productFamily    = erpPrefill.productFamily    || null;
+      body.fromSubInventory = erpPrefill.fromSubInventory || null;
+      body.toSubInventory   = erpPrefill.toSubInventory   || null;
+      body.specialControl   = erpPrefill.specialControl   || null;
+      body.trialId          = erpPrefill.trialId          || null;
+      body.location         = erpPrefill.location         || null;
+      body.phase            = erpPrefill.phase            || null;
+    }
+
     const btn = document.getElementById('iam-save');
     btn.disabled = true;
     try {
@@ -931,7 +1388,9 @@
     }
   }
 
-  document.getElementById('d-add-item')?.addEventListener('click', openAddItemModal);
+  // Arrow wrapper, never a bare `openAddItemModal` reference — a bare listener
+  // passes the PointerEvent in as `prefill`. smoke-add-item-binding.ps1 guards this.
+  document.getElementById('d-add-item')?.addEventListener('click', () => openAddItemModal());
   document.getElementById('iam-save')?.addEventListener('click', saveAddItem);
 
   // ---- Edit Item modal ---------------------------------------------------
@@ -1208,14 +1667,15 @@
   }
 
   // ============ EXPORT TO EXCEL ============
-  // Identical to the mockup — operates on the in-memory filtered list.
-  function exportToExcel() {
+  // Server does the filtering now; export fetches the FULL filtered set (all
+  // pages) so it isn't limited to the cards currently loaded on the board.
+  async function exportToExcel() {
     try {
       if (typeof XLSX === 'undefined') {
         showToast('Export failed', 'Excel library not loaded');
         return;
       }
-      const filtered = pulls.filter(pullPasses);
+      const filtered = await fetchAllFiltered();
       if (filtered.length === 0) {
         showToast('Nothing to export', 'Adjust filters and try again');
         return;
@@ -1395,22 +1855,23 @@
   });
 
   // ============ FILTER LISTENERS ============
-  document.getElementById('wh-filter').addEventListener('change', render);
-  document.getElementById('lock-filter')?.addEventListener('change', render);
-  // Debounce search so we don't refilter on every keystroke (but no refetch
-  // since server already returned everything for this date range).
+  // All filters are server-side now, so every change REBUILDS the board (loadPulls
+  // resets every column to page 1, clears their bodies, and re-observes).
+  document.getElementById('wh-filter').addEventListener('change', loadPulls);
+  document.getElementById('lock-filter')?.addEventListener('change', loadPulls);
+  // Debounce search so each keystroke doesn't fire a DB query.
   let searchTimer = null;
   document.getElementById('search-input').addEventListener('input', () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(render, 120);
+    searchTimer = setTimeout(loadPulls, 250);
   });
 
   document.getElementById('date-filter').addEventListener('change', (e) => {
     const row = document.getElementById('custom-date-row');
     row.classList.toggle('visible', e.target.value === 'custom');
-    if (e.target.value !== 'custom') customRange = null;
-    if (e.target.value === 'custom' && customRange) loadPulls();
-    else render();
+    if (e.target.value !== 'custom') { customRange = null; loadPulls(); }
+    else if (customRange) loadPulls();   // custom re-selected with an existing range
+    // else: custom with no range yet → wait for Apply
   });
 
   document.getElementById('date-apply').addEventListener('click', () => {

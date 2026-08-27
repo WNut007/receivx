@@ -35,12 +35,32 @@ DELETE r FROM dbo.Receipts r
 INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PL-DSV-%';
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-DSV-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-DSV-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-DSV-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 DELETE FROM dbo.PurchaseOrderLines
  WHERE PurchaseOrderId IN (SELECT Id FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-DSV-%');
 DELETE FROM dbo.PurchaseOrders WHERE PoNumber LIKE 'PO-DSV-%';
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 function SqlSeedDsvPo {
@@ -60,7 +80,15 @@ INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, D
 VALUES (NEWID(), @poId, 1, 'DSVITEM-A', N'DSV smoke item A', 500, 0),
        (NEWID(), @poId, 2, 'DSVITEM-B', N'DSV smoke item B', 500, 0);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 SqlCleanup
@@ -132,7 +160,15 @@ INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber = N'__PULLNUM__' AND pol.ItemCode = 'DSVITEM-B';
 '@.Replace('__PULLNUM__', $pullNum)
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $stampSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $stampSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 
 $closeBody = @{ signatureSvg = $SAMPLE_SVG } | ConvertTo-Json
 Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/close" -Method POST -Body $closeBody -ContentType 'application/json' -WebSession $sv | Out-Null

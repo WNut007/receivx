@@ -33,9 +33,29 @@ function SqlCleanup {
     $sql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-6.1-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-SMOKE-6.1-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SMOKE-6.1-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+    # refusal is printed instead of discarded. A cleanup that cannot report its
+    # own failure is how 148 fixture pulls accumulated unnoticed.
+    $cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+        exit 2
+    }
+    $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 SqlCleanup
@@ -176,18 +196,76 @@ if ($list[1].itemCode -ne 'SMK-ITEM-B') { Fail "Second should be SMK-ITEM-B, got
 OK "List reflects both items in sortOrder"
 
 # ----------------------------------------------------------------------------
-# 6. POST duplicate ItemCode → 409
+# 6. POST a genuine duplicate → 409, and the same SKU under a different storer
+#    → accepted
 # ----------------------------------------------------------------------------
-Step "POST duplicate ItemCode on same pull → 409"
+# SUPERSEDED ASSERTION, kept visible so the change is legible rather than silent:
+#
+#     $dupBody = @{
+#         itemCode = 'SMK-ITEM-A'
+#         description = 'dup'
+#         windows = @(@{ hourOfDay = 11; expectedQty = 10 })
+#     } | ConvertTo-Json -Depth 5
+#
+# Item A is created above with vendorCode = 'V001'. The storer-grain change
+# widened the duplicate guard from (PullId, ItemCode) to
+# (PullId, ItemCode, VendorCode), because one pull sheet routinely carries the
+# same SKU from two storers holding separate purchase orders. From that commit
+# on, the body above was NOT a duplicate — (pull, 'SMK-ITEM-A', NULL) is a
+# different key from (pull, 'SMK-ITEM-A', 'V001') — so the POST correctly
+# succeeded and this case has been failing on a known cause ever since. The
+# assertion went stale, not the guard.
+#
+# The fix is not merely to make it green. What the case was written to prove is
+# that the guard refuses a genuine duplicate, so the request now matches item A
+# on all THREE key parts. The second half is new and is what keeps the first
+# half meaningful: narrowing the guard back to (PullId, ItemCode) would still
+# pass a refuse-only test, and would only be caught by something that asserts
+# the same SKU under a DIFFERENT storer is allowed through.
+Step "POST genuine duplicate (same SKU + same storer) → 409"
 $dupBody = @{
     itemCode = 'SMK-ITEM-A'
     description = 'dup'
+    vendorCode = 'V001'          # matches item A — all three key parts collide
     windows = @(@{ hourOfDay = 11; expectedQty = 10 })
 } | ConvertTo-Json -Depth 5
 $r = InvokeExpectFail 'POST' "$base/api/pulls/$pullId/items" $dupBody $svAdmin 409
-if (-not $r -or $r.Wrong) { Fail "Expected 409 on duplicate, got $($r.Status)" }
+if (-not $r -or $r.Wrong) { Fail "Expected 409 on genuine duplicate, got $($r.Status)" }
 if ($r.Title -notmatch 'already exists') { Fail "Expected 'already exists' in title, got: $($r.Title)" }
-OK "Duplicate ItemCode rejected with 409"
+OK "Genuine duplicate (SKU + storer) rejected with 409"
+
+Step "POST same SKU under a DIFFERENT storer → accepted"
+$otherStorerBody = @{
+    itemCode = 'SMK-ITEM-A'
+    description = 'same sku, second storer'
+    vendorCode = 'V002'
+    windows = @(@{ hourOfDay = 12; expectedQty = 10 })
+} | ConvertTo-Json -Depth 5
+# Caught explicitly. If the guard is ever narrowed back to (PullId, ItemCode)
+# this POST returns 409, and an uncaught Invoke-RestMethod would abort the script
+# with a raw exception dump — no FAIL line naming the cause, and SqlCleanup never
+# runs, so the smoke pull is left behind for the next run to trip over.
+$otherStorer = $null
+try {
+    $otherStorer = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method POST `
+        -Body $otherStorerBody -ContentType 'application/json' -WebSession $svAdmin
+} catch {
+    $st = $null
+    try { $st = [int]$_.Exception.Response.StatusCode } catch { }
+    Fail "Same SKU under a different storer was REFUSED (HTTP $st). The duplicate guard is keyed on (PullId, ItemCode) alone; it must be (PullId, ItemCode, VendorCode) — one pull sheet routinely carries the same SKU from two storers with separate purchase orders."
+}
+if ($otherStorer.itemCode -ne 'SMK-ITEM-A') { Fail "Second-storer row has the wrong itemCode: $($otherStorer.itemCode)" }
+if ($otherStorer.vendorCode -ne 'V002')     { Fail "Second-storer row has the wrong vendorCode: $($otherStorer.vendorCode)" }
+if ($otherStorer.id -eq $itemAId)           { Fail "Second-storer POST returned item A rather than creating a row" }
+OK "Same SKU under a different storer accepted as its own row"
+
+# Removed again immediately: every case below counts the items on this pull, and
+# a third row left behind would make them fail for a reason that has nothing to
+# do with what they test. Added in this case, removed in this case.
+Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items/$($otherStorer.id)" -Method DELETE -WebSession $svAdmin | Out-Null
+$backTo2 = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method GET -WebSession $svAdmin
+if ($backTo2.Count -ne 2) { Fail "Fixture not restored after the second-storer row: expected 2 items, got $($backTo2.Count)" }
+OK "Second-storer row removed; fixture back to 2 items for the cases below"
 
 # ----------------------------------------------------------------------------
 # 7. Validation: empty ItemCode, duplicate hours, no windows, HourOfDay > 23
@@ -267,7 +345,15 @@ UPDATE dbo.PullItemWindows
    SET ReceivedQty = ExpectedQty
  WHERE PullItemId = '$itemBId' AND HourOfDay = 14;
 "@
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { Fail "SQL poke failed (exit $LASTEXITCODE)" }
 
 $r = InvokeExpectFail 'DELETE' "$base/api/pulls/$pullId/items/$itemBId" $null $svAdmin 409
@@ -280,7 +366,15 @@ $restoreSql = @"
 SET QUOTED_IDENTIFIER ON;
 UPDATE dbo.PullItemWindows SET ReceivedQty = 0 WHERE PullItemId = '$itemBId' AND HourOfDay = 14;
 "@
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $restoreSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $restoreSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
 # 11. DELETE happy path → 204

@@ -26,6 +26,14 @@ public class PullSummary
     // v2.x Phase 7.1 — free-text reference (vendor invoice / delivery batch ID).
     // Pull-level; editable post-create. Surfaces on the DO render + Reports list.
     public string? ReferenceNumber { get; set; }
+
+    // db/050 — provenance. NULL for ERP-fed and hand-created pulls (the
+    // overwhelming majority); 'po-import' for pulls the WIP synthesis built
+    // from an Excel import, because the ERP sends no Receive feed for WIP
+    // storer codes. Surfaced in the drawer so a pull carrying a PO nobody in
+    // procurement issued explains itself.
+    public string? Origin { get; set; }
+
     public bool IsReopened { get; set; }
 
     public int TotalExpected { get; set; }
@@ -35,6 +43,28 @@ public class PullSummary
     public int NewCount { get; set; }
     public int WindowsTotal { get; set; }
     public int WindowsPending { get; set; }
+
+    // Phase 7c — digital-signature progress (3 fixed parties: Customer /
+    // Warehouse / Production). SignedCount is the "N" in the N/3 badge;
+    // the per-party bits feed the left-menu chips + the per-role filter.
+    // Warehouse is auto-signed at close (7b); Customer/Production via sign.
+    public int SignedCount { get; set; }
+    public bool CustomerSigned { get; set; }
+    public bool WarehouseSigned { get; set; }
+    public bool ProductionSigned { get; set; }
+    // Computed (get-only → ignored by Dapper, serialized to JSON for the UI).
+    public bool IsComplete => SignedCount >= 3;
+    public List<string> SignedParties
+    {
+        get
+        {
+            var list = new List<string>(3);
+            if (CustomerSigned)   list.Add("Customer");
+            if (WarehouseSigned)  list.Add("Warehouse");
+            if (ProductionSigned) list.Add("Production");
+            return list;
+        }
+    }
 
     // §3.5 — per-pull strict-mode flag. Default false = warehouse-wide FIFO.
     // Set at create-time; immutable thereafter (PUT refuses any change).
@@ -83,15 +113,81 @@ public class PullItemWindowDto
     public byte HourOfDay { get; set; }
     public int ExpectedQty { get; set; }
     public int ReceivedQty { get; set; }
+
+    // db/047 — close state. Without IsClosed on the wire the grid cannot tell a
+    // short-closed line from a partial still waiting on a delivery: both render
+    // "400 / 1,000". ClosedAt/ClosedReason feed the closed-state modal, which has to
+    // show what it is offering to undo.
+    //
+    // ClosedBy is deliberately NOT surfaced: it is a Users.Id GUID that would need a
+    // join to render as a name, and the audit row already carries the attribution.
+    //
+    // Every consumer of this DTO is fed from the two assembly sites in PullRepository
+    // (GetByIdAsync's inline loop and AssembleItems), including the three PullItem
+    // admin endpoints — ListWindows, AddWindow and UpdateWindow all re-read through
+    // GetItemByIdAsync rather than hand-constructing. So populating the source
+    // populates them all; none can report a stale IsClosed = false.
+    public bool IsClosed { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedReason { get; set; }
+
+    // db/049 — structured reason for the accepted variance that closed this window.
+    // NULL on open windows, and also on windows closed BEFORE db/049 shipped: that NULL
+    // means "closed before reason codes existed" and is its own bucket, never OTHER.
+    public string? VarianceReasonCode { get; set; }
+
+    // Display label for the code above, resolved server-side from the one map in
+    // VarianceReasonCodes. Sent alongside the code so the client never has to hold a
+    // second copy of the labels — and so it can never render a raw code by accident.
+    public string? VarianceReasonLabel { get; set; }
 }
 
 /// <summary>Query parameters for /api/pulls.</summary>
+/// <remarks>
+/// Warehouse is expressed as TWO mutually-exclusive, null-guarded Guid filters,
+/// both keyed on Pulls.WarehouseId so they hit IX_Pulls_Date's INCLUDE(WarehouseId)
+/// with no join to dbo.Warehouses on the hot aggregate path:
+///   • <see cref="WarehouseId"/>        — admin's resolved warehouse (null = "All warehouses" ⇒ NO predicate)
+///   • <see cref="SessionWarehouseId"/> — non-admin's session warehouse force (null for admins)
+/// The controller sets at most one of them.
+/// </remarks>
 public record PullQuery(
     Guid? WarehouseId,
+    Guid? SessionWarehouseId,
     DateOnly? DateFrom,
     DateOnly? DateTo,
     string? Status,
-    string? Q);
+    string? Q,
+    bool? LockPoByPull,
+    int Page = 1,
+    int PageSize = 20);
+
+/// <summary>
+/// Dashboard summary tiles + per-status column badges, aggregated over the
+/// FULL filtered set (NOT the paged rows). One row from the aggregate query.
+/// </summary>
+public class PullDashboardAggregates
+{
+    public int TotalPulls { get; set; }      // COUNT(*) over the filter → "Total Pulls" tile + page Total
+    public int Pending { get; set; }         // column badge
+    public int InProgress { get; set; }      // "In Progress" tile + column badge
+    public int FullyReceived { get; set; }   // "Ready to Close" tile + column badge
+    public int Closed { get; set; }          // column badge
+    public int ItemsTotal { get; set; }      // Σ (all PullItems per pull, active + canceled) → "Items · Today" tile
+    public int ReceivedTotal { get; set; }   // Σ vp.TotalReceived → Throughput units
+    public int ExpectedTotal { get; set; }   // Σ vp.TotalExpected → Throughput % denominator
+}
+
+/// <summary>Envelope for GET /api/pulls: one page of cards + full-set aggregates.</summary>
+public class PullDashboardResponse
+{
+    public IReadOnlyList<PullSummary> Items { get; set; } = Array.Empty<PullSummary>();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int Total { get; set; }           // == Aggregates.TotalPulls (same WHERE)
+    public bool HasMore => Page * PageSize < Total;
+    public PullDashboardAggregates Aggregates { get; set; } = new();
+}
 
 /// <summary>
 /// Lightweight pull row returned by GET /api/pulls/search — the typeahead

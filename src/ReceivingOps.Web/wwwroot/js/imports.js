@@ -19,6 +19,9 @@
 
     const fileInput       = document.getElementById('imports-file-input');
     const browseBtn       = document.getElementById('imports-browse-btn');
+    // Helper line under the dropzone — travels with the dropzone so it isn't
+    // left hanging over the preview/status panels.
+    const sourceHint      = document.getElementById('imports-source-hint');
     const previewPanel    = document.getElementById('imports-preview-panel');
     const previewFilename = document.getElementById('imports-preview-filename');
     const previewSummary  = document.getElementById('imports-preview-summary');
@@ -125,6 +128,7 @@
 
     function showUploading(name) {
         dropzone.hidden = true;
+        if (sourceHint) sourceHint.hidden = true;
         previewPanel.hidden = true;
         statusPanel.hidden = false;
         statusActions.hidden = true;
@@ -165,6 +169,8 @@
                 summaryCells +
             '</div>';
 
+        renderWipSummary(data.wip);
+
         const errs = data.validationErrorsPreview || [];
         if (errs.length === 0) {
             previewErrors.innerHTML = '';
@@ -197,6 +203,82 @@
                 '<span class="imports-summary-label">' + escapeHtml(label) + '</span>' +
                 '<span class="imports-summary-value">' + (value ?? 0) + '</span>' +
             '</div>';
+    }
+
+    // -----------------------------------------------------------------------
+    // WIP synthesis summary
+    //
+    // For pull sheets whose storer code contains WIP the ERP never sends a
+    // Receive feed, so the import builds the pull and its PO itself. This
+    // panel is the only checkpoint before those rows commit — the operator
+    // has to see how many, and whether each sheet is new, a repair of a
+    // sheet whose PO landed earlier, or already done. Thai, because the
+    // people reading it are.
+    // -----------------------------------------------------------------------
+    function renderWipSummary(wip) {
+        const host = document.getElementById('imports-wip-summary');
+        if (!host) return;
+
+        if (!wip || !wip.pullCount) {
+            host.hidden = true;
+            host.innerHTML = '';
+            return;
+        }
+
+        const willCreate = (wip.createCount || 0) + (wip.repairCount || 0);
+        const lines = [];
+
+        if (willCreate > 0) {
+            lines.push(
+                'จะสร้าง pull และ PO ให้อัตโนมัติสำหรับ <strong>' + willCreate + '</strong> ใบ ' +
+                '(<strong>' + (wip.itemCount || 0) + '</strong> รายการ · ' +
+                '<strong>' + fmt(wip.windowCount || 0) + '</strong> ช่วงเวลา · ' +
+                '<strong>' + fmt(wip.totalQty || 0) + '</strong> ชิ้น)');
+        }
+        if (wip.repairCount) {
+            lines.push('ใน ' + willCreate + ' ใบนี้ มี <strong>' + wip.repairCount +
+                '</strong> ใบที่เคยนำเข้า PO ไว้แล้วแต่ยังไม่มี pull — ระบบจะสร้างเฉพาะ pull ให้ ' +
+                'โดยไม่แก้ไข PO เดิม');
+        }
+        if (wip.skipCount) {
+            lines.push('<strong>' + wip.skipCount + '</strong> ใบมี pull อยู่แล้ว — ระบบจะข้ามไป ไม่สร้างซ้ำ');
+        }
+
+        const rows = (wip.pulls || []).map(p =>
+            '<li>' +
+                '<code>' + escapeHtml(p.pullNumber) + '</code>' +
+                '<span class="imports-wip-action ' + escapeHtml(p.action) + '">' +
+                    escapeHtml(actionLabel(p.action)) +
+                '</span>' +
+                '<span class="imports-wip-detail">' +
+                    escapeHtml(p.vendorCode || '') + ' · ' +
+                    (p.itemCount || 0) + ' รายการ · ' + fmt(p.totalQty || 0) + ' ชิ้น' +
+                '</span>' +
+            '</li>').join('');
+
+        const listedAll = (wip.pulls || []).length >= wip.pullCount;
+        const listHeader = listedAll
+            ? 'ใบที่ตรวจพบ (' + wip.pullCount + ')'
+            : 'แสดง ' + (wip.pulls || []).length + ' จาก ' + wip.pullCount + ' ใบ';
+
+        host.hidden = false;
+        host.innerHTML =
+            '<div class="imports-wip">' +
+                '<h4><i class="bi bi-magic"></i> พบใบ WIP ที่ ERP ไม่ได้ส่งข้อมูลรับของมาให้</h4>' +
+                '<p class="imports-wip-lead">' + lines.join('<br>') + '</p>' +
+                '<h5>' + escapeHtml(listHeader) + '</h5>' +
+                '<ul class="imports-wip-list">' + rows + '</ul>' +
+            '</div>';
+    }
+
+    function actionLabel(action) {
+        if (action === 'create') return 'สร้างใหม่';
+        if (action === 'repair') return 'เติม pull ที่ขาด';
+        return 'ข้าม (มีอยู่แล้ว)';
+    }
+
+    function fmt(n) {
+        return Number(n || 0).toLocaleString('en-US');
     }
 
     // -----------------------------------------------------------------------
@@ -290,12 +372,43 @@
     function showTerminal(log) {
         statusActions.hidden = false;
         if (log.status === 'succeeded') {
+            const posInserted = log.posInserted ?? 0;
+            const linesInserted = log.linesInserted ?? 0;
+            // posSkipped is NULL for pre-db/046 runs — treat null the same as
+            // 0 so those runs render exactly as before (no skip line).
+            const skipped = log.posSkipped ?? 0;
+
+            let mainLine =
+                'Imported <strong>' + posInserted + '</strong> ' + plural(posInserted, 'PO') + ' / ' +
+                '<strong>' + linesInserted + '</strong> ' + plural(linesInserted, 'line');
+            if (skipped > 0) {
+                mainLine += ' · Skipped <strong>' + skipped + '</strong> ' +
+                            plural(skipped, 'duplicate');
+            }
+            if (log.elapsedMs) mainLine += ' in ' + log.elapsedMs + 'ms';
+
+            // Muted second line naming the skipped PoNumbers, only when there
+            // were any. SkippedPoNumbers is a JSON array string on the log row.
+            let skipNote = '';
+            if (skipped > 0) {
+                const names = parseSkipped(log.skippedPoNumbers);
+                if (names.length > 0) {
+                    const CAP = 10;
+                    const shown = names.slice(0, CAP).map(escapeHtml).join(', ');
+                    const more = names.length > CAP ? ' +' + (names.length - CAP) + ' more' : '';
+                    skipNote =
+                        '<span class="imports-skip-note">Skipped (already in system): ' +
+                            shown + more +
+                        '</span>';
+                }
+            }
+
             statusBody.innerHTML =
                 '<div class="imports-status-final succeeded">' +
                     '<i class="bi bi-check-circle"></i>' +
-                    '<span>Imported <strong>' + (log.posInserted ?? 0) + '</strong> POs / ' +
-                          '<strong>' + (log.linesInserted ?? 0) + '</strong> lines' +
-                          (log.elapsedMs ? ' in ' + log.elapsedMs + 'ms' : '') +
+                    '<span class="imports-status-text">' +
+                        '<span>' + mainLine + '</span>' +
+                        skipNote +
                     '</span>' +
                 '</div>';
         } else {
@@ -325,6 +438,7 @@
         confirmBtn.hidden = false;
         confirmBtn.disabled = false;
         dropzone.hidden = false;
+        if (sourceHint) sourceHint.hidden = false;
     }
 
     // -----------------------------------------------------------------------
@@ -336,4 +450,19 @@
         }[c]));
     }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Singular for n === 1, else add 's' (PO/POs, line/lines, duplicate/duplicates).
+    function plural(n, word) { return n === 1 ? word : word + 's'; }
+
+    // SkippedPoNumbers is a JSON array string on the log row (or null). Parse
+    // defensively — a malformed value must not blank the whole status panel.
+    function parseSkipped(raw) {
+        if (!raw) return [];
+        try {
+            const arr = JSON.parse(raw);
+            return Array.isArray(arr) ? arr : [];
+        } catch {
+            return [];
+        }
+    }
 })();

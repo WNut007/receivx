@@ -35,4 +35,13 @@ public interface IErpSyncLogRepository
     /// this is the per-source breakdown the status drill-down renders.
     /// </summary>
     Task UpdateSourceTotalsAsync(Guid runId, string sourceTotalsJson, CancellationToken ct = default);
+
+    /// <summary>
+    /// db/052 — records, per run, how many field writes ETL suppressed because
+    /// an operator owns the field and how many it performed, plus the
+    /// per-field breakdown. Aggregated per RUN, never per field or per row.
+    /// </summary>
+    Task UpdateFieldProtectionAsync(
+        Guid runId, int fieldsSkipped, int fieldsWritten, string totalsJson,
+        CancellationToken ct = default);
 }

@@ -23,11 +23,21 @@
     <!-- nav injected by app-nav.js -->
     <div class="page-wrap">
         <div class="page-head">
-            <div class="page-eyebrow">Audit · Delivery Orders</div>
+            <div class="page-eyebrow" id="page-eyebrow">Audit · Delivery Orders</div>
             <h1 class="page-title">Reports</h1>
-            <p class="page-subtitle">Closed pulls with delivery activity. Click a row to preview the DO or export PDF.</p>
+            <p class="page-subtitle" id="page-subtitle">Closed pulls with delivery activity. Click a row to preview the DO or export PDF.</p>
+            @* The two sections share this page shell and nothing else — separate
+               filter bars, separate queries. Delivery Orders is closed-pulls-only;
+               Pull Sheets deliberately includes open pulls. *@
+            <div class="reports-section-switch" id="reports-section-switch" role="tablist" aria-label="Report section">
+                <button type="button" class="section-tab active" data-section="delivery-orders"
+                        role="tab" aria-selected="true">Delivery Orders</button>
+                <button type="button" class="section-tab" data-section="pull-sheets"
+                        role="tab" aria-selected="false">Pull Sheets</button>
+            </div>
         </div>
 
+        <section class="reports-section" id="section-delivery-orders">
         <div class="reports-filter-bar">
             <input type="text" class="form-control filter-q" placeholder="Search PO number, item code…">
             <input type="text" class="form-control filter-pull" placeholder="Pull number">
@@ -44,6 +54,17 @@
                 <option value="">All warehouses</option>
                 @* Warehouse options populated client-side from /api/warehouses *@
             </select>
+            @{ var signParties = (string[])(ViewData["SignPartiesArr"] ?? System.Array.Empty<string>());
+               var canBatch = signParties.Any(x => x == "customer" || x == "production"); }
+            <select class="form-select filter-sign" id="filter-sign" title="Filter by signature status">
+                <option value="all" selected>All signatures</option>
+                @if (signParties.Length > 0)
+                {
+                    <option value="unsigned_mine">Unsigned for my role</option>
+                }
+                <option value="awaiting">Awaiting any (&lt; 3/3)</option>
+                <option value="complete">Complete (3/3)</option>
+            </select>
             <span class="result-count" id="result-count">@Model.Items.Count of @Model.Total pull@(Model.Total == 1 ? "" : "s")</span>
         </div>
         <div class="reports-custom-date-row" id="reports-custom-date-row" hidden>
@@ -57,6 +78,21 @@
         <div class="reports-split">
             <aside class="reports-list-pane">
                 <div class="list-header">CLOSED PULLS</div>
+                @if (canBatch)
+                {
+                    @* Not hidden by default: the role combobox must stay reachable
+                       even with nothing selected (syncBatchBar keeps the bar visible
+                       and gates only the action controls). *@
+                    <div class="batch-bar" id="batch-bar">
+                        <span class="batch-count" id="batch-count">Select pulls to sign</span>
+                        <label class="batch-party-wrap">Sign as
+                            <select class="form-select form-select-sm batch-party" id="batch-party"></select>
+                        </label>
+                        <button type="button" class="btn btn-sm btn-primary" id="batch-sign-btn" disabled>Sign</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="batch-clear-btn" disabled>Clear</button>
+                        <span class="batch-result" id="batch-result" aria-live="polite"></span>
+                    </div>
+                }
                 <ul class="pull-rows" id="pull-rows">
                     @if (Model.Items.Count == 0)
                     {
@@ -74,9 +110,20 @@
                                 data-pull-id="@p.Id"
                                 data-pull-number="@p.PullNumber"
                                 data-warehouse-id="@p.WarehouseId"
-                                data-closed-at="@(p.ClosedAt?.ToString("yyyy-MM-dd") ?? "")">
+                                data-closed-at="@(p.ClosedAt?.ToString("yyyy-MM-dd") ?? "")"
+                                data-signed-count="@p.SignedCount"
+                                data-customer-signed="@p.CustomerSigned.ToString().ToLowerInvariant()"
+                                data-warehouse-signed="@p.WarehouseSigned.ToString().ToLowerInvariant()"
+                                data-production-signed="@p.ProductionSigned.ToString().ToLowerInvariant()">
                                 <div class="row-top">
+                                    @if (canBatch)
+                                    {
+                                        <input type="checkbox" class="pull-check" data-pull-id="@p.Id"
+                                               aria-label="Select @p.PullNumber for batch signing">
+                                    }
                                     <span class="pull-number">@p.PullNumber</span>
+                                    <span class="sig-badge @(p.IsComplete ? "is-complete" : "")"
+                                          title="@p.SignedCount of 3 parties signed">@p.SignedCount/3</span>
                                     @if (p.LockPoByPull)
                                     {
                                         <span class="pull-lock-badge" title="PO allocation locked to this pull">PO LOCK</span>
@@ -93,6 +140,11 @@
                                     {
                                         <span title="Reference: @p.ReferenceNumber"><i class="bi bi-paperclip"></i></span>
                                     }
+                                    <span class="sig-chips" aria-label="Signature status">
+                                        <span class="sig-chip @(p.WarehouseSigned ? "on" : "")" title="Warehouse @(p.WarehouseSigned ? "signed" : "unsigned")">W</span>
+                                        <span class="sig-chip @(p.CustomerSigned ? "on" : "")" title="Customer @(p.CustomerSigned ? "signed" : "unsigned")">C</span>
+                                        <span class="sig-chip @(p.ProductionSigned ? "on" : "")" title="Production @(p.ProductionSigned ? "signed" : "unsigned")">P</span>
+                                    </span>
                                 </div>
                             </li>
                         }
@@ -129,9 +181,119 @@
                 </div>
             </main>
         </div>
+        </section>
+
+        @* ==================================================================
+           PLANNING · PULL SHEETS
+           Its own filter bar and its own query. Unlike the section above it
+           does NOT filter to closed pulls — surfacing open ones is the point.
+           ================================================================== *@
+        <section class="reports-section" id="section-pull-sheets" hidden>
+            <div class="pull-sheets-filter-bar" id="ps-filter-bar">
+                <label class="ps-field">
+                    <span class="ps-label">Warehouse</span>
+                    <select class="form-select" id="ps-warehouse">
+                        <option value="">All warehouses</option>
+                        @* Populated from /api/warehouses. Non-admins are pinned to
+                           their session warehouse server-side regardless. *@
+                    </select>
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Date</span>
+                    <input type="date" class="form-control" id="ps-date">
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Period</span>
+                    @* Same ReceivingPeriods.All the Receiving grid renders from —
+                       one definition, so the report cannot scope a period the grid
+                       draws differently. *@
+                    <select class="form-select" id="ps-period">
+                        @foreach (var period in ReceivingOps.Web.Models.ReceivingPeriods.All)
+                        {
+                            <option value="@period.Key" data-hours="@string.Join(",", period.Hours)">@period.OptionText</option>
+                        }
+                    </select>
+                </label>
+                <label class="ps-field">
+                    <span class="ps-label">Status</span>
+                    <select class="form-select" id="ps-status">
+                        <option value="">All statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="fully_received">Fully received</option>
+                        <option value="closed">Closed</option>
+                    </select>
+                </label>
+                <button type="button" class="btn btn-outline-secondary" id="ps-refresh">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+
+            @* Inline on the filter bar — a size refusal is a filter problem, so it
+               is reported where the filter is, not as a raw error. *@
+            <div class="ps-message" id="ps-message" role="status" aria-live="polite" hidden></div>
+
+            <div class="ps-metrics" id="ps-metrics">
+                <div class="ps-metric"><span class="ps-metric-label">Pulls</span><span class="ps-metric-value" id="ps-m-pulls">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Items</span><span class="ps-metric-value" id="ps-m-items">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Expected</span><span class="ps-metric-value" id="ps-m-expected">—</span></div>
+                <div class="ps-metric"><span class="ps-metric-label">Received</span><span class="ps-metric-value" id="ps-m-received">—</span></div>
+            </div>
+
+            <div class="ps-resolved" id="ps-resolved"></div>
+
+            <div class="ps-preview-card">
+                <div class="ps-preview-head">
+                    <span class="ps-preview-title">SUMMARY PREVIEW</span>
+                    <button type="button" class="btn btn-primary" id="ps-export" disabled>
+                        <i class="bi bi-file-earmark-excel"></i> Export xlsx
+                    </button>
+                </div>
+                <div class="ps-table-wrap">
+                    <table class="ps-table" id="ps-table">
+                        <thead>
+                            <tr>
+                                <th>Pull #</th><th>Item Code</th><th>Description</th><th>Vendor</th><th>Building</th>
+                                <th class="num">Expected</th><th class="num">Received</th>
+                                <th class="num">Outstanding</th><th class="num">Progress</th><th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ps-tbody">
+                            <tr><td colspan="10" class="ps-empty">Pick a date and period, then Refresh.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="ps-more" id="ps-more" hidden></div>
+            </div>
+        </section>
     </div>
 </div>
+
+@* Phase 8b — signature pad modal for single sign (Customer/Production). The
+   batch pad (8c) reuses the same shell. *@
+<div class="sign-pad-modal" id="sign-pad-modal" hidden>
+    <div class="sign-pad-dialog" role="dialog" aria-modal="true" aria-labelledby="sign-pad-title">
+        <div class="sign-pad-head" id="sign-pad-title">Sign as <span id="sign-pad-party">Customer</span></div>
+        <div class="sign-pad-sub" id="sign-pad-sub"></div>
+        <div class="signature-host" id="sign-pad-host">
+            <canvas class="signature-canvas" id="sign-pad-canvas" width="600" height="140"></canvas>
+            <div class="signature-placeholder">Sign here</div>
+        </div>
+        <div class="signature-foot">
+            <span class="line"></span>
+            <button type="button" class="clear-sig-btn" id="sign-pad-clear">Clear</button>
+        </div>
+        <div class="sign-pad-actions">
+            <button type="button" class="btn btn-outline-secondary" id="sign-pad-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="sign-pad-confirm" disabled>Sign</button>
+        </div>
+    </div>
+</div>
+
+<script>window.__signParties = @Html.Raw(ViewData["SignPartiesJson"] ?? "[]");</script>
 <script src="~/js/app-nav.js" asp-append-version="true"></script>
+<script src="~/js/components/signature-pad.js" asp-append-version="true"></script>
 <script src="~/js/reports.js" asp-append-version="true"></script>
+<script src="~/js/pull-sheets.js" asp-append-version="true"></script>
 </body>
 </html>

@@ -12,6 +12,39 @@ public class ReceiveRequest
     public string? BinLocation { get; set; }
     public string? QcStatus { get; set; }   // null → defaults to 'pending'
     public string? Note { get; set; }
+
+    /// <summary>
+    /// db/049 — structured reason for an accepted variance. One of
+    /// <see cref="Models.VarianceReasonCodes"/>; required whenever a variance is actually
+    /// being accepted (ticked AND the quantity differs from outstanding), ignored entirely
+    /// on an exact-quantity final receipt because that is not a variance.
+    ///
+    /// Replaces "always require a free-text note" as the audit reason. The note stays, but
+    /// is only mandatory when this is OTHER — the always-required note was being satisfied
+    /// with "." in production, which recorded nothing and could not be aggregated.
+    ///
+    /// Audit metadata only: nothing in allocation, the overflow decision, VarianceQty,
+    /// IsClosed or PO consumption reads it.
+    /// </summary>
+    public string? VarianceReasonCode { get; set; }
+
+    /// <summary>
+    /// db/047 — operator ticked "this is the final receipt; close the line at this quantity".
+    /// Defaults false, so existing callers that never send it keep today's behaviour exactly.
+    ///
+    /// Semantics (brief §6, and deliberately asymmetric):
+    ///   • Qty &lt; outstanding, false → ordinary partial, line stays open. Unchanged.
+    ///   • Qty &lt; outstanding, true  → short close: line closed at the actual figure.
+    ///   • Qty &gt; outstanding, false → refused 400 OVER_RECEIPT_NOT_ACCEPTED.
+    ///   • Qty &gt; outstanding, true  → over-receipt recorded, line closed.
+    ///   • Qty = 0, true             → close-only. Writes NO Receipts row (§2d).
+    ///
+    /// Under is ambiguous ("the rest arrives Thursday" vs "that's all we're getting"), so the
+    /// flag stays optional there and must never be inferred. Over has one reading, so the
+    /// flag is mandatory. <see cref="Note"/> is required whenever this is true — it is the
+    /// audit reason and is copied to PullItemWindows.ClosedReason.
+    /// </summary>
+    public bool VarianceAccepted { get; set; }
 }
 
 /// <summary>One slice of a FIFO-allocated receive — exactly one PO line consumed.</summary>
@@ -23,6 +56,17 @@ public class AllocationResult
     public Guid PurchaseOrderLineId { get; set; }
     public int PoLineNumber { get; set; }
     public int Qty { get; set; }
+
+    /// <summary>
+    /// How much of this slice lands beyond the PO line's OrderedQty. Zero on every slice
+    /// but the last, and zero on any receive that fits within the ordered quantity.
+    ///
+    /// <para>Replaces IsPullLinked, which flagged a slice drawn from a PO the pull was not
+    /// linked to. That can no longer happen — an over-receipt stays on the pull's own line
+    /// rather than spilling onto another purchase order — so the flag had nothing left to
+    /// report. What the operator needs to see instead is the overage itself.</para>
+    /// </summary>
+    public int OverReceivedQty { get; set; }
 }
 
 /// <summary>
@@ -35,6 +79,23 @@ public class ReceiveResult
     public int TotalQty { get; set; }            // SUM of Allocations[].Qty
     public int NewReceivedQty { get; set; }      // post-tx PullItemWindows.ReceivedQty for the target hour
     public bool FullyReceived { get; set; }      // whether the pull is now fully received
+
+    /// <summary>
+    /// db/047 — recomputed outstanding for the target window AFTER this receive, as
+    /// MAX(0, Expected - Received). Never negative, even on an over-receipt (§5).
+    /// Returned so the caller can update without a refetch (§6).
+    /// </summary>
+    public int NewOutstanding { get; set; }
+
+    /// <summary>db/047 — the window's IsClosed state after this receive.</summary>
+    public bool IsClosed { get; set; }
+
+    /// <summary>
+    /// db/047 — signed variance actually persisted: positive = over, negative = short,
+    /// null when this was an ordinary partial or an exact completion. Set on exactly one
+    /// Receipts row per confirm even when the FIFO walk splits across PO lines (§2c).
+    /// </summary>
+    public int? VarianceQty { get; set; }
 }
 
 /// <summary>
@@ -52,7 +113,39 @@ public class ReceivePreviewResult
     public List<AllocationResult> Allocations { get; set; } = new();
     public int TotalAllocatable { get; set; }    // SUM of remaining across all visible lines for this (warehouse,item) under the active scope
     public int Shortage { get; set; }            // always 0 on success in v2 — kept for transitional UI compatibility
-    public string Scope { get; set; } = "warehouse-wide";  // "warehouse-wide" | "pull-locked"
+    // "warehouse-wide" | "pull-locked"
+    // The third value ("pull-locked + variance overflow") went with the overflow walk: a
+    // receive can no longer draw on a PO this pull is not linked to (§5.1).
+    public string Scope { get; set; } = "warehouse-wide";
+}
+
+/// <summary>
+/// db/047 §2d — POST /api/receipts/reopen body. Clears the close flags on one window.
+///
+/// Exists because a zero-quantity close writes no <c>Receipts</c> row, so there is nothing
+/// to reverse: without this the line would be permanently closed with no route back. It is
+/// deliberately available for ANY closed window, not only zero-closed ones — a line closed
+/// by a short receipt can be reopened this way too, and reversing that receipt remains the
+/// other route.
+///
+/// The window is identified by (PullItemId, HourOfDay) because <c>Receipts</c> carries no
+/// PullItemWindowId and the rest of the receive path keys on the same pair.
+/// </summary>
+public class ReopenWindowRequest
+{
+    public Guid PullItemId { get; set; }
+    public byte HourOfDay { get; set; }
+
+    /// <summary>Required. Reopening is a correction and must be attributable (§2d).</summary>
+    public string Reason { get; set; } = "";
+}
+
+public class ReopenWindowResult
+{
+    public Guid PullItemId { get; set; }
+    public byte HourOfDay { get; set; }
+    public bool IsClosed { get; set; }        // always false on success
+    public int NewOutstanding { get; set; }   // MAX(0, Expected - Received)
 }
 
 /// <summary>POST /api/receipts/{id}/cancel body. Reason is required (§7.3).</summary>
@@ -117,6 +210,15 @@ public class ReceiptJournalRow
     public Guid WarehouseId { get; set; }
     public string WarehouseCode { get; set; } = "";
     public string WarehouseName { get; set; } = "";
+
+    /// <summary>
+    /// db/041 — IANA id from dbo.Warehouses.Timezone (default 'Asia/Bangkok').
+    /// ReceivedAt is UTC; the KTF export renders Date/SHIFT/Time in this zone.
+    /// Nullable defensively: the column is NOT NULL, but an unrecognised id
+    /// falls back rather than throwing (see KtfExportJob.ResolveZone).
+    /// </summary>
+    public string? WarehouseTimezone { get; set; }
+
     public string ItemCode { get; set; } = "";
     public string ItemDescription { get; set; } = "";
 
@@ -125,6 +227,10 @@ public class ReceiptJournalRow
     public string PoNumber { get; set; } = "";
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
+
+    /// <summary>db/041 — PurchaseOrderLines.InvoiceNo (db/021). Feeds the KTF "INV." column.</summary>
+    public string? InvoiceNo { get; set; }
+
     public Guid PurchaseOrderLineId { get; set; }
     public int PoLineNumber { get; set; }
 

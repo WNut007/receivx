@@ -10,6 +10,12 @@ public interface IExportService
     /// <summary>Queues a transactions export. Returns the assigned jobId.</summary>
     Task<Guid> EnqueueTransactionsExportAsync(TransactionsExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
 
+    /// <summary>
+    /// Queues a KTF form export. Takes the same filter as the transactions
+    /// export — the job pins Kind to 'receive' itself. Returns the assigned jobId.
+    /// </summary>
+    Task<Guid> EnqueueKtfExportAsync(TransactionsExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
+
     /// <summary>Queues a /Pos (Purchase Orders) export. Returns the assigned jobId.</summary>
     Task<Guid> EnqueuePosExportAsync(PosExportRequest request, Guid requesterUserId, string requesterEmail, string requesterName, CancellationToken ct = default);
 

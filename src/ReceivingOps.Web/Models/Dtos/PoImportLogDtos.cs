@@ -11,7 +11,9 @@ namespace ReceivingOps.Web.Models.Dtos;
 ///   <item><c>validated</c> — Stage 1 passed; awaiting operator confirm</item>
 ///   <item><c>queued</c> — operator confirmed; Hangfire enqueued</item>
 ///   <item><c>running</c> — Hangfire worker started RunAsync</item>
-///   <item><c>succeeded</c> — atomic insert tx committed</item>
+///   <item><c>succeeded</c> — Stage 2 ran to completion; see PosInserted /
+///         PosSkipped for what it actually did (a run that skipped every
+///         PO as a duplicate is still 'succeeded')</item>
 ///   <item><c>failed</c> — catastrophic error during Stage 2</item>
 /// </list>
 /// </summary>
@@ -35,6 +37,20 @@ public class PoImportLogRow
     public string? ValidationErrors { get; set; }
     public int? PosInserted { get; set; }
     public int? LinesInserted { get; set; }
+
+    /// <summary>
+    /// db/046 — PO groups skipped because PoNumber already existed. NULL on
+    /// rows written before skip-tracking existed (distinct from 0 = "this
+    /// run skipped nothing").
+    /// </summary>
+    public int? PosSkipped { get; set; }
+
+    /// <summary>
+    /// db/046 — JSON array of the skipped PoNumbers. Each named PO was left
+    /// completely untouched; duplicate grain is the PO, not the SKU line.
+    /// </summary>
+    public string? SkippedPoNumbers { get; set; }
+
     public string? ErrorMessage { get; set; }
     public string? HangfireJobId { get; set; }
 }

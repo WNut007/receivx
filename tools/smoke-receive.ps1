@@ -30,15 +30,29 @@ OK "Receipt $firstReceiptId, newReceivedQty=$($resp.newReceivedQty)"
 
 # ---------- 3. Receive cap violation ----------
 Step "Receive 9999999 (should 409 cap-at-expected)"
+# db/047 + brief rev 11 (§2f): an over-receipt is no longer a 409 cap violation.
+# It is refused as 400 OVER_RECEIPT_NOT_ACCEPTED unless the operator ticks
+# accept-variance, on every pull, locked or not. The same rewrite was applied to
+# smoke-hourcap-6.2 cases 2/4/8 when rev 11 shipped; this assertion was missed and
+# has been asserting a status the product deliberately stopped returning.
+#
+# Rewriting a test to match the code is normally a warning sign. It is justified
+# here only because the behaviour change was deliberate, documented in CLAUDE.md
+# and in ReceiptService's §2f comment, and already reflected in a sibling smoke —
+# the assertion went stale, the product did not regress.
 $body = @{ pullItemId = $PullItemOpen; hourOfDay = 12; qty = 9999999 } | ConvertTo-Json
 try {
     Invoke-WebRequest -Uri "$base/api/receipts" -Method POST -Body $body -ContentType 'application/json' -WebSession $session | Out-Null
-    Fail "Expected 409, got success"
+    Fail "Expected 400, got success"
 } catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 409) {
-        Fail "Expected 409, got $($_.Exception.Response.StatusCode.value__)"
+    $sc = $_.Exception.Response.StatusCode.value__
+    if ($sc -ne 400) { Fail "Expected 400 OVER_RECEIPT_NOT_ACCEPTED, got $sc" }
+    $code = $null
+    if ($_.ErrorDetails.Message) {
+        try { $code = ($_.ErrorDetails.Message | ConvertFrom-Json).code } catch { }
     }
-    OK "409 Conflict on cap-violation"
+    if ($code -ne 'OVER_RECEIPT_NOT_ACCEPTED') { Fail "Expected code OVER_RECEIPT_NOT_ACCEPTED, got '$code'" }
+    OK "400 OVER_RECEIPT_NOT_ACCEPTED on over-receipt without the tick"
 }
 
 # ---------- 4. Receive zero qty ----------

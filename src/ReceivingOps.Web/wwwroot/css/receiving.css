@@ -562,7 +562,17 @@
   /* ============ PROGRESS STRIP ============ */
   .progress-strip {
     display: grid;
-    grid-template-columns: repeat(4, 1fr) auto;
+    /* 5 stats: Items · Expected · Received · Outstanding · Variance. Variance
+       joined the strip with db/047 so the figures still reconcile once a line
+       is written off — see the comment in Views/Receiving/Index.cshtml.
+       minmax(0, 1fr), NOT 1fr: a 1fr track floors at its content's min-content
+       width, and the fifth stat pushed the track list's total min-content from
+       ~836px to ~1045px. That is the same measurement that made the strip drag
+       the whole body sideways below 840px (see the media query at the end of
+       this file, whose breakpoint moved to 1024px for this reason). minmax(0,…)
+       lets the tracks compress instead of forcing the .app grid past the
+       viewport. */
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
     gap: 0;
     padding: 0;
     border-bottom: 1px solid var(--border);
@@ -574,6 +584,9 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* Grid items default to min-width:auto, which would let a long value
+       re-widen the track that minmax(0, 1fr) is trying to cap. */
+    min-width: 0;
   }
   .stat-label {
     font-family: var(--font-mono);
@@ -605,6 +618,9 @@
     color: var(--complete);
   }
   .stat-trend.warn { color: var(--pending); }
+  /* Neutral sub-line. The variance figure is a settled fact, not a warning:
+     short and over deliveries happen on nearly every pull here. */
+  .stat-trend.muted { color: var(--text-muted); }
   .progress-bar-host {
     padding: 14px 24px;
     min-width: 300px;
@@ -651,10 +667,55 @@
 
   table {
     width: 100%;
+    /* border-collapse MUST stay `separate` — sticky cells don't work under
+       `collapse` (the shared border model drops the cell out of the flow). */
     border-collapse: separate;
     border-spacing: 0;
     min-width: 1400px;
   }
+
+  /* ============ FROZEN IDENTITY COLUMNS ============
+     Status / Item / Vendor / Remark pin to the left while the hour columns
+     scroll under them. Everything sits in one <table> inside .grid-wrap
+     (the only scroll container), so `left` is measured against that.
+
+     The `left` offsets are a running sum of the widths to their left, which
+     is why each frozen column is pinned to an EXACT width (width+min+max) —
+     under `table-layout: auto` a min-width alone lets the browser widen a
+     column and every offset after it drifts.
+
+     Layering: hour cells are `position: relative` (z-auto), so frozen body
+     cells need an explicit z-index to paint above them; the header row is
+     z-index 5, so the frozen header cells (the top-left corner, which must
+     beat both) go higher still.
+       hour body cell  auto  <  frozen body 2  <  header 5  <  frozen header 6 */
+  .freeze {
+    position: sticky;
+    z-index: 2;
+  }
+  /* Opaque background is what stops the scrolling hour cells showing through.
+     Scoped to tbody on purpose: a bare `.freeze { background }` (0,1,0) would
+     out-specify `thead th` (0,0,2) and repaint the header the body colour.
+     Kept below the (0,2,2) hover rule so hover still wins. */
+  tbody td.freeze { background: var(--surface); }
+  thead th.freeze { z-index: 6; }
+
+  .c-status { left: 0;     width: 100px; min-width: 100px; max-width: 100px; }
+  .c-item   { left: 100px; width: 260px; min-width: 260px; max-width: 260px; }
+  .c-vendor { left: 360px; width: 180px; min-width: 180px; max-width: 180px; }
+  .c-remark {
+    /* 300px, not the 140px the other identity columns were sized against: this
+       cell carries "<remark> · <SPECIAL>" and the ERP's own remark format
+       ("0000016301-HDA-B43") already measured a full 140px on its own, so at the
+       old width the SPECIAL was ellipsised away in its entirety. Last in the
+       frozen block, so widening it shifts no other `left` offset — it only grows
+       the block to 840px. */
+    left: 540px; width: 300px; min-width: 300px; max-width: 300px;
+    /* Right edge of the frozen block: a hard rule plus a soft shadow so the
+       seam against the scrolling zone reads as an edge, not a column border. */
+    box-shadow: 1px 0 0 var(--border), 4px 0 8px -4px rgba(0, 0, 0, 0.12);
+  }
+
   thead th {
     position: sticky;
     top: 0;
@@ -732,14 +793,57 @@
   .item-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
   .vendor-cell { padding: 12px 14px; background: var(--surface); }
   .vendor-code { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
-  .vendor-name { font-size: 12px; color: var(--text); margin-top: 2px; font-weight: 500; }
+  .vendor-name {
+    font-size: 12px;
+    color: var(--text);
+    margin-top: 2px;
+    font-weight: 500;
+    /* Clamp to two lines to hold the ITEM column's code-over-description rhythm.
+       Real supplier names ("WESTERN DIGITAL STORAGE TECHNOLOGIES (BPI)") wrap to
+       three in a 180px column and push every row to ~95px, which costs a third of
+       the visible rows on a console operators scan. The untruncated name is still
+       on the receive modal (#m-vendor). */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* Remark over SPECIAL, on the same two-line rhythm as .vendor-code/.vendor-name
+     above: a first line, then a 2px-offset second line clamped to two rows.
+     Width comes from .c-remark — kept there beside the frozen-block offsets so
+     the two can't drift apart. The cell keeps its own muted treatment rather
+     than borrowing Vendor's mono, so the column still reads as Remark. Each
+     line is rendered only when it has a value (see receiving.js), so a missing
+     field costs no height. */
   .remark-cell {
     padding: 12px 14px;
     background: var(--surface);
     font-size: 11px;
     color: var(--text-muted);
-    font-style: italic;
-    max-width: 140px;
+  }
+  .remark-text {
+    /* One line: remarks are a fixed ERP format, and a wrap here would push the
+       SPECIAL line down on every row. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .remark-special {
+    margin-top: 2px;
+    /* Bold, so SPECIAL carries the emphasis on its line the way .vendor-name
+       does in the Vendor cell. 600 is this page's existing weight for a
+       stand-out line (.item-code). Colour stays as the cell's, so the column
+       still reads as Remark. */
+    font-weight: 600;
+    /* 12px matches .vendor-name — the cell's own 11px would otherwise apply. */
+    font-size: 12px;
+    /* SPECIAL is free text and runs to ~65 chars at worst, so clamp exactly like
+       .vendor-name. Full value is on the cell's title attribute — the receive
+       modal has no SPECIAL field to fall back to (unlike vendor's #m-vendor). */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* ============ STATUS COLUMN ============ */
@@ -801,6 +905,20 @@
     background: var(--surface-3) !important;
     opacity: 0.6;
   }
+  /* …except the frozen cells. `opacity` makes the WHOLE cell translucent —
+     background included — so a sticky cell at 0.6 lets the hour columns slide
+     visibly through it. Keep those cells fully opaque and reproduce the same
+     washed-out look with a veil of the row colour laid over the content.
+     (inset works because a sticky cell is already a containing block.) */
+  tr.row-canceled td.freeze { opacity: 1; }
+  tr.row-canceled td.freeze::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--surface-3);
+    opacity: 0.4;
+    pointer-events: none;
+  }
   tr.row-canceled .item-code,
   tr.row-canceled .vendor-name {
     text-decoration: line-through;
@@ -828,12 +946,18 @@
     pointer-events: none;
   }
 
-  /* "NEW" row gets a subtle highlight */
+  /* "NEW" row gets a subtle highlight.
+     background-image + background-color rather than the `background` shorthand:
+     the shorthand resets background-color to transparent, and since these four
+     cells are now frozen, the gradient's transparent tail would let the
+     scrolling hour columns show straight through them. Compositing the same
+     gradient over an opaque surface keeps the tint identical but solid. */
   tr.row-new .info-cell,
   tr.row-new .vendor-cell,
   tr.row-new .status-cell,
   tr.row-new .remark-cell {
-    background: linear-gradient(90deg, rgba(31, 111, 184, 0.04), transparent 60%);
+    background-color: var(--surface);
+    background-image: linear-gradient(90deg, rgba(31, 111, 184, 0.04), transparent 60%);
   }
   tr.row-new .info-cell { border-left: 3px solid var(--status-new); }
 
@@ -909,6 +1033,45 @@
     width: 3px;
     background: var(--pending);
   }
+  /* ====================================================================== */
+  /* db/047 §2d — CLOSED window.                                            */
+  /*                                                                        */
+  /* Deliberately NOT green: the line is finished, but finished SHORT, and  */
+  /* dressing that as success hides the write-off. Muted + struck-through   */
+  /* numerals + a hatched left edge read as "settled, not fulfilled" and    */
+  /* are distinguishable from 'pending' at a glance across a dense grid,    */
+  /* which is the whole point — 400 / 1,000 alone is not.                   */
+  /* ====================================================================== */
+  .hour-btn.closed {
+    background: var(--surface-2);
+    opacity: 0.92;
+  }
+  .hour-btn.closed .recv,
+  .hour-btn.closed .exp,
+  .hour-btn.closed .sep {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .hour-btn.closed .hour-status {
+    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  .hour-btn.closed .hour-meter span { background: var(--text-muted); }
+  .hour-btn.closed::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    /* Hatched rather than solid — a solid bar reads as another status colour. */
+    background: repeating-linear-gradient(
+      135deg,
+      var(--text-muted) 0 2px,
+      transparent 2px 4px
+    );
+  }
+
   .hour-btn.complete { background: var(--complete-bg); }
   .hour-btn.complete .recv { color: var(--complete); }
   .hour-btn.complete .hour-meter span { background: var(--complete); }
@@ -1392,6 +1555,254 @@
     font-weight: 600;
   }
 
+  /* ======================================================================== */
+  /* db/047 §2f — hour-cap lock marker, sits under the qty cards.             */
+  /*                                                                          */
+  /* NEUTRAL in both states, deliberately. A locked cap is a fact about the    */
+  /* pull, not a fault; it becomes an error only when exceeded, and the        */
+  /* readout and the server message cover that. Red here would shout at the    */
+  /* operator for opening a modal.                                            */
+  /* ======================================================================== */
+  .cap-lock {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: -6px 0 12px;
+    padding: 6px 11px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-muted);
+  }
+  .cap-lock-ico { flex: 0 0 auto; opacity: 0.75; }
+  /* The locked variant earns a slightly firmer edge — still not a colour. */
+  .cap-lock.is-locked {
+    border-color: var(--border-bright);
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  /* ======================================================================== */
+  /* db/047 §2d — closed-state banner. Replaces the quantity block entirely.  */
+  /* Muted like the grid's closed cell, for the same reason: the line is      */
+  /* finished but finished short, and neither success-green nor error-red is  */
+  /* the truth. The reason is shown in full, never truncated.                 */
+  /* ======================================================================== */
+  .slotclose-banner {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .slotclose-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .slotclose-pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+  .slotclose-who {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .slotclose-figures {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .slotclose-figures b { color: var(--text); font-size: 14px; }
+  .slotclose-variance.short b { color: var(--over); }
+  .slotclose-variance.over  b { color: var(--warn); }
+  .slotclose-reason-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .slotclose-reason {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;      /* full text, wrapped — never truncated */
+    margin-bottom: 14px;
+  }
+  .slotclose-reason.is-empty { color: var(--text-muted); font-style: italic; }
+
+  .btn-slot-reopen {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-slot-reopen:hover:not(:disabled) { background: var(--surface-2); }
+  .btn-slot-reopen:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .reopen-confirm {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+  }
+  .reopen-confirm-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .reopen-confirm-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .reopen-reason-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .reopen-confirm textarea {
+    width: 100%;
+    min-height: 62px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    resize: vertical;
+  }
+  .reopen-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .btn-ghost {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* ======================================================================== */
+  /* db/047 §7 — accept-variance checkbox. Sits inside the green "How many    */
+  /* units?" band, below the input.                                           */
+  /* ======================================================================== */
+  .variance-accept {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  /* Mandatory for an over-quantity: amber, matching the readout's own amber so
+     the box and the line above it are visibly the same conversation. */
+  .variance-accept.is-required {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+  }
+  .variance-accept-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    margin: 0;
+  }
+  .variance-accept-row input[type="checkbox"] {
+    margin-top: 2px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    cursor: pointer;
+    accent-color: var(--warn);
+  }
+  .variance-accept-text { display: block; }
+  .variance-accept-text b {
+    display: block;
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+  .variance-accept-sub {
+    display: block;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  /* Note becomes mandatory only when the reason code is OTHER (db/049). */
+  #m-note.is-error {
+    border-color: var(--over-border);
+    background: var(--over-bg);
+  }
+
+  /* db/049 — reason dropdown, inside the variance band below the checkbox row. */
+  .variance-reason {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .variance-reason-label {
+    display: block;
+    margin-bottom: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  .variance-reason .select {
+    width: 100%;
+    padding-left: 12px;
+  }
+  /* The Thai labels are the operator's real reading language; the rest of the modal is
+     mono/uppercase English, which mangles Thai glyph shaping. Force the UI font stack
+     and normal casing on this control only. */
+  .variance-reason .select,
+  .variance-reason .select option {
+    font-family: var(--font-ui, system-ui, sans-serif);
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  #m-reason.is-error {
+    border-color: var(--over-border);
+    background: var(--over-bg);
+  }
+  .note-required-msg {
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--over);
+  }
+
   .cap-hint {
     margin-bottom: 14px;
     padding: 8px 12px;
@@ -1411,6 +1822,15 @@
     color: var(--over);
     background: var(--over-bg);
     border-color: var(--over-border);
+    font-weight: 600;
+  }
+  /* db/047 §7 — the live variance readout is green when the quantity completes the
+     line. Uses --complete, the same token the completed hour-cell uses, so "done"
+     means one colour across the screen. */
+  .cap-hint.ok {
+    color: var(--complete);
+    background: var(--complete-bg);
+    border-color: var(--complete-border);
     font-weight: 600;
   }
   /* v2 §7.1 — overage on the hour is allowed; only show a soft yellow hint */
@@ -1469,6 +1889,27 @@
   .alloc-line {
     display: block;
     padding: 1px 0;
+  }
+  /* §4.5 — the over-ordered figure on an allocation slice. Deliberately NOT the
+     --over tokens the old overflow tag used: those said "we went past the plan",
+     which was right when the excess spilled onto another pull's PO and is wrong
+     now that it stays on this pull's own line. Over-delivery happens on nearly
+     every pull here, so this reads like .stat-trend.muted on the stats strip —
+     a settled fact stated in muted mono, not a warning. */
+  .alloc-over-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    margin-left: 6px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    vertical-align: 1px;
   }
   .cap-hint .ico {
     width: 14px; height: 14px;
@@ -2080,4 +2521,102 @@
   .tx-reason span { font-size: 14px; color: var(--text-dim); }
   .tx-reason:has(input:checked) { background: var(--accent-bg); border-color: var(--accent); }
   .tx-reason:has(input:checked) span { color: var(--text); }
+
+/* ===== CSS:compact — tablet-portrait table breakpoint =====
+   ≤840px covers the 10.1" target device (800×1165 portrait) plus nearby
+   panels, and stays clear of its 1280px landscape. The desktop frozen block
+   (Status 100 + Item 260 + Vendor 180 + Remark 300 = 840px) is wider than an
+   800px viewport, so the sticky cells eclipse the whole screen and the hour
+   columns can never be scrolled into view. Compact mode keeps ONLY Item
+   frozen, re-homes the status badge under the item code (.status-inline,
+   rendered on every row by receiving.js), and lets Vendor + Remark scroll
+   with the hour columns.
+
+   Kept at the END of the file on purpose: several overrides below tie with
+   their base rules on specificity (.c-item left, table min-width, .hour-btn
+   min-width) and win on source order alone. */
+
+  /* Compact-mode home for the status badge — hidden on desktop, where the
+     badge shows in its own frozen c-status column. */
+  .info-cell .status-inline { display: none; }
+
+  /* Strip-only intermediate band. db/047's Variance figure took the strip from
+     four stats to five, pushing the desktop track list's min-content from
+     ~836px to ~1045px — back into the range that used to drag the whole body
+     sideways. Five 28px figures plus a 300px progress bar are not legible at
+     this width anyway, so the strip reflows 3-up here.
+
+     Deliberately its own query rather than moving the 840px breakpoint up: that
+     block is the compact-TABLE mode (it hides .c-status, shrinks .c-item,
+     .c-vendor, .hour-btn …), and a laptop at 900px should not lose its status
+     column because a stat card was added. Below 840px the rule further down
+     takes over at 2-up. */
+  @media (max-width: 1080px) {
+    .progress-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .progress-bar-host { grid-column: 1 / -1; }
+  }
+
+  @media (max-width: 840px) {
+    /* The stats strip's desktop track list (repeat(4,1fr) auto at the time)
+       had a min-content of ~836px — wider than the whole viewport — which
+       forced the .app grid column past the screen and made the BODY pan
+       horizontally, dragging the frozen item column off with it. Reflow to
+       a 2×2 stat grid with the progress bar full-width underneath.
+       minmax(0,1fr) so a long stat value can't re-widen the track. */
+    .progress-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .progress-bar-host { grid-column: 1 / -1; }
+
+    /* 230 item + 120 vendor + 150 remark + 4×110 hours = 940. On the 800px
+       target that leaves a ~570px scroll pane beside the frozen item column;
+       one short swipe reaches the last hour column. */
+    table { min-width: 940px; }
+
+    /* Status column collapses — the badge lives under the item code now. */
+    .c-status { display: none; }
+    .info-cell .status-inline { display: block; margin-top: 8px; }
+
+    /* Item becomes the only frozen column and inherits Remark's desktop seam
+       treatment (hard rule + soft shadow) as the new frozen-block edge. */
+    .c-item {
+      left: 0;
+      width: 230px; min-width: 230px; max-width: 230px;
+      box-shadow: 1px 0 0 var(--border), 4px 0 8px -4px rgba(0, 0, 0, 0.12);
+    }
+
+    /* Vendor + Remark unfreeze and scroll with the hour columns.
+       Body cells go `relative`, NOT `static`: the canceled-row veil
+       (tr.row-canceled td.freeze::after, inset: 0) needs the cell to remain
+       a containing block. `left: auto` neutralises the base 360/540px offsets
+       (under `relative` an inherited left would SHIFT the cell, not pin it).
+       z-index drops to auto so mid-scroll they slide UNDER the sticky Item
+       cell — both sat at 2, and equal z means later DOM order (Vendor) would
+       paint over the frozen block. */
+    tbody td.c-vendor,
+    tbody td.c-remark {
+      position: relative;
+      left: auto;
+      z-index: auto;
+    }
+    /* Header cells keep `sticky` from the base `thead th` rule (top: 0 must
+       survive so the header row still pins vertically) but lose the left pin,
+       and drop from 6 to the hour headers' 5 so they pass under the frozen
+       Item header at the top-left corner. */
+    thead th.c-vendor,
+    thead th.c-remark {
+      left: auto;
+      z-index: 5;
+    }
+
+    .c-vendor { width: 120px; min-width: 120px; max-width: 120px; }
+    .c-remark {
+      width: 150px; min-width: 150px; max-width: 150px;
+      box-shadow: none; /* frozen-block seam moved to .c-item above */
+    }
+    /* 120px can't hold two clamped lines of a real supplier name — drop to a
+       single ellipsized line. Full text stays in the cell tooltip receiving.js
+       now renders (same treatment Remark already had). */
+    .vendor-name { -webkit-line-clamp: 1; }
+
+    .hour-btn { min-width: 110px; }
+  }
 

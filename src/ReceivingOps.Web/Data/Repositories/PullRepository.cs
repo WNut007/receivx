@@ -1,5 +1,6 @@
 using System.Text;
 using Dapper;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Data.Repositories;
@@ -27,6 +28,7 @@ public class PullRepository : IPullRepository
                 p.LockPoByPull,
                 p.LockHourCap,
                 p.ReferenceNumber,                 -- v2.x Phase 7.1: per-pull reference (vendor invoice)
+                p.Origin,                          -- db/050: 'po-import' when the WIP synthesis built this pull; NULL otherwise
                 ISNULL(vp.TotalExpected,  0) AS TotalExpected,
                 ISNULL(vp.TotalReceived,  0) AS TotalReceived,
                 ISNULL(vp.ActiveItemCount, 0) +
@@ -39,15 +41,36 @@ public class PullRepository : IPullRepository
                 (SELECT COUNT(*) FROM dbo.PullItemWindows piw
                  INNER JOIN dbo.PullItems pi ON pi.Id = piw.PullItemId
                  WHERE pi.PullId = p.Id AND pi.Status <> 'canceled') AS WindowsTotal,
+                -- db/047 §2c query 4 — the dashboard / pull-list badge. Without the
+                -- IsClosed filter a variance-closed line keeps reappearing in the
+                -- operator's worklist forever, which is the bug this change exists to fix.
                 (SELECT COUNT(*) FROM dbo.PullItemWindows piw
                  INNER JOIN dbo.PullItems pi ON pi.Id = piw.PullItemId
                  WHERE pi.PullId = p.Id AND pi.Status <> 'canceled'
-                   AND piw.ExpectedQty > piw.ReceivedQty) AS WindowsPending
+                   AND piw.IsClosed = 0
+                   AND piw.ExpectedQty > piw.ReceivedQty) AS WindowsPending,
+                -- Phase 7c: digital-signature progress. One grouped join to the
+                -- tiny PullSignatures table (UQ_PullSig_Party caps it at 3 rows/
+                -- pull). SignedCount drives the N/3 badge; the per-party bits feed
+                -- the left-menu chips (7e) + the 'unsigned for my role' filter.
+                ISNULL(sg.SignedCount, 0)                     AS SignedCount,
+                CAST(ISNULL(sg.CustomerSigned,   0) AS BIT)   AS CustomerSigned,
+                CAST(ISNULL(sg.WarehouseSigned,  0) AS BIT)   AS WarehouseSigned,
+                CAST(ISNULL(sg.ProductionSigned, 0) AS BIT)   AS ProductionSigned
         FROM    dbo.Pulls p
         INNER JOIN dbo.Warehouses w  ON w.Id  = p.WarehouseId
         LEFT  JOIN dbo.Users u       ON u.Id  = p.CreatedBy
         LEFT  JOIN dbo.Users cb      ON cb.Id = p.ClosedBy
-        LEFT  JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id ";
+        LEFT  JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id
+        LEFT  JOIN (
+            SELECT  ps.PullId,
+                    COUNT(*) AS SignedCount,
+                    MAX(CASE WHEN ps.Party = 'Customer'   THEN 1 ELSE 0 END) AS CustomerSigned,
+                    MAX(CASE WHEN ps.Party = 'Warehouse'  THEN 1 ELSE 0 END) AS WarehouseSigned,
+                    MAX(CASE WHEN ps.Party = 'Production' THEN 1 ELSE 0 END) AS ProductionSigned
+            FROM    dbo.PullSignatures ps
+            GROUP BY ps.PullId
+        ) sg ON sg.PullId = p.Id ";
 
     private readonly IDbConnectionFactory _factory;
 
@@ -99,6 +122,108 @@ public class PullRepository : IPullRepository
         var rows = await conn.QueryAsync<PullSummary>(
             new CommandDefinition(sql.ToString(), p, cancellationToken: ct));
         return rows.AsList();
+    }
+
+    public async Task<(IReadOnlyList<PullSummary> Items, PullDashboardAggregates Aggregates)>
+        QueryDashboardAsync(PullQuery filter, CancellationToken ct = default)
+    {
+        // ---- Shared WHERE — identical predicate on the page slice AND the aggregate ----
+        var where = new StringBuilder("WHERE 1 = 1 ");
+        var p = new DynamicParameters();
+
+        // Warehouse: two mutually-exclusive, null-guarded clauses, BOTH keyed on
+        // p.WarehouseId (admin-resolved Guid vs non-admin session force). "All
+        // warehouses" arrives as both params NULL ⇒ no predicate. Keying on
+        // WarehouseId (not w.Code) hits IX_Pulls_Date's INCLUDE(WarehouseId).
+        where.Append("AND (@WarehouseId        IS NULL OR p.WarehouseId = @WarehouseId) ");
+        where.Append("AND (@SessionWarehouseId IS NULL OR p.WarehouseId = @SessionWarehouseId) ");
+        p.Add("WarehouseId", filter.WarehouseId);
+        p.Add("SessionWarehouseId", filter.SessionWarehouseId);
+
+        // Date range — SAME inclusive predicate the old QueryAsync used (PullDate is DATE).
+        where.Append("AND (@DateFrom IS NULL OR p.PullDate >= @DateFrom) ");
+        where.Append("AND (@DateTo   IS NULL OR p.PullDate <= @DateTo) ");
+        p.Add("DateFrom", filter.DateFrom?.ToDateTime(TimeOnly.MinValue));
+        p.Add("DateTo",   filter.DateTo?.ToDateTime(TimeOnly.MinValue));
+
+        // Status (inert for the dashboard — it never sends one — but honored if present).
+        if (!string.IsNullOrWhiteSpace(filter.Status))
+        {
+            where.Append("AND p.Status = @Status ");
+            p.Add("Status", filter.Status);
+        }
+
+        // §3.5 lock filter (client bit filter, promoted server-side).
+        where.Append("AND (@Lock IS NULL OR p.LockPoByPull = @Lock) ");
+        p.Add("Lock", filter.LockPoByPull);
+
+        // Search — preserve the EXACT current visible behavior (unchanged per sign-off):
+        //   (a) existing multi-token AND over PullNumber / w.Code / w.Name (server), plus
+        //   (b) the client substring over PullNumber + Code + Name + operator (u.Name).
+        // ANDing them reproduces today's intersection; operator search stays inert.
+        var searchActive = !string.IsNullOrWhiteSpace(filter.Q);
+        if (searchActive)
+        {
+            var raw = filter.Q!.Trim();
+            where.Append(
+                "AND LOWER(CONCAT(p.PullNumber, ' ', w.Code, ' ', w.Name, ' ', ISNULL(u.Name, ''))) LIKE @QSub ");
+            p.Add("QSub", "%" + raw.ToLowerInvariant() + "%");
+
+            var tokens = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                var name = $"Q{i}";
+                where.Append($"AND (p.PullNumber LIKE @{name} OR w.Code LIKE @{name} OR w.Name LIKE @{name}) ");
+                p.Add(name, "%" + tokens[i] + "%");
+            }
+        }
+
+        p.Add("Skip", Math.Max(0, (Math.Max(1, filter.Page) - 1) * Math.Clamp(filter.PageSize, 1, 500)));
+        p.Add("Take", Math.Clamp(filter.PageSize, 1, 500));
+
+        // ---- Result set 1: page of cards (UNCHANGED projection + UNCHANGED default sort) ----
+        var pageSql = SummarySelect + where + @"
+            ORDER BY p.PullDate DESC, p.PullNumber DESC
+            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;";
+
+        // ---- Result set 2: aggregates over the FULL filtered set (one row) ----
+        // vw_PullProgress is 1:1 with a pull (GROUP BY p.Id), so the LEFT JOIN does
+        // not change COUNT(*). ItemsTotal = Σ (all PullItems per pull, active +
+        // canceled) so it matches PullSummary.ItemCount exactly — NOT vp.ActiveItemCount
+        // (which would drop canceled items and undercount). PullItems is pre-aggregated
+        // in the `pic` derived table and LEFT JOINed 1:1, because SUM() cannot wrap a
+        // correlated subquery (SQL error 130). ReceivedTotal/ExpectedTotal SUM joined
+        // vw_PullProgress COLUMNS (vp), not subqueries, so they are already legal. The
+        // Warehouses/Users joins are added only when searching, so the default hot path
+        // stays Pulls + view + pic.
+        var aggJoins = searchActive
+            ? "INNER JOIN dbo.Warehouses w ON w.Id = p.WarehouseId LEFT JOIN dbo.Users u ON u.Id = p.CreatedBy "
+            : "";
+        var aggSql = @"
+            SELECT
+                COUNT(*)                                                            AS TotalPulls,
+                ISNULL(SUM(CASE WHEN p.Status='pending'        THEN 1 ELSE 0 END),0) AS Pending,
+                ISNULL(SUM(CASE WHEN p.Status='in_progress'    THEN 1 ELSE 0 END),0) AS InProgress,
+                ISNULL(SUM(CASE WHEN p.Status='fully_received' THEN 1 ELSE 0 END),0) AS FullyReceived,
+                ISNULL(SUM(CASE WHEN p.Status='closed'         THEN 1 ELSE 0 END),0) AS Closed,
+                ISNULL(SUM(ISNULL(pic.ItemCount, 0)), 0)                   AS ItemsTotal,
+                ISNULL(SUM(ISNULL(vp.TotalReceived, 0)), 0)                AS ReceivedTotal,
+                ISNULL(SUM(ISNULL(vp.TotalExpected, 0)), 0)                AS ExpectedTotal
+            FROM dbo.Pulls p
+            LEFT JOIN dbo.vw_PullProgress vp ON vp.PullId = p.Id
+            LEFT JOIN (
+                SELECT PullId, COUNT(*) AS ItemCount
+                FROM dbo.PullItems
+                GROUP BY PullId
+            ) pic ON pic.PullId = p.Id
+            " + aggJoins + where + ";";
+
+        using var conn = _factory.Create();
+        using var multi = await conn.QueryMultipleAsync(
+            new CommandDefinition(pageSql + aggSql, p, cancellationToken: ct));
+        var items = (await multi.ReadAsync<PullSummary>()).AsList();
+        var agg = await multi.ReadSingleAsync<PullDashboardAggregates>();
+        return (items, agg);
     }
 
     // §3.5 typeahead for the linked-pull picker on /Pos. Returns at most @Take
@@ -161,11 +286,13 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
-            ORDER BY pi.SortOrder, pi.ItemCode, piw.HourOfDay;";
+            ORDER BY pi.ItemCode, pi.VendorCode, pi.SortOrder, piw.HourOfDay;";
 
         using var conn = _factory.Create();
 
@@ -212,6 +339,14 @@ public class PullRepository : IPullRepository
                     HourOfDay = h,
                     ExpectedQty = r.ExpectedQty ?? 0,
                     ReceivedQty = r.ReceivedQty ?? 0,
+                    IsClosed = r.IsClosed ?? false,   // db/047
+                    ClosedAt = r.ClosedAt,
+                    ClosedReason = r.ClosedReason,
+                    // db/049 — code plus its label, resolved from the one map in
+                    // VarianceReasonCodes so no client holds a second copy of the labels
+                    // and none can render a raw code by accident.
+                    VarianceReasonCode = (string?)r.VarianceReasonCode,
+                    VarianceReasonLabel = VarianceReasonCodes.Label((string?)r.VarianceReasonCode),
                 });
             }
         }
@@ -238,6 +373,7 @@ public class PullRepository : IPullRepository
             LockPoByPull = summary.LockPoByPull,
             LockHourCap = summary.LockHourCap,
             ReferenceNumber = summary.ReferenceNumber,
+            Origin = summary.Origin,                    // db/050 — drawer provenance row
             TotalExpected = summary.TotalExpected,
             TotalReceived = summary.TotalReceived,
             ItemCount = summary.ItemCount,
@@ -245,7 +381,25 @@ public class PullRepository : IPullRepository
             NewCount = summary.NewCount,
             WindowsTotal = summary.WindowsTotal,
             WindowsPending = summary.WindowsPending,
-            Items = itemsByGuid.Values.OrderBy(i => i.SortOrder).ThenBy(i => i.ItemCode).ToList(),
+            // Ordered by SKU, not by insertion order (same rule as itemsSql above).
+            // VendorCode second because a SKU carried by two storers is two legitimate
+            // rows (fa8a0e2): they belong next to each other, and a storer split that
+            // lands at MAX(SortOrder)+1 must not fall to the bottom of the grid.
+            // Ordinal to match ItemKey — a culture-aware compare orders these machine
+            // codes differently depending on the host locale.
+            //
+            // SortOrder is the last key so two rows can never swap between loads, and
+            // it stays the last key. It carries no unique constraint, so all three can
+            // in principle tie; zero groups do today across 51,960 rows. Do not
+            // "complete" this with .ThenBy(i => i.Id) — an Id tiebreaker pins the order
+            // back to insertion sequence, the exact thing this ordering moves away
+            // from. A tie appearing is a data question worth noticing, not one to bury
+            // under a GUID.
+            Items = itemsByGuid.Values
+                .OrderBy(i => i.ItemCode, StringComparer.Ordinal)
+                .ThenBy(i => i.VendorCode, StringComparer.Ordinal)
+                .ThenBy(i => i.SortOrder)
+                .ToList(),
         };
     }
 
@@ -296,7 +450,8 @@ public class PullRepository : IPullRepository
     //   rows (which carry the negative qty per the §6 CHECK constraint). The
     //   reversal negatives cancel the originals at SUM time, and HAVING
     //   SUM > 0 drops (PO × Line × Item) tuples that net to zero.
-    public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(Guid pullId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(
+        Guid pullId, bool wdtTransferLinesOnly = false, CancellationToken ct = default)
     {
         // The remaining ERP-sourced extended fields below are invariant per
         // (PoId, LineNumber). MAX() lets us surface them without extending
@@ -306,7 +461,15 @@ public class PullRepository : IPullRepository
         // Invoice was promoted from a MAX'd line attribute to a first-class
         // grouping key so two distinct invoices under the same vendor / sub /
         // to-loc triple split into separate DOs (one page each in the PDF).
-        const string sql = @"
+        // DN opt-in whitelist: keep ONLY lines whose Note is exactly the WDT
+        // sentinel; every other line — including NULL/empty Note — is excluded
+        // (NULL falls out of `=` naturally; no ISNULL/COALESCE wrapper). Exact
+        // equality only — no LIKE/prefix — so 'Transferred from WDT2' is excluded.
+        var wdtFilter = wdtTransferLinesOnly
+            ? "\n              AND   pol.Note = @WdtTransferNote"
+            : "";
+
+        var sql = @"
             SELECT  pol.VendorCode,
                     pol.VendorName,
                     pol.SubInventory,
@@ -332,7 +495,7 @@ public class PullRepository : IPullRepository
             INNER JOIN dbo.PurchaseOrders po ON po.Id = r.PurchaseOrderId
             INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
             WHERE   pi.PullId = @PullId
-              AND   r.ReversedById IS NULL
+              AND   r.ReversedById IS NULL" + wdtFilter + @"
             GROUP BY pol.VendorCode, pol.VendorName,
                      pol.SubInventory, pol.ToLocation, pol.InvoiceNo,
                      pol.OrderId, pol.DeliveryDate,
@@ -344,7 +507,10 @@ public class PullRepository : IPullRepository
 
         using var conn = _factory.Create();
         var rows = await conn.QueryAsync<DoReportRow>(
-            new CommandDefinition(sql, new { PullId = pullId }, cancellationToken: ct));
+            new CommandDefinition(
+                sql,
+                new { PullId = pullId, WdtTransferNote = DoReportConstants.WdtTransferNote },
+                cancellationToken: ct));
         return rows.AsList();
     }
 
@@ -356,11 +522,13 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId
-            ORDER BY pi.SortOrder, pi.ItemCode, piw.HourOfDay;";
+            ORDER BY pi.ItemCode, pi.VendorCode, pi.SortOrder, piw.HourOfDay;";
 
         using var conn = _factory.Create();
         var rows = await conn.QueryAsync<PullItemRow>(
@@ -375,7 +543,9 @@ public class PullRepository : IPullRepository
                     pi.Tag, pi.Status, pi.Remark, pi.SortOrder,
                     pi.ProductFamily, pi.FromSubInventory, pi.ToSubInventory,
                     pi.SpecialControl, pi.TrialId, pi.Location, pi.[Phase],
-                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty
+                    piw.HourOfDay, piw.ExpectedQty, piw.ReceivedQty,
+                    piw.IsClosed, piw.ClosedAt, piw.ClosedReason,  -- db/047
+                    piw.VarianceReasonCode                        -- db/049
             FROM    dbo.PullItems pi
             LEFT JOIN dbo.PullItemWindows piw ON piw.PullItemId = pi.Id
             WHERE   pi.PullId = @PullId AND pi.Id = @ItemId
@@ -455,10 +625,23 @@ public class PullRepository : IPullRepository
                     HourOfDay = h,
                     ExpectedQty = r.ExpectedQty ?? 0,
                     ReceivedQty = r.ReceivedQty ?? 0,
+                    IsClosed = r.IsClosed ?? false,   // db/047
+                    ClosedAt = r.ClosedAt,
+                    ClosedReason = r.ClosedReason,
+                    // db/049 — code plus its label, resolved from the one map in
+                    // VarianceReasonCodes so no client holds a second copy of the labels
+                    // and none can render a raw code by accident.
+                    VarianceReasonCode = (string?)r.VarianceReasonCode,
+                    VarianceReasonLabel = VarianceReasonCodes.Label((string?)r.VarianceReasonCode),
                 });
             }
         }
-        return byGuid.Values.OrderBy(i => i.SortOrder).ThenBy(i => i.ItemCode);
+        // Same order as GetByIdAsync — SKU, then storer, then SortOrder as the
+        // final tiebreaker. See the comment there for why.
+        return byGuid.Values
+            .OrderBy(i => i.ItemCode, StringComparer.Ordinal)
+            .ThenBy(i => i.VendorCode, StringComparer.Ordinal)
+            .ThenBy(i => i.SortOrder);
     }
 
     private sealed class PullItemRow
@@ -482,5 +665,12 @@ public class PullRepository : IPullRepository
         public byte? HourOfDay { get; set; }
         public int? ExpectedQty { get; set; }
         public int? ReceivedQty { get; set; }
+        // db/047 — nullable because the window join is a LEFT JOIN: an item with no
+        // windows yields NULLs across the whole window group, not just the quantities.
+        public bool? IsClosed { get; set; }
+        public DateTime? ClosedAt { get; set; }
+        public string? ClosedReason { get; set; }
+        // db/049 — NULL on open windows AND on windows closed before reason codes existed.
+        public string? VarianceReasonCode { get; set; }
     }
 }

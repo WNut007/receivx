@@ -33,17 +33,70 @@ $script:smkN = 0
 
 function SqlCleanup {
     # Same Receipts-then-Pulls order as smoke-hourcap-6.2 (Receipts FK blocks
-    # Pulls deletion when this smoke actually receives).
+    # Pulls deletion when this smoke actually receives) — and the same restore of
+    # the PO capacity those receipts consumed, which is the part the copied version
+    # was missing. Measured at 450 units leaked per run of THIS file; see the fuller
+    # note in smoke-hourcap-6.2.ps1's SqlCleanup for why it matters and why the
+    # recompute is set-from-truth and line-scoped rather than a decrement.
+    #
+    # Both files share the PL-SHC-% namespace and the SUMMARY seed POs, so they leak
+    # into the same pool and have to be fixed together. If a third smoke ever adopts
+    # this teardown, it needs this block too.
     $sql = @'
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
+
+DECLARE @touched TABLE (LineId UNIQUEIDENTIFIER PRIMARY KEY);
+INSERT INTO @touched (LineId)
+SELECT DISTINCT r.PurchaseOrderLineId
+FROM   dbo.Receipts r
+INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE  p.PullNumber LIKE 'PL-SHC-%' AND r.PurchaseOrderLineId IS NOT NULL;
+
 DELETE r FROM dbo.Receipts r
 INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
 INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
 WHERE p.PullNumber LIKE 'PL-SHC-%';
+
+-- FK_PullSig_Pull is NO_ACTION, so signed pulls block the delete below and one
+-- blocked row strands them all. See smoke-hourcap-6.2.ps1 for the full note.
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SHC-%';
+
+-- FK_PullSig_Pull and FK_PO_Pull do NOT cascade from dbo.Pulls, so a pull
+-- closed with a signature (or carrying a PO) refuses the DELETE below. The
+-- delete is set-based, so ONE such pull strands the whole range -- 148 rows
+-- accumulated this way before 2026-08-20. See
+-- docs/defect-pull-signature-fk-blocks-smoke-cleanup.md
+DELETE s FROM dbo.PullSignatures s
+INNER JOIN dbo.Pulls p ON p.Id = s.PullId
+WHERE p.PullNumber LIKE 'PL-SHC-%';
+UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
+INNER JOIN dbo.Pulls p ON p.Id = po.PullId
+WHERE p.PullNumber LIKE 'PL-SHC-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-SHC-%';
+PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
+
+UPDATE pol SET ReceivedQty = ISNULL(t.Qty, 0)
+FROM   dbo.PurchaseOrderLines pol
+INNER JOIN @touched tt ON tt.LineId = pol.Id
+OUTER APPLY (SELECT SUM(r.QtyReceived) AS Qty FROM dbo.Receipts r
+             WHERE r.PurchaseOrderLineId = pol.Id) t;
+
+UPDATE po SET Status = 'open', ClosedAt = NULL
+FROM   dbo.PurchaseOrders po
+WHERE  po.Status = 'closed'
+  AND  EXISTS (SELECT 1 FROM dbo.PurchaseOrderLines pol
+               INNER JOIN @touched tt ON tt.LineId = pol.Id
+               WHERE pol.PurchaseOrderId = po.Id AND pol.OrderedQty > pol.ReceivedQty);
 '@
-    sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -Q $sql 2>&1 | Out-Null
+    $out = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -b -h -1 -W -Q $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "TEARDOWN FAILED — PO capacity may not have been returned:" -ForegroundColor Red
+        Write-Host ($out | Out-String) -ForegroundColor Red
+    }
 }
 
 SqlCleanup
@@ -123,7 +176,15 @@ UPDATE dbo.PullItemWindows
    SET ReceivedQty = 300
  WHERE PullItemId = '$($closeMe.ItemId)' AND HourOfDay = 14;
 "@
-sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1 | Out-Null
+# -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
+# refusal is printed instead of discarded. A cleanup that cannot report its
+# own failure is how 148 fixture pulls accumulated unnoticed.
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $pokeSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
+$cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { Fail "SQL poke for legacy-over failed (exit $LASTEXITCODE)" }
 
 $closeBody = @{ signatureSvg = 'data:image/png;base64,AAAA' } | ConvertTo-Json

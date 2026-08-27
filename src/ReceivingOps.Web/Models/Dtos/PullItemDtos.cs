@@ -21,6 +21,30 @@ public class PullItemCreateRequest
     public string? VendorName { get; set; }
     public string? Tag { get; set; }                          // pcba|swap|null
     public string? Remark { get; set; }
+
+    // Phase 9.1 ERP-sourced fields, added for the drawer's duplicate action.
+    //
+    // These were previously settable only after the fact, via
+    // PUT /api/pulls/{id}/items/{itemId}/extended-fields. Duplicating a row is
+    // precisely the case where they matter most — sub-inventory, location and
+    // trial are the fields an operator duplicates a row to keep, while the four
+    // the create payload already carried are the ones easiest to retype.
+    //
+    // Carrying them here keeps a duplicate to ONE atomic create: one
+    // transaction, one audit row, one duplicate-guard check. A create followed
+    // by a second extended-fields call could half-fail and leave an item on the
+    // pull missing exactly the fields that justified making it, with nothing to
+    // tell the operator the second call never landed.
+    //
+    // All optional. A plain manual add omits them and behaves as it always did.
+    public string? ProductFamily { get; set; }
+    public string? FromSubInventory { get; set; }
+    public string? ToSubInventory { get; set; }
+    public string? SpecialControl { get; set; }
+    public string? TrialId { get; set; }
+    public string? Location { get; set; }
+    public string? Phase { get; set; }
+
     public List<PullItemWindowInput> Windows { get; set; } = new();
 }
 

@@ -71,4 +71,73 @@ public class PoImportSubmissionResult
 
     /// <summary>Max items in <see cref="ValidationErrorsPreview"/>. Hard cap of 50 matches the 12.5 modal layout.</summary>
     public const int ValidationErrorPreviewCap = 50;
+
+    /// <summary>
+    /// WIP pull synthesis preview — null when the workbook has no WIP pull
+    /// sheets. Advisory: Stage 2 re-classifies under UPDLOCK and is the
+    /// authority on what actually gets created.
+    /// </summary>
+    public WipPreviewSummary? Wip { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// WIP pull synthesis — preview shape (§5).
+//
+// The confirm modal is the only checkpoint before rows commit, so the
+// operator has to see what a WIP file will create BEFORE confirming. These
+// numbers are advisory: Stage 2 re-classifies each sheet under UPDLOCK
+// inside its own transaction and is the authority on create / repair / skip.
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// What the workbook's WIP pull sheets will do. Null on the result DTO when
+/// the file has no WIP sheets — the common case.
+/// </summary>
+public class WipPreviewSummary
+{
+    /// <summary>Max sheets listed individually. 25 is the production figure; the cap is headroom.</summary>
+    public const int PullPreviewCap = 50;
+
+    /// <summary>WIP pull sheets detected, including ones that will be skipped.</summary>
+    public int PullCount { get; set; }
+
+    /// <summary>Sheets with neither pull nor PO — both sides get built.</summary>
+    public int CreateCount { get; set; }
+
+    /// <summary>
+    /// Sheets whose PO was imported before this feature existed but which
+    /// never got a pull. The pull is built; the existing PO and its per-row
+    /// lines are left exactly as they are.
+    /// </summary>
+    public int RepairCount { get; set; }
+
+    /// <summary>Sheets whose pull already exists — nothing is written.</summary>
+    public int SkipCount { get; set; }
+
+    /// <summary>Pull items that will be created (skipped sheets excluded).</summary>
+    public int ItemCount { get; set; }
+
+    /// <summary>Windows that will be created (skipped sheets excluded).</summary>
+    public int WindowCount { get; set; }
+
+    /// <summary>Units across everything that will be created (skipped sheets excluded).</summary>
+    public int TotalQty { get; set; }
+
+    /// <summary>Per-sheet detail, capped at <see cref="PullPreviewCap"/>.</summary>
+    public List<WipPreviewPull> Pulls { get; set; } = new();
+}
+
+public class WipPreviewPull
+{
+    public string PullNumber { get; set; } = "";
+
+    /// <summary>"create" | "repair" | "skip" — lowercase for the UI.</summary>
+    public string Action { get; set; } = "";
+
+    public int ItemCount { get; set; }
+    public int WindowCount { get; set; }
+    public int TotalQty { get; set; }
+
+    /// <summary>Raw STORER CODE, as it appears in the file.</summary>
+    public string? VendorCode { get; set; }
 }

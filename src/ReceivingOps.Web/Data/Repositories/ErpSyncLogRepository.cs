@@ -130,6 +130,36 @@ public class ErpSyncLogRepository : IErpSyncLogRepository
             new CommandDefinition(sql, new { RunId = runId }, cancellationToken: ct));
     }
 
+    /// <summary>
+    /// db/052 — per-run field-protection reporting. Independent UPDATE for the
+    /// same reason as <see cref="UpdateSourceTotalsAsync"/>: it keeps
+    /// MarkSucceededAsync's SQL shape unchanged for existing callers.
+    ///
+    /// <para>The two scalars sit alongside the JSON on purpose. ItemsCanceled
+    /// being a plain column is what made "how many did sync cancel in 30 days"
+    /// answerable in one query; a JSON-only figure has to be parsed before it
+    /// can be alerted on or trended.</para>
+    /// </summary>
+    public async Task UpdateFieldProtectionAsync(
+        Guid runId, int fieldsSkipped, int fieldsWritten, string totalsJson,
+        CancellationToken ct = default)
+    {
+        const string sql = @"
+            UPDATE dbo.ErpSyncLog
+            SET    FieldsSkippedCount    = @FieldsSkipped,
+                   FieldsWrittenCount    = @FieldsWritten,
+                   FieldProtectionTotals = @TotalsJson
+            WHERE  RunId = @RunId;";
+        using var conn = _factory.Create();
+        await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            RunId = runId,
+            FieldsSkipped = fieldsSkipped,
+            FieldsWritten = fieldsWritten,
+            TotalsJson = totalsJson,
+        }, cancellationToken: ct));
+    }
+
     public async Task UpdateSourceTotalsAsync(Guid runId, string sourceTotalsJson, CancellationToken ct = default)
     {
         // Independent UPDATE so the job can write per-source detail without
