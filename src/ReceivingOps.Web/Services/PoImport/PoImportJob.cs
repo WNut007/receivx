@@ -168,6 +168,16 @@ public class PoImportJob
                     $"First: {wipPlan.Errors[0].Message}");
             }
 
+            // Blank WIP ROUNDs are defaulted silently — the operator sees
+            // nothing, by design. One line per import (never per row, never in
+            // the UI) so the choice is still diagnosable months later.
+            if (wipPlan.RoundDefaultedRowCount > 0)
+            {
+                _logger.LogInformation(
+                    "PoImport {RunId}: {Rows} WIP rows defaulted to hour {Hour:00}",
+                    runId, wipPlan.RoundDefaultedRowCount, WipPullSynthesis.WipBlankRoundHour);
+            }
+
             // ---- Import: new POs land, duplicates skip --------------------------
             int posInserted, linesInserted;
             List<string> skipped;

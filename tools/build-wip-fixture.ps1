@@ -10,7 +10,10 @@
 #                                    sheets are untouched)
 #   po-import-wip-mixed.xlsx         one sheet with WIP and non-WIP rows
 #   po-import-wip-two-storers.xlsx   one WIP sheet with two storer codes
-#   po-import-wip-blank-round.xlsx   one WIP row with a blank ROUND
+#   po-import-wip-bad-round.xlsx     one WIP row whose ROUND names two hours
+#   po-import-wip-round-default.xlsx blank WIP ROUNDs (→ hour 07) alongside a
+#                                    populated one and a non-WIP sheet
+#   po-import-nonwip-blank-round.xlsx a NON-WIP sheet with a blank ROUND
 #
 # Shapes mirror the production export measured on Stock_Ship_16-Aug-2026.xls:
 # STORER CODE is the prefixed form (COI-…), the WIP sheets leave PO blank on
@@ -170,11 +173,54 @@ Write-Fixture 'po-import-wip-two-storers.xlsx' @(
        Sku='WIPSKU-S2'; Desc='storer two'; Qty=20; Round='07:00'; Pallet='B2'; SrcPo='' }
 )
 
-Write-Fixture 'po-import-wip-blank-round.xlsx' @(
-    @{ Pull='WIPTEST-0005'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
+# A WIP ROUND that is PRESENT but unusable. "03:00|04:00" is a real value in
+# the production export's non-WIP rows: it names two windows, and picking one
+# would put stock in the wrong hour.
+#
+# This replaced a blank-ROUND fixture. A blank WIP ROUND is no longer an
+# error — it defaults to hour 07 (WipPullSynthesis.WipBlankRoundHour), covered
+# by smoke-wip-round-default.ps1. The guard rail that survives is this one:
+# absence is defaulted, a wrong value never is.
+Write-Fixture 'po-import-wip-bad-round.xlsx' @(
+    @{ Pull='WIPTEST-0008'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
        Sku='WIPSKU-BR1'; Desc='has a round'; Qty=10; Round='07:00'; Pallet='B1'; SrcPo='' },
-    @{ Pull='WIPTEST-0005'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
-       Sku='WIPSKU-BR2'; Desc='blank round'; Qty=20; Round=''; Pallet='B2'; SrcPo='' }
+    @{ Pull='WIPTEST-0008'; Storer='COI-WIPTEST1'; StorerName='WIP EXAMPLE (BPI)';
+       Sku='WIPSKU-BR2'; Desc='two rounds in one cell'; Qty=20; Round='03:00|04:00'; Pallet='B2'; SrcPo='' }
+)
+
+# ---------------------------------------------------------------------------
+# 7-8. Blank-ROUND default (hour 07). Namespaced WIPRND- rather than WIPTEST-
+#      so smoke-wip-round-default.ps1 owns a range no other smoke purges.
+#
+#      WIPRND-0001 (WIP) is one workbook covering four claims at once:
+#        D1  two rows, both blank      → ONE hour-07 window of 25, not two
+#        D2  one row,  11:00           → hour 11; a present value always wins
+#        D3  one row,  blank           → hour 07 on its own item
+#      WIPRND-0002 (NOT WIP, populated ROUND) rides along so the same file
+#      proves an ordinary sheet is untouched by any of it.
+# ---------------------------------------------------------------------------
+Write-Fixture 'po-import-wip-round-default.xlsx' @(
+    @{ Pull='WIPRND-0001'; Storer='COI-WIPRND1'; StorerName='WIP ROUND DEFAULT';
+       Sku='WIPRNDSKU-D1'; Desc='blank round, first row'; Qty=10; Round=''; Pallet='R1'; SrcPo='' },
+    @{ Pull='WIPRND-0001'; Storer='COI-WIPRND1'; StorerName='WIP ROUND DEFAULT';
+       Sku='WIPRNDSKU-D1'; Desc='blank round, second row'; Qty=15; Round='   '; Pallet='R2'; SrcPo='' },
+    @{ Pull='WIPRND-0001'; Storer='COI-WIPRND1'; StorerName='WIP ROUND DEFAULT';
+       Sku='WIPRNDSKU-D2'; Desc='populated round'; Qty=30; Round='11:00'; Pallet='R3'; SrcPo='' },
+    @{ Pull='WIPRND-0001'; Storer='COI-WIPRND1'; StorerName='WIP ROUND DEFAULT';
+       Sku='WIPRNDSKU-D3'; Desc='blank round, own item'; Qty=40; Round=''; Pallet='R4'; SrcPo='' },
+    @{ Pull='WIPRND-0002'; Storer='COI-PLAINRND'; StorerName='ORDINARY VENDOR';
+       Sku='WIPRNDSKU-P1'; Desc='ordinary row, populated round'; Qty=50; Round='11:00'; Pallet='R5'; SrcPo='TH-RND-1' }
+)
+
+# A NON-WIP sheet with a blank ROUND. The default must not reach it: WIP is
+# half the condition, not decoration. Note this shape does not fail today
+# either — ROUND is not a required header and PoImportReader.ValidateRow never
+# inspects it, so the only blank-ROUND rejection that has ever existed was the
+# WIP one. The smoke asserts the sheet is unchanged by this feature, which is
+# the claim that can actually be made.
+Write-Fixture 'po-import-nonwip-blank-round.xlsx' @(
+    @{ Pull='WIPRND-0004'; Storer='COI-PLAINRND'; StorerName='ORDINARY VENDOR';
+       Sku='WIPRNDSKU-N1'; Desc='non-WIP, blank round'; Qty=60; Round=''; Pallet='R6'; SrcPo='TH-RND-2' }
 )
 
 Write-Host "`nAll WIP fixtures written to $fixtureDir" -ForegroundColor Green

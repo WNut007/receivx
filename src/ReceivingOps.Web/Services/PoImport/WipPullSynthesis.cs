@@ -89,9 +89,26 @@ public static class WipPullSynthesis
         new(@"^\s*(\d{1,2})\s*:\s*00\s*$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
+    /// The hour a WIP row with a BLANK ROUND falls back to. Always 07 — the
+    /// start of <see cref="Models.ReceivingPeriods.Morning"/>, so a defaulted
+    /// row reads as Morning on the Pull Sheets report.
+    ///
+    /// <para>Flat, not inferred. There is no period or date context to derive
+    /// a better answer from, and a lookup that got it right most of the time
+    /// would be worse than one that is always the same: an operator can learn
+    /// "blank means 07" and correct it upstream, but cannot learn a rule that
+    /// varies per file.</para>
+    /// </summary>
+    public const byte WipBlankRoundHour = 7;
+
+    /// <summary>
     /// Parses a ROUND cell into an hour 0-23. Returns false for blank,
-    /// multi-round ("03:00|04:00"), sub-hour ("07:30"), and out-of-range —
-    /// all of which are validation errors, not defaults.
+    /// multi-round ("03:00|04:00"), sub-hour ("07:30"), and out-of-range.
+    ///
+    /// <para>This is the PARSER and knows nothing about defaults — a blank is
+    /// false here whatever the row is. Callers that may substitute a default
+    /// go through <see cref="TryResolveRoundHour"/>, which is the only place
+    /// the default lives.</para>
     /// </summary>
     public static bool TryParseRoundHour(string? round, out byte hourOfDay)
     {
@@ -108,6 +125,52 @@ public static class WipPullSynthesis
 
         hourOfDay = (byte)h;
         return true;
+    }
+
+    /// <summary>
+    /// Resolves a row's receiving hour, applying the blank-WIP default.
+    ///
+    /// <para>The default is deliberately narrow and this is its ONE
+    /// definition. Both conditions must hold:</para>
+    /// <list type="number">
+    ///   <item>the row is WIP (<paramref name="isWipRow"/>), and</item>
+    ///   <item>ROUND is blank or whitespace.</item>
+    /// </list>
+    ///
+    /// <para>A ROUND that carries a value is used as given, WIP or not — the
+    /// default fills a gap and never overrides. A WIP row whose ROUND is
+    /// present but unusable ("03:00|04:00", "07:30") still fails: those name
+    /// something the operator meant, and picking one of two windows would put
+    /// stock in the wrong hour. Only the ABSENCE of a value is defaulted, and
+    /// only on rows an operator deliberately brought in through
+    /// <c>/Imports</c>. Widening either condition would swallow a real data
+    /// defect — see smoke-wip-round-default.ps1 §3 and §5.</para>
+    ///
+    /// <para>The ERP-pull path never reaches here: it skips WIP sheets whole
+    /// at PRS_ID grain (BpiPrsSource / PrbPrsSource), using this class's
+    /// <see cref="IsWipStorerCode"/> to decide. That asymmetry is the point —
+    /// an operator uploading a workbook is making a choice the hourly ETL
+    /// is not.</para>
+    /// </summary>
+    /// <param name="defaulted">True when the value came from
+    /// <see cref="WipBlankRoundHour"/> rather than from the cell. Counted for
+    /// the per-import log line; never surfaced to the operator.</param>
+    public static bool TryResolveRoundHour(
+        string? round, bool isWipRow, out byte hourOfDay, out bool defaulted)
+    {
+        defaulted = false;
+
+        if (TryParseRoundHour(round, out hourOfDay)) return true;
+
+        if (isWipRow && string.IsNullOrWhiteSpace(round))
+        {
+            hourOfDay = WipBlankRoundHour;
+            defaulted = true;
+            return true;
+        }
+
+        hourOfDay = 0;
+        return false;
     }
 
     /// <summary>
@@ -187,23 +250,36 @@ public static class WipPullSynthesis
                 continue;
             }
 
-            // ROUND is per row and has no sensible default.
+            // ROUND is per row. A BLANK one on a WIP row defaults to hour 07
+            // (TryResolveRoundHour); anything else unusable is still an error.
+            // The default is silent by design — a defaulted row raises no
+            // issue, warning, or notice on the review screen, so a workbook
+            // whose only problem was blank WIP ROUNDs reviews clean. The count
+            // is carried on the plan for the one log line Stage 2 emits.
             var roundErrors = false;
+            var sheetDefaulted = 0;
             foreach (var r in wipRows)
             {
-                if (TryParseRoundHour(r.OrderRound, out _)) continue;
+                if (TryResolveRoundHour(r.OrderRound, isWipRow: true, out _, out var defaulted))
+                {
+                    if (defaulted) sheetDefaulted++;
+                    continue;
+                }
                 roundErrors = true;
                 plan.Errors.Add(new PoImportValidationError
                 {
                     RowNumber = r.RowNumber,
                     Column = "ROUND",
-                    Message = string.IsNullOrWhiteSpace(r.OrderRound)
-                        ? $"WIP row on pull sheet {pullNumber} has a blank ROUND. The receiving hour cannot be guessed."
-                        : $"WIP row on pull sheet {pullNumber} has an unusable ROUND '{r.OrderRound}'. " +
-                          "Expected a single whole hour such as 07:00.",
+                    Message = $"WIP row on pull sheet {pullNumber} has an unusable ROUND '{r.OrderRound}'. " +
+                              "Expected a single whole hour such as 07:00.",
                 });
             }
             if (roundErrors) continue;
+
+            // Counted only once the sheet is accepted — a sheet rejected by a
+            // guard rail contributes nothing, so the logged figure always
+            // matches rows that actually landed.
+            plan.RoundDefaultedRowCount += sheetDefaulted;
 
             var pull = new WipPullPlan
             {
@@ -246,8 +322,19 @@ public static class WipPullSynthesis
                     VendorName = sample.VendorName ?? pull.VendorName,
                 };
 
+                // Resolve, not parse — blank WIP rows have to land on hour 07
+                // here too, or the validation loop would accept them and the
+                // grouping would silently drop them into hour 0. Several blank
+                // rows on one sheet therefore share a group key and collapse
+                // into ONE hour-07 window with the summed quantity, which is
+                // what PullItemWindows' uniqueness on (PullItemId, HourOfDay)
+                // requires.
                 foreach (var hourGroup in itemGroup
-                             .GroupBy(r => { TryParseRoundHour(r.OrderRound, out var h); return h; })
+                             .GroupBy(r =>
+                             {
+                                 TryResolveRoundHour(r.OrderRound, isWipRow: true, out var h, out _);
+                                 return h;
+                             })
                              .OrderBy(g => g.Key))
                 {
                     // The representative row supplies the ERP metadata the PO
@@ -283,6 +370,18 @@ public class WipSynthesisPlan
 
     /// <summary>§4.1 guard-rail failures. Non-empty means the file is rejected.</summary>
     public List<PoImportValidationError> Errors { get; } = new();
+
+    /// <summary>
+    /// WIP rows whose blank ROUND was defaulted to
+    /// <see cref="WipPullSynthesis.WipBlankRoundHour"/>, across accepted
+    /// sheets only.
+    ///
+    /// <para>Diagnostic. This is NOT an error count and NOT an operator-facing
+    /// figure — it never reaches the review screen. Stage 2 logs it once per
+    /// import so a "why is this in Morning?" question is answerable later
+    /// without re-reading the workbook.</para>
+    /// </summary>
+    public int RoundDefaultedRowCount { get; set; }
 
     public bool HasWork => Pulls.Count > 0;
     public int PullCount => Pulls.Count;

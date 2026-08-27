@@ -112,6 +112,9 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # Shares the WIPTEST-% namespace with nothing else; purges it on entry
         # and exit. Requires db/050 (Origin on Pulls + PurchaseOrders).
         'smoke-wip-pull-synthesis.ps1'
+        # Blank-ROUND default (hour 07) on the MANUAL upload path only. Owns
+        # the WIPRND-% namespace so it cannot collide with the smoke above.
+        'smoke-wip-round-default.ps1'
         # Drives tools/ErpUpsertHarness, which executes the real Transform +
         # UpsertAsync against the dev DB with no ERP host. Build it first:
         # dotnet build tools/ErpUpsertHarness.

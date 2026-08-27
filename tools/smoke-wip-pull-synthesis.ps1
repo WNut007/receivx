@@ -26,7 +26,9 @@
 #      lines, no pull
 #   6. Mixed WIP/non-WIP sheet → validation error, nothing committed
 #   7. WIP sheet with two storer codes → validation error
-#   8. WIP row with a blank ROUND → validation error
+#   8. WIP row whose ROUND names two hours ('03:00|04:00') → validation error.
+#      A BLANK ROUND is no longer one of these — it defaults to hour 07;
+#      smoke-wip-round-default.ps1 owns that case.
 #   9. Re-import → skip, no duplicates, no orphan PO, audit row
 #  10. Re-import after receipts exist → pull unmodified, receipts intact
 #  11. HourOfDay maps across every observed round (7, 8, 9, 11, 19, 21, 23)
@@ -409,13 +411,13 @@ FROM dbo.PullItemWindows w WHERE w.PullItemId = '$itemOf' AND w.HourOfDay = 7;
     Step "7. Assertions 6-8 — guard rails reject the file and commit nothing"
     ExpectValidationFailure $sup 'po-import-wip-mixed.xlsx' 'mixes WIP and non-WIP rows' 'mixed sheet' | Out-Null
     ExpectValidationFailure $sup 'po-import-wip-two-storers.xlsx' 'storer codes' 'two storer codes' | Out-Null
-    ExpectValidationFailure $sup 'po-import-wip-blank-round.xlsx' 'blank ROUND' 'blank round' | Out-Null
+    ExpectValidationFailure $sup 'po-import-wip-bad-round.xlsx' 'unusable ROUND' 'unusable round' | Out-Null
 
     $guardRows = [int](SqlScalar @"
 SET NOCOUNT ON;
 SELECT CAST(
-    (SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber IN ('WIPTEST-0003','WIPTEST-0004','WIPTEST-0005')) +
-    (SELECT COUNT(*) FROM dbo.PurchaseOrders WHERE PoNumber IN ('WIPTEST-0003','WIPTEST-0004','WIPTEST-0005'))
+    (SELECT COUNT(*) FROM dbo.Pulls WHERE PullNumber IN ('WIPTEST-0003','WIPTEST-0004','WIPTEST-0008')) +
+    (SELECT COUNT(*) FROM dbo.PurchaseOrders WHERE PoNumber IN ('WIPTEST-0003','WIPTEST-0004','WIPTEST-0008'))
 AS VARCHAR);
 "@)
     if ($guardRows -ne 0) { Fail "guard-rail files committed $guardRows row(s) — validation must reject before Stage 2" }
