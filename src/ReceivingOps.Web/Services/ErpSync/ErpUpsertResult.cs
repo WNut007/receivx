@@ -56,6 +56,18 @@ public class ErpUpsertResult
     /// <summary>Items left alone by the cancel path because Origin='operator'.</summary>
     public int ItemsExemptCreated { get; set; }
 
+    /// <summary>
+    /// Items skipped WHOLE because an operator cancelled them — the row was
+    /// present in the ERP draft and ETL wrote nothing to it at all.
+    ///
+    /// <para>Counted separately from <see cref="FieldsSkipped"/> because the
+    /// grain differs: that counts suppressed field assignments on rows ETL still
+    /// updated, this counts rows ETL did not touch. Rolling them together would
+    /// make "how much did protection suppress" unanswerable in one query, which
+    /// is the mistake db/052 called out about JSON-only figures.</para>
+    /// </summary>
+    public int ItemsSkippedOperatorCanceled { get; set; }
+
     /// <summary>Per-field suppressed counts, e.g. <c>{"Remark": 12}</c>.</summary>
     public Dictionary<string, int> SkippedByField { get; } = new(StringComparer.Ordinal);
 

@@ -123,6 +123,12 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # same harness in two phases (HARNESS_NO_PURGE) with real API edits
         # between them. Owns the HARNESS-OWNER-% namespace.
         'smoke-operator-owns-edits.ps1'
+        # An operator's cancel is permanent and ERP-proof: the item DELETE is
+        # gone, cancel marks OperatorFieldEdits on Status, and ETL skips such a
+        # row WHOLE while still writing rows it cancelled itself. Shares the
+        # HARNESS-OWNER-% namespace with the smoke above, so the two must not
+        # run concurrently; also owns PL-CANX-%.
+        'smoke-operator-cancel-permanent.ps1'
         # Read-path companion to storer-grain: the console grid orders by
         # (ItemCode, VendorCode, SortOrder) so a SKU's storer rows sit together.
         # Seeds its own SKUORD-% pulls via SQL; needs node on PATH for step 6.

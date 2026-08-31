@@ -317,15 +317,30 @@ public class PullsApiController : ControllerBase
         catch (BusinessException ex)   { return Problem(title: ex.Message, statusCode: 409); }
     }
 
-    // DELETE /api/pulls/{id}/items/{itemId} — cascade-delete windows.
-    // Refused (409) if any window has ReceivedQty > 0.
-    [HttpDelete("{id:guid}/items/{itemId:guid}")]
+    // POST /api/pulls/{id}/items/{itemId}/cancel — permanent operator cancel.
+    //
+    // POST, not DELETE, and the verb is the point: nothing is removed. The row
+    // stays, flips to Status='canceled', and takes an OperatorFieldEdits mark on
+    // Status so no later ERP sync updates, re-imports or un-cancels it. Same
+    // shape as POST /api/pos/{id}/close, which retires a PO without deleting it.
+    //
+    // The DELETE that used to live here is GONE, not aliased. It hard-deleted
+    // the row, so the next sync re-INSERTed the draft line as net-new and the
+    // operator had to delete it again — 15 (pull, item) pairs on production had
+    // been deleted more than once, five of them three times. An alias would have
+    // kept that URL working while silently changing what it means.
+    //
+    // Refused 409 when the pull is closed (consistent with every other item
+    // mutation) or when any window already has receipts.
+    //
+    // There is deliberately no un-cancel endpoint.
+    [HttpPost("{id:guid}/items/{itemId:guid}/cancel")]
     [Authorize(Policy = "CanManagePulls")]
-    public async Task<IActionResult> DeleteItem(Guid id, Guid itemId, CancellationToken ct)
+    public async Task<IActionResult> CancelItem(Guid id, Guid itemId, CancellationToken ct)
     {
         try
         {
-            await _itemsAdmin.DeleteAsync(id, itemId, ct);
+            await _itemsAdmin.CancelAsync(id, itemId, ct);
             return NoContent();
         }
         catch (NotFoundException ex) { return Problem(title: ex.Message, statusCode: 404); }

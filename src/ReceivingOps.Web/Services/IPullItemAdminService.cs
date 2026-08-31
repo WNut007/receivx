@@ -12,7 +12,7 @@ namespace ReceivingOps.Web.Services;
 ///   • (PullId, ItemCode) is the natural key; Create rejects duplicates with 409.
 ///   • ItemCode is immutable after Create — Update can change Description, Vendor,
 ///     Tag, Status, Remark only.
-///   • Delete is refused (409) when any window on the item has ReceivedQty > 0
+///   • Cancel (never delete) is refused (409) when any window has ReceivedQty > 0
 ///     — receipt history would lose its anchor row. Operators must cancel
 ///     receipts first, then delete the item.
 ///   • Windows on Create: at least one, HourOfDay 0..23 unique, ExpectedQty > 0.
@@ -26,8 +26,14 @@ public interface IPullItemAdminService
     /// <summary>Edits Description/Vendor/Tag/Status/Remark. Refuses 409 on closed pull.</summary>
     Task UpdateAsync(Guid pullId, Guid itemId, PullItemUpdateRequest req, CancellationToken ct = default);
 
-    /// <summary>Deletes the item and cascades its windows. Refuses 409 if any window has ReceivedQty &gt; 0.</summary>
-    Task DeleteAsync(Guid pullId, Guid itemId, CancellationToken ct = default);
+    /// <summary>
+    /// Cancels the item permanently: <c>Status='canceled'</c> plus an
+    /// OperatorFieldEdits mark on <c>Status</c>, which stops ERP sync ever
+    /// touching, re-importing or un-cancelling the row again. Refuses 409 if any
+    /// window has ReceivedQty &gt; 0, or if the pull is closed. There is no
+    /// un-cancel counterpart, by design.
+    /// </summary>
+    Task CancelAsync(Guid pullId, Guid itemId, CancellationToken ct = default);
 
     // v2.1 Phase 6.2 — per-hour window sub-resource. Same closed-pull and
     // pull-item-exists checks as the item CRUD above; hour-specific rules are

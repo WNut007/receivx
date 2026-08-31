@@ -34,10 +34,14 @@ public static class OperatorFieldEdits
     public const string PullItemWindow = "PullItemWindow";
 
     /// <summary>
-    /// The twelve protectable column names — every field an operator can
+    /// The thirteen protectable column names — every field an operator can
     /// change that ETL also writes. Compile-time constants, never operator
     /// input, which is what makes it safe for the ETL to interpolate them into
     /// a dynamic SET clause.
+    ///
+    /// <para>Twelve of the thirteen are interpolated into that SET clause.
+    /// <see cref="Fields.Status"/> is the exception and carries its own note:
+    /// it is a mark name only and must never enter the candidates array.</para>
     ///
     /// <para>Fields an operator can edit that ETL never writes (Eta, Notes,
     /// ReferenceNumber, VendorName, Tag, the window close/variance columns)
@@ -65,6 +69,27 @@ public static class OperatorFieldEdits
 
         // dbo.PullItemWindows
         public const string ExpectedQty = "ExpectedQty";
+
+        /// <summary>
+        /// <c>dbo.PullItems.Status</c> — an operator's cancel, and any other
+        /// status change they make.
+        ///
+        /// <para><b>This constant must NEVER appear in the ETL's candidate
+        /// SET-clause array in <c>ErpUpsertService</c>.</b> Every other name in
+        /// this class is a column ETL writes through that array, and a mark on
+        /// it suppresses one assignment. Status is different: ETL writes it from
+        /// exactly one other statement — the missing-from-draft cancel — and a
+        /// mark here suppresses THAT, plus (when the row is already canceled)
+        /// the row's whole update. Adding it to the candidates array would make
+        /// ETL start writing operator status on every run, which is precisely
+        /// what the static protected-column list exists to prevent.</para>
+        ///
+        /// <para>1eb4f53 omitted Status with the reasoning "ETL never writes
+        /// them, so they need no protection". That was wrong — the cancel path
+        /// writes it. This constant corrects the premise; it does not widen the
+        /// mechanism.</para>
+        /// </summary>
+        public const string Status = "Status";
     }
 
     /// <summary>Provenance value for <c>dbo.PullItems.Origin</c> — see db/052.</summary>
@@ -113,32 +138,54 @@ public static class OperatorFieldEdits
         {
             if (SameValue(change.OldValue, change.NewValue)) continue;
 
-            var rows = await conn.ExecuteAsync(new CommandDefinition(@"
-                UPDATE dbo.OperatorFieldEdits
-                   SET LastEditedAt = SYSUTCDATETIME(),
-                       LastEditedBy = @EditedBy
-                 WHERE EntityType = @EntityType
-                   AND EntityId   = @EntityId
-                   AND FieldName  = @FieldName;",
-                new { EntityType = entityType, EntityId = entityId, change.FieldName, EditedBy = editedBy },
-                transaction: tx, cancellationToken: ct));
-
-            if (rows == 0)
-            {
-                await conn.ExecuteAsync(new CommandDefinition(@"
-                    INSERT INTO dbo.OperatorFieldEdits
-                           (EntityType, EntityId, FieldName,
-                            FirstEditedAt, FirstEditedBy, LastEditedAt, LastEditedBy)
-                    VALUES (@EntityType, @EntityId, @FieldName,
-                            SYSUTCDATETIME(), @EditedBy, SYSUTCDATETIME(), @EditedBy);",
-                    new { EntityType = entityType, EntityId = entityId, change.FieldName, EditedBy = editedBy },
-                    transaction: tx, cancellationToken: ct));
-            }
-
+            await MarkAsync(conn, tx, entityType, entityId, change.FieldName, editedBy, ct);
             marked.Add(change.FieldName);
         }
 
         return marked;
+    }
+
+    /// <summary>
+    /// Takes ownership of ONE field unconditionally, with no value diff.
+    ///
+    /// <para>The diff rule in <see cref="MarkChangedAsync"/> exists because the
+    /// edit endpoints are bulk-overwrite PUTs where presence proves nothing.
+    /// This overload is for the opposite shape: a single-purpose endpoint whose
+    /// entire meaning IS the change, where the caller has already decided. The
+    /// item-cancel endpoint is the only such caller — cancelling a row that is
+    /// already <c>canceled</c> is a real operator action (adopting an ETL cancel
+    /// as their own decision) and a diff would record nothing for it.</para>
+    ///
+    /// <para>Do not reach for this from a bulk PUT. There the diff is the
+    /// feature, and calling this instead would collapse field-level protection
+    /// into row-level protection — the exact regression db/052 warns about.</para>
+    /// </summary>
+    public static async Task MarkAsync(
+        IDbConnection conn, IDbTransaction tx,
+        string entityType, Guid entityId, string fieldName, Guid? editedBy,
+        CancellationToken ct = default)
+    {
+        var rows = await conn.ExecuteAsync(new CommandDefinition(@"
+            UPDATE dbo.OperatorFieldEdits
+               SET LastEditedAt = SYSUTCDATETIME(),
+                   LastEditedBy = @EditedBy
+             WHERE EntityType = @EntityType
+               AND EntityId   = @EntityId
+               AND FieldName  = @FieldName;",
+            new { EntityType = entityType, EntityId = entityId, FieldName = fieldName, EditedBy = editedBy },
+            transaction: tx, cancellationToken: ct));
+
+        if (rows == 0)
+        {
+            await conn.ExecuteAsync(new CommandDefinition(@"
+                INSERT INTO dbo.OperatorFieldEdits
+                       (EntityType, EntityId, FieldName,
+                        FirstEditedAt, FirstEditedBy, LastEditedAt, LastEditedBy)
+                VALUES (@EntityType, @EntityId, @FieldName,
+                        SYSUTCDATETIME(), @EditedBy, SYSUTCDATETIME(), @EditedBy);",
+                new { EntityType = entityType, EntityId = entityId, FieldName = fieldName, EditedBy = editedBy },
+                transaction: tx, cancellationToken: ct));
+        }
     }
 
     /// <summary>

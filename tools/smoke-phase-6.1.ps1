@@ -41,6 +41,24 @@ SET QUOTED_IDENTIFIER ON;
 DELETE s FROM dbo.PullSignatures s
 INNER JOIN dbo.Pulls p ON p.Id = s.PullId
 WHERE p.PullNumber LIKE 'PL-SMOKE-6.1-%';
+-- dbo.OperatorFieldEdits is deliberately NOT FK'd to any parent (one column
+-- cannot reference three tables), so nothing cascades it away. The cancel case
+-- below marks Status on item B, and without this the smoke strands one inert
+-- mark per run. Must run BEFORE the pulls are deleted -- the items it joins
+-- through are gone by then.
+DELETE e FROM dbo.OperatorFieldEdits e
+INNER JOIN dbo.PullItems pi ON pi.Id = e.EntityId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE e.EntityType = 'PullItem' AND p.PullNumber LIKE 'PL-SMOKE-6.1-%';
+DELETE e FROM dbo.OperatorFieldEdits e
+INNER JOIN dbo.Pulls p ON p.Id = e.EntityId
+WHERE e.EntityType = 'Pull' AND p.PullNumber LIKE 'PL-SMOKE-6.1-%';
+DELETE e FROM dbo.OperatorFieldEdits e
+INNER JOIN dbo.PullItemWindows w ON w.Id = e.EntityId
+INNER JOIN dbo.PullItems pi ON pi.Id = w.PullItemId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE e.EntityType = 'PullItemWindow' AND p.PullNumber LIKE 'PL-SMOKE-6.1-%';
+PRINT 'cleanup: operator marks removed';
 UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
 INNER JOIN dbo.Pulls p ON p.Id = po.PullId
 WHERE p.PullNumber LIKE 'PL-SMOKE-6.1-%';
@@ -114,11 +132,21 @@ foreach ($needle in @(
     'HttpGet("{id:guid}/items")',
     'HttpPost("{id:guid}/items")',
     'HttpPut("{id:guid}/items/{itemId:guid}")',
-    'HttpDelete("{id:guid}/items/{itemId:guid}")',
+    'HttpPost("{id:guid}/items/{itemId:guid}/cancel")',
+    # The DELETE is GONE, not renamed: nothing may hard-delete a pull item any
+    # more. Asserted as an ABSENCE below, outside this presence loop.
     'Policy = "CanManagePulls"',
     'IPullItemAdminService'
 )) {
     if ($ctl -notmatch [regex]::Escape($needle)) { Fail "PullsApiController missing '$needle'" }
+}
+
+# Absence assertion. The item DELETE endpoint was removed outright, not aliased
+# onto cancel: a hard delete removed the row, so the next ERP sync re-INSERTed
+# the draft line as net-new and the operator had to delete it again. Written as
+# a NEGATIVE check because a presence loop cannot express "and nothing else".
+if ($ctl -match [regex]::Escape('HttpDelete("{id:guid}/items/{itemId:guid}")')) {
+    Fail "PullsApiController still exposes the item DELETE - hard delete must be gone, not merely unused"
 }
 
 $repoI = Get-Content 'C:\dev\receivx\src\ReceivingOps.Web\Data\Repositories\IPullRepository.cs' -Raw
@@ -262,7 +290,23 @@ OK "Same SKU under a different storer accepted as its own row"
 # Removed again immediately: every case below counts the items on this pull, and
 # a third row left behind would make them fail for a reason that has nothing to
 # do with what they test. Added in this case, removed in this case.
-Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items/$($otherStorer.id)" -Method DELETE -WebSession $svAdmin | Out-Null
+#
+# Removed by SQL, not by the API. The API can no longer delete an item at all --
+# the endpoint now CANCELS, which by design leaves the row on the pull and would
+# leave the count at 3. This is fixture teardown inside the smoke's own
+# namespace, which is exactly what the SQL path is for.
+$dropStorerSql = @"
+SET QUOTED_IDENTIFIER ON;
+SET NOCOUNT ON;
+DELETE FROM dbo.OperatorFieldEdits WHERE EntityType = 'PullItem' AND EntityId = '$($otherStorer.id)';
+DELETE FROM dbo.PullItemWindows WHERE PullItemId = '$($otherStorer.id)';
+DELETE FROM dbo.PullItems WHERE Id = '$($otherStorer.id)';
+"@
+$cleanupOut = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -I -h -1 -W -b -Q $dropStorerSql 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLEANUP FAILED (exit $LASTEXITCODE): $cleanupOut" -ForegroundColor Red
+    exit 2
+}
 $backTo2 = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method GET -WebSession $svAdmin
 if ($backTo2.Count -ne 2) { Fail "Fixture not restored after the second-storer row: expected 2 items, got $($backTo2.Count)" }
 OK "Second-storer row removed; fixture back to 2 items for the cases below"
@@ -337,7 +381,7 @@ OK "Bad Status → 400"
 # ----------------------------------------------------------------------------
 # 9. DELETE refused when a window has ReceivedQty > 0 (simulated via SQL)
 # ----------------------------------------------------------------------------
-Step "DELETE refused when a window has ReceivedQty > 0"
+Step "CANCEL refused when a window has ReceivedQty > 0"
 $pokeSql = @"
 SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
@@ -356,12 +400,12 @@ if ($LASTEXITCODE -ne 0) {
 $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { Fail "SQL poke failed (exit $LASTEXITCODE)" }
 
-$r = InvokeExpectFail 'DELETE' "$base/api/pulls/$pullId/items/$itemBId" $null $svAdmin 409
-if (-not $r -or $r.Wrong) { Fail "Expected 409 on DELETE with receipts, got $($r.Status)" }
+$r = InvokeExpectFail 'POST' "$base/api/pulls/$pullId/items/$itemBId/cancel" $null $svAdmin 409
+if (-not $r -or $r.Wrong) { Fail "Expected 409 on CANCEL with receipts, got $($r.Status)" }
 if ($r.Title -notmatch 'window has receipts') { Fail "Expected 'window has receipts' in title, got: $($r.Title)" }
-OK "DELETE rejected with 409 when window has ReceivedQty > 0"
+OK "CANCEL rejected with 409 when window has ReceivedQty > 0"
 
-# Restore the window so the happy-path DELETE below works
+# Restore the window so the happy-path CANCEL below works
 $restoreSql = @"
 SET QUOTED_IDENTIFIER ON;
 UPDATE dbo.PullItemWindows SET ReceivedQty = 0 WHERE PullItemId = '$itemBId' AND HourOfDay = 14;
@@ -377,29 +421,34 @@ if ($LASTEXITCODE -ne 0) {
 $cleanupOut | Where-Object { $_ -match 'cleanup:' } | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
-# 11. DELETE happy path → 204
+# 11. CANCEL happy path → 204, row STAYS but is canceled
 # ----------------------------------------------------------------------------
-Step "DELETE item B (no receipts) → 204"
+Step "CANCEL item B (no receipts) → 204"
 try {
-    Invoke-WebRequest -Uri "$base/api/pulls/$pullId/items/$itemBId" -Method DELETE -WebSession $svAdmin -UseBasicParsing | Out-Null
-    OK "DELETE returned 2xx"
+    Invoke-WebRequest -Uri "$base/api/pulls/$pullId/items/$itemBId/cancel" -Method POST -WebSession $svAdmin -UseBasicParsing | Out-Null
+    OK "CANCEL returned 2xx"
 } catch {
-    Fail "DELETE happy path failed: $($_.Exception.Message)"
+    Fail "CANCEL happy path failed: $($_.Exception.Message)"
 }
 
-# Verify it's gone from the list
+# The row must still be there. This is the whole behavioural change: the old
+# DELETE removed it, so the next ERP sync re-INSERTed the draft line as net-new
+# and the operator had to delete it again.
 $list2 = Invoke-RestMethod -Uri "$base/api/pulls/$pullId/items" -Method GET -WebSession $svAdmin
-if ($list2.Count -ne 1) { Fail "After DELETE expected 1 item, got $($list2.Count)" }
-OK "Item B removed from list"
+if ($list2.Count -ne 2) { Fail "After CANCEL expected the row to REMAIN (2 items), got $($list2.Count)" }
+$cancelledB = $list2 | Where-Object { $_.id -eq $itemBId }
+if (-not $cancelledB)                  { Fail "Item B vanished from the list after CANCEL — it must never be deleted" }
+if ($cancelledB.status -ne 'canceled') { Fail "Item B status after CANCEL is '$($cancelledB.status)', expected 'canceled'" }
+OK "Item B still present and marked canceled"
 
 # ----------------------------------------------------------------------------
-# 12. DELETE non-existent → 404
+# 12. CANCEL non-existent → 404
 # ----------------------------------------------------------------------------
-Step "DELETE non-existent item → 404"
+Step "CANCEL non-existent item → 404"
 $bogusId = [Guid]::NewGuid().ToString()
-$r = InvokeExpectFail 'DELETE' "$base/api/pulls/$pullId/items/$bogusId" $null $svAdmin 404
-if (-not $r -or $r.Wrong) { Fail "Expected 404 on bogus delete, got $($r.Status)" }
-OK "DELETE non-existent → 404"
+$r = InvokeExpectFail 'POST' "$base/api/pulls/$pullId/items/$bogusId/cancel" $null $svAdmin 404
+if (-not $r -or $r.Wrong) { Fail "Expected 404 on bogus cancel, got $($r.Status)" }
+OK "CANCEL non-existent → 404"
 
 # ----------------------------------------------------------------------------
 # 13. Final cleanup

@@ -711,7 +711,7 @@
   // items in one round-trip), updates the in-memory pulls[] cache so a later
   // close+reopen of the drawer also shows fresh totals, then re-renders both
   // the drawer sections and the items table. Called from every mutation
-  // success handler (saveAddItem / saveEditItem / deleteItem /
+  // success handler (saveAddItem / saveEditItem / cancelItem /
   // refreshWindowsModal) so the operator never sees stale summary cards
   // after a CRUD action.
   async function refreshPullDetailDrawer(pullGuid) {
@@ -1168,7 +1168,7 @@
           '<button class="btn btn-link" data-act="windows" title="Manage windows"><i class="bi bi-clock"></i></button>' +
           '<button class="btn btn-link" data-act="erp" title="Edit ERP fields"><i class="bi bi-tag"></i></button>' +
           '<button class="btn btn-link" data-act="edit" title="Edit item"><i class="bi bi-pencil"></i></button>' +
-          '<button class="btn btn-link text-danger" data-act="delete" title="Delete item"><i class="bi bi-trash"></i></button>' +
+          '<button class="btn btn-link text-danger" data-act="cancel" title="Cancel item" aria-label="Cancel item"><i class="bi bi-x-circle"></i></button>' +
         '</td>' +
       '</tr>';
     }).join('');
@@ -1183,7 +1183,7 @@
     const itemId = tr.dataset.itemId;
     const act = btn.dataset.act;
     if (act === 'edit') openEditItemModal(itemId);
-    else if (act === 'delete') deleteItem(itemId);
+    else if (act === 'cancel') cancelItem(itemId);
     else if (act === 'windows') openWindowsModal(itemId);
     else if (act === 'erp') openExtendedFieldsModal(itemId);
     else if (act === 'copy') copyItemRow(itemId, btn);
@@ -1524,30 +1524,41 @@
   document.getElementById('iefm-save')?.addEventListener('click', saveExtendedFields);
 
   // ---- Delete item -------------------------------------------------------
-  async function deleteItem(itemId) {
+  async function cancelItem(itemId) {
     if (!drawerPullIdForItems) return;
     const it = drawerItems.find(x => x.id === itemId);
     if (!it) return;
+    // The confirm has to state irreversibility, not cascade mechanics. Nothing
+    // is removed any more, and the action cannot be undone for the life of the
+    // pull -- there is no un-cancel anywhere in the product. The trash icon is
+    // easy to hit by accident, which is the whole reason this gate is worded
+    // this way rather than inherited from the old delete.
     const ok = await confirmAction({
-      title: 'Delete item ' + it.itemCode + '?',
-      message: 'All hour windows on this item will cascade. Refused if any window has receipts.',
-      icon: 'trash',
-      confirmLabel: 'Delete item',
+      title: 'Cancel item ' + it.itemCode + '?',
+      message: 'The item stays on the pull, struck through, and counts for nothing. ' +
+               'ERP sync will not restore it and it cannot be un-cancelled. ' +
+               'Refused if any window has receipts.',
+      // confirmAction's vocabulary is trash|warning|info and anything else
+      // falls back to warning silently. 'warning' is named explicitly rather
+      // than leaned on: irreversible is the point, and 'trash' would now be a
+      // lie about what the action does.
+      icon: 'warning',
+      confirmLabel: 'Cancel item',
       danger: true,
     });
     if (!ok) return;
     const r = await fetch(
       '/api/pulls/' + encodeURIComponent(drawerPullIdForItems) +
-      '/items/' + encodeURIComponent(itemId),
-      { method: 'DELETE' });
+      '/items/' + encodeURIComponent(itemId) + '/cancel',
+      { method: 'POST' });
     if (r.status === 401) { window.location.href = '/Account/Login'; return; }
     if (!r.ok) {
-      let title = 'Delete failed (' + r.status + ')';
+      let title = 'Cancel failed (' + r.status + ')';
       try { const j = await r.json(); if (j?.title) title = j.title; } catch {}
-      showToast('Could not delete', title);
+      showToast('Could not cancel', title);
       return;
     }
-    showToast('Item deleted', it.itemCode);
+    showToast('Item canceled', it.itemCode);
     await refreshPullDetailDrawer(drawerPullIdForItems);
   }
 

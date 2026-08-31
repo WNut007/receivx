@@ -157,6 +157,10 @@ try
         fieldsWritten = result?.FieldsWritten ?? -1,
         rowsWithAnySkip = result?.RowsWithAnySkip ?? -1,
         itemsExemptCreated = result?.ItemsExemptCreated ?? -1,
+        // Items skipped WHOLE because an operator cancelled them. Distinct from
+        // fieldsSkipped, which counts suppressed assignments on rows ETL did
+        // still update.
+        itemsSkippedOperatorCanceled = result?.ItemsSkippedOperatorCanceled ?? -1,
         skippedByField = result?.SkippedByField,
         outcomes = result?.PullOutcomes.Select(o => new { o.PullNumber, o.Outcome, o.Detail }),
         items,

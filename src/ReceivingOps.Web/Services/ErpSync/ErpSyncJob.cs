@@ -249,6 +249,7 @@ public class ErpSyncJob
             var fieldsWritten = 0;
             var rowsWithAnySkip = 0;
             var itemsExemptCreated = 0;
+            var itemsSkippedOperatorCanceled = 0;
             var skippedByField = new Dictionary<string, int>(StringComparer.Ordinal);
             var writtenByField = new Dictionary<string, int>(StringComparer.Ordinal);
 
@@ -290,6 +291,7 @@ public class ErpSyncJob
                 fieldsWritten      += outcome.FieldsWritten;
                 rowsWithAnySkip    += outcome.RowsWithAnySkip;
                 itemsExemptCreated += outcome.ItemsExemptCreated;
+                itemsSkippedOperatorCanceled += outcome.ItemsSkippedOperatorCanceled;
                 MergeCounts(skippedByField, outcome.SkippedByField);
                 MergeCounts(writtenByField, outcome.WrittenByField);
 
@@ -333,17 +335,19 @@ public class ErpSyncJob
                     written = writtenByField,
                     rowsWithAnySkip,
                     itemsExemptCreated,
+                    itemsSkippedOperatorCanceled,
                 }));
 
-            if (fieldsSkipped > 0 || itemsExemptCreated > 0)
+            if (fieldsSkipped > 0 || itemsExemptCreated > 0 || itemsSkippedOperatorCanceled > 0)
             {
                 _log.LogInformation(
                     "ErpSync {RunId}: operator-owned protection suppressed {Skipped} field write(s) " +
-                    "across {Rows} row(s) ({Fields}); {Exempt} operator-created item(s) exempt from cancel.",
+                    "across {Rows} row(s) ({Fields}); {Exempt} operator-created item(s) exempt from cancel; " +
+                    "{OperatorCanceled} operator-cancelled item(s) skipped whole.",
                     runId, fieldsSkipped, rowsWithAnySkip,
                     string.Join(", ", skippedByField.OrderByDescending(k => k.Value)
                                                     .Select(k => $"{k.Key}={k.Value}")),
-                    itemsExemptCreated);
+                    itemsExemptCreated, itemsSkippedOperatorCanceled);
             }
 
             // The existing c/u/s/e tokens keep their spelling, so anything

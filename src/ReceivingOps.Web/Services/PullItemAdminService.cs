@@ -171,7 +171,7 @@ public class PullItemAdminService : IPullItemAdminService
             // every PUT, which is precisely the row-level collapse the diff
             // exists to avoid.
             var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-                SELECT Id, PullId, ItemCode, Description, VendorCode, Remark
+                SELECT Id, PullId, ItemCode, Description, VendorCode, Remark, Status
                 FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -207,8 +207,21 @@ public class PullItemAdminService : IPullItemAdminService
             // into row-level protection, with every test still green.
             // Do not simplify this into marking what the request carried.
             //
-            // VendorName, Tag and Status are absent deliberately: ETL never
-            // writes them, so they need no protection.
+            // VendorName and Tag are absent deliberately: ETL never writes
+            // them, so they need no protection.
+            //
+            // Status IS marked, on the same pure value-diff rule as the rest.
+            // 1eb4f53 left it out on the reasoning that ETL never writes it;
+            // that was wrong — the missing-from-draft cancel writes exactly this
+            // column. Marking here is what makes the two cancels tell apart: a
+            // canceled row WITH a Status mark is the operator's decision and ETL
+            // skips the row entirely; a canceled row WITHOUT one is ETL's own and
+            // keeps today's behaviour.
+            //
+            // Marked on ANY status change, not only a change to 'canceled'. A
+            // deliberate widening: an operator who moves a row to 'new' has also
+            // decided something about its status, and ETL cancelling it later
+            // would undo that. Same principle, same rule, no special case.
             await OperatorFieldEdits.MarkChangedAsync(
                 conn, tx, OperatorFieldEdits.PullItem, itemId,
                 new[]
@@ -219,6 +232,8 @@ public class PullItemAdminService : IPullItemAdminService
                         OperatorFieldEdits.Fields.VendorCode, item.VendorCode, req.VendorCode),
                     new OperatorFieldEdits.FieldChange(
                         OperatorFieldEdits.Fields.Remark, item.Remark, req.Remark),
+                    new OperatorFieldEdits.FieldChange(
+                        OperatorFieldEdits.Fields.Status, item.Status, req.Status),
                 },
                 CurrentUserIdOrNull(), ct);
 
@@ -235,9 +250,40 @@ public class PullItemAdminService : IPullItemAdminService
     }
 
     // ========================================================================
-    // DELETE
+    // CANCEL  (replaces the hard DELETE)
     // ========================================================================
-    public async Task DeleteAsync(Guid pullId, Guid itemId, CancellationToken ct = default)
+    /// <summary>
+    /// Cancels one item on a pull, permanently and attributably.
+    ///
+    /// <para><b>Why this is not a DELETE.</b> The old hard delete removed the
+    /// row, so the very next ERP sync found the draft line absent from
+    /// <c>dbo.PullItems</c> and re-INSERTed it as net-new. Measured on
+    /// production 2026-08-31: 15 (pull, item) pairs had been deleted more than
+    /// once and five of them three times, because the operator had to keep
+    /// deleting the same resurrected line — <c>2053-810514-223</c> on pull
+    /// 0000030817 was deleted on 08-29 and again on 08-31 and was back on the
+    /// pull a third time. §7.10 forbids DELETE on receipt-referenced rows
+    /// anyway; this closes both at once.</para>
+    ///
+    /// <para><b>Why it is permanent.</b> The write marks
+    /// <c>OperatorFieldEdits</c> ownership of <c>Status</c>, and ownership is
+    /// never released on any code path. From then on ETL skips the row whole —
+    /// no update, no window sync, no un-cancel — for the life of the pull. There
+    /// is deliberately no un-cancel endpoint.</para>
+    ///
+    /// <para><b>Receipts still refuse.</b> Inherited from the delete path and
+    /// kept on purpose: a canceled item drops out of every expected/received
+    /// total (vw_PullProgress and the close gate both filter it), so cancelling
+    /// one that already has receipts would strand live ReceivedQty behind an
+    /// invisible row — the same inconsistency ErpUpsertService and BpiPrsSource
+    /// already flag for the synthesised-pull takeover. The operator cancels the
+    /// receipts first, exactly as before.</para>
+    ///
+    /// <para>Idempotent: cancelling an already-canceled row re-asserts the mark
+    /// and succeeds. That is the one way an ETL-canceled row can be adopted as
+    /// an operator decision, which is a real thing an operator may want to say.</para>
+    /// </summary>
+    public async Task CancelAsync(Guid pullId, Guid itemId, CancellationToken ct = default)
     {
         using var conn = _factory.Create();
         conn.Open();
@@ -248,7 +294,7 @@ public class PullItemAdminService : IPullItemAdminService
             RefuseClosed(pull);
 
             var item = await conn.QuerySingleOrDefaultAsync<PullItemLockRow>(new CommandDefinition(@"
-                SELECT Id, PullId, ItemCode
+                SELECT Id, PullId, ItemCode, Status
                 FROM   dbo.PullItems WITH (UPDLOCK, ROWLOCK)
                 WHERE  Id = @Id;",
                 new { Id = itemId }, transaction: tx, cancellationToken: ct))
@@ -264,15 +310,23 @@ public class PullItemAdminService : IPullItemAdminService
                 new { Id = itemId }, transaction: tx, cancellationToken: ct));
             if (anyReceived.HasValue)
                 throw new BusinessException(
-                    "Cannot delete item: at least one window has receipts. Cancel them first.");
+                    "Cannot cancel item: at least one window has receipts. Cancel them first.");
 
-            // FK_PIW_PullItem ON DELETE CASCADE drops the windows; no explicit DELETE needed.
             await conn.ExecuteAsync(new CommandDefinition(
-                "DELETE FROM dbo.PullItems WHERE Id = @Id;",
+                "UPDATE dbo.PullItems SET Status = 'canceled' WHERE Id = @Id;",
                 new { Id = itemId }, transaction: tx, cancellationToken: ct));
 
-            await _audit.WriteAsync(conn, tx, "delete", "PullItem", itemId.ToString(),
-                $"Deleted item {item.ItemCode} from pull {pull.PullNumber}", ct);
+            // The mark, not the Status value, is what ETL reads to tell this
+            // cancel from its own. Written unconditionally rather than through
+            // the value diff: re-cancelling an already-canceled row is the
+            // adoption case above, and a diff would record nothing for it.
+            await OperatorFieldEdits.MarkAsync(
+                conn, tx, OperatorFieldEdits.PullItem, itemId,
+                OperatorFieldEdits.Fields.Status, CurrentUserIdOrNull(), ct);
+
+            await _audit.WriteAsync(conn, tx, "cancel", "PullItem", itemId.ToString(),
+                $"Canceled item {item.ItemCode} on pull {pull.PullNumber} " +
+                "(permanent — ERP sync will not restore or re-import it)", ct);
 
             tx.Commit();
         }
@@ -693,6 +747,7 @@ public class PullItemAdminService : IPullItemAdminService
         public string? Description { get; set; }
         public string? VendorCode { get; set; }
         public string? Remark { get; set; }
+        public string? Status { get; set; }
         public string? ProductFamily { get; set; }
         public string? FromSubInventory { get; set; }
         public string? ToSubInventory { get; set; }

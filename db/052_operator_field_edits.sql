@@ -66,7 +66,22 @@
 
    Fields an operator can edit that ETL never writes (Eta, Notes,
    ReferenceNumber, VendorName, Tag, and the window close/variance columns)
-   need no protection and are not recorded here. PullItems.SortOrder is
+   need no protection and are not recorded here.
+
+   CORRECTION (2026-08-31): the list above says twelve and omits
+   dbo.PullItems.Status, on the reasoning stated below that ETL never writes it.
+   That reasoning was wrong. ETL writes Status from the missing-from-draft
+   cancel path, so an operator's cancel and ETL's own cancel wrote the identical
+   value with nothing to tell them apart. Status is now the THIRTEENTH
+   protectable field and is marked by both the item-edit PUT and the new
+   item-cancel endpoint.
+
+   No migration was needed for that, which is the design working as intended:
+   FieldName is DATA, so a new protectable field costs one call at its write
+   site and nothing here. This file is unchanged apart from these comments.
+
+   Status is the one entry that is NOT interpolated into the ETL's dynamic SET
+   clause -- see the note on OperatorFieldEdits.Fields.Status. PullItems.SortOrder is
    neither operator-editable nor ETL-updated today; if a reorder endpoint is
    ever added it must mark ownership like the others.
 
@@ -197,9 +212,24 @@ GO
    ERP-sourced one. Same name, same width, same NULL-means-ordinary convention
    as db/050's Pulls.Origin and PurchaseOrders.Origin.
 
-     NULL         ERP-fed, or created before this migration
+     NULL         ERP-fed, created before this migration, or created by the
+                  WIP pull synthesis
      'operator'   created by an operator through the API
-     'po-import'  created by the WIP pull synthesis
+
+   CORRECTION (2026-08-31): this comment originally listed a third value,
+   'po-import', "created by the WIP pull synthesis". Nothing writes it.
+   WipSynthesisWriter's INSERT names its columns explicitly and omits Origin, so
+   synthesised ITEMS carry NULL; 0 rows in production hold 'po-import' at item
+   grain. The value is real on dbo.Pulls.Origin and on PurchaseOrders.Origin
+   (db/050), not here.
+
+   Synthesised items are protected instead by ErpUpsertService.UpsertOneAsync,
+   which returns before UpdatePullAsync whenever the PULL carries
+   Origin='po-import'. That early return is the whole of their protection at
+   item grain -- verified 2026-08-31: 155 synthesised pulls, 298 items, 0
+   cancelled, 0 etl-* audit rows ever drawn against one. Removing it would
+   expose every one of those items to the cancel path with no second line of
+   defence, which is what the tripwire block in that method exists to catch.
 
    Items in the DB but absent from the ERP draft are flipped to
    Status='canceled'. An operator-created item is BY DEFINITION never in the

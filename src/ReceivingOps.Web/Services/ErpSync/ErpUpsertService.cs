@@ -383,6 +383,32 @@ public class ErpUpsertService : IErpUpsertService
 
             if (existingByKey.TryGetValue(draftKey, out var ex))
             {
+                // ---- Operator-cancelled → SKIP THE WHOLE ROW -------------
+                //
+                // Note the grain. Everything else in this method skips FIELDS:
+                // an owned Remark drops one assignment from the SET clause and
+                // the rest of the row still updates. This skips the ROW — no
+                // field update, no window sync, no un-cancel, nothing.
+                //
+                // The distinguishing signal is the OperatorFieldEdits mark on
+                // Status, NOT the Status value. Both cancels write the identical
+                // string 'canceled': ETL's own, a few lines below, and the
+                // operator's, in PullItemAdminService.CancelAsync. Only the
+                // operator's carries a mark, and marks are never released, so
+                // this holds for the life of the pull no matter how many times
+                // the ERP keeps sending the line.
+                //
+                // An ETL-cancelled row reaching here has no mark and falls
+                // through to the ordinary update — it stays cancelled (nothing
+                // in this method writes Status back to 'normal'), which is the
+                // pre-existing behaviour and is deliberately unchanged.
+                if (string.Equals(ex.Status, "canceled", StringComparison.Ordinal) &&
+                    owned.IsOwned(OperatorFieldEdits.PullItem, ex.Id, OperatorFieldEdits.Fields.Status))
+                {
+                    result.ItemsSkippedOperatorCanceled++;
+                    continue;
+                }
+
                 // Existing item — update ERP-sourced fields. Status is
                 // intentionally NOT touched: an operator may have set it
                 // to 'canceled' or 'new', and we don't want ETL to flip it
@@ -503,10 +529,25 @@ public class ErpUpsertService : IErpUpsertService
                         && !draftKeys.Contains(new ItemKey(e.ItemCode, e.VendorCode)));
         result.ItemsExemptCreated += operatorCreated;
 
+        // An operator who has set this row's Status owns it, so ETL must not
+        // overwrite that decision — the same rule every other field follows,
+        // applied to the one column this path writes.
+        //
+        // Marked on ANY operator status change, not only a change to 'canceled'.
+        // A row an operator moved to 'new' that then vanishes from the draft is
+        // exempt too. That widening is deliberate: they decided something about
+        // the row's status and cancelling it would undo that.
+        //
+        // Already-'canceled' rows are filtered out one line below regardless, so
+        // in practice this clause earns its keep on the non-canceled statuses.
+        bool StatusOwnedByOperator(ExistingItem e) =>
+            owned.IsOwned(OperatorFieldEdits.PullItem, e.Id, OperatorFieldEdits.Fields.Status);
+
         foreach (var orphan in existing.Where(e =>
                      !draftKeys.Contains(new ItemKey(e.ItemCode, e.VendorCode)) &&
                      !string.Equals(e.Status, "canceled", StringComparison.Ordinal) &&
-                     !string.Equals(e.Origin, OperatorFieldEdits.OriginOperator, StringComparison.Ordinal)))
+                     !string.Equals(e.Origin, OperatorFieldEdits.OriginOperator, StringComparison.Ordinal) &&
+                     !StatusOwnedByOperator(e)))
         {
             await conn.ExecuteAsync(new CommandDefinition(@"
                 UPDATE dbo.PullItems SET Status = 'canceled' WHERE Id = @Id;",

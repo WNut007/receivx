@@ -145,6 +145,18 @@ public class PullSheetExportService : IPullSheetExportService
     /// </summary>
     private static List<PullSheetGrandTotalRow> BuildGrandTotal(List<PullSheetDetailRow> detail) =>
         detail
+            // Cancelled lines count for nothing, so they are excluded here
+            // BEFORE grouping. This sheet has no status column -- unlike Summary,
+            // whose rows carry RowStatus and render as "Canceled" -- so a
+            // cancelled line's quantity merged into an item's cross-pull total
+            // with nothing on the row to say it was there. Measured on production
+            // 2026-08-31: 2,633 cancelled items carrying ~2.58M expected units
+            // were eligible to inflate this sheet.
+            //
+            // Filtered here rather than in the repository on purpose: Summary and
+            // Detail both need the cancelled rows in order to show them as
+            // cancelled, and only this aggregation must drop them.
+            .Where(r => !r.RowStatus.Equals("canceled", StringComparison.OrdinalIgnoreCase))
             .GroupBy(r => r.ItemCode, StringComparer.Ordinal)
             .Select(g => new PullSheetGrandTotalRow
             {

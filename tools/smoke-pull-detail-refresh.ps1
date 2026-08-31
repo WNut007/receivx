@@ -36,6 +36,13 @@ WHERE p.PullNumber LIKE 'PL-DRP-%';
 UPDATE po SET PullId = NULL FROM dbo.PurchaseOrders po
 INNER JOIN dbo.Pulls p ON p.Id = po.PullId
 WHERE p.PullNumber LIKE 'PL-DRP-%';
+-- dbo.OperatorFieldEdits has no FK to any parent, so nothing cascades it away.
+-- The cancel in case 4 marks Status on item A; without this the smoke strands
+-- one inert mark per run. Must run BEFORE the pulls go.
+DELETE e FROM dbo.OperatorFieldEdits e
+INNER JOIN dbo.PullItems pi ON pi.Id = e.EntityId
+INNER JOIN dbo.Pulls p ON p.Id = pi.PullId
+WHERE e.EntityType = 'PullItem' AND p.PullNumber LIKE 'PL-DRP-%';
 DELETE FROM dbo.Pulls WHERE PullNumber LIKE 'PL-DRP-%';
 PRINT 'cleanup: pulls removed = ' + CONVERT(varchar, @@ROWCOUNT);
 '@
@@ -112,15 +119,22 @@ if ($d3.totalExpected -ne 750) { Fail "After add window: totalExpected=$($d3.tot
 if ($d3.windowsTotal  -ne 4)   { Fail "After add window: windowsTotal=$($d3.windowsTotal), expected 4" }
 OK "Detail reflects new window (750 expected / 4 windows)"
 
-# Case 4: Delete item A entirely → expected + items + windows shrink back
-Step "DELETE item A → totals shrink to item B only"
-$delResp = Invoke-WebRequest -Uri "$base/api/pulls/$pullId/items/$($itemA.id)" -Method DELETE -WebSession $sv -UseBasicParsing
-if ($delResp.StatusCode -ne 204) { Fail "DELETE returned $($delResp.StatusCode), expected 204" }
+# Case 4: Cancel item A → expected + windows shrink back; the ROW stays.
+#
+# itemCount deliberately does NOT drop. PullRepository builds it as
+# ActiveItemCount + the canceled count, so a canceled row is still counted as
+# being on the pull -- it is struck through in the drawer, not hidden. The
+# quantities are what must go to zero, and those come from vw_PullProgress and
+# the WindowsTotal subquery, both of which filter Status <> 'canceled'.
+Step "CANCEL item A → quantities shrink to item B only, row remains"
+$canResp = Invoke-WebRequest -Uri "$base/api/pulls/$pullId/items/$($itemA.id)/cancel" -Method POST -WebSession $sv -UseBasicParsing
+if ($canResp.StatusCode -ne 204) { Fail "CANCEL returned $($canResp.StatusCode), expected 204" }
 $d4 = GetDetail
-if ($d4.itemCount     -ne 1)   { Fail "After delete A: itemCount=$($d4.itemCount), expected 1" }
-if ($d4.totalExpected -ne 100) { Fail "After delete A: totalExpected=$($d4.totalExpected), expected 100 (item B's window only)" }
-if ($d4.windowsTotal  -ne 1)   { Fail "After delete A: windowsTotal=$($d4.windowsTotal), expected 1" }
-OK "Detail reflects delete (1 item / 100 expected / 1 window)"
+if ($d4.itemCount     -ne 2)   { Fail "After cancel A: itemCount=$($d4.itemCount), expected 2 (canceled rows stay on the pull)" }
+if ($d4.canceledCount -ne 1)   { Fail "After cancel A: canceledCount=$($d4.canceledCount), expected 1" }
+if ($d4.totalExpected -ne 100) { Fail "After cancel A: totalExpected=$($d4.totalExpected), expected 100 (item B's window only)" }
+if ($d4.windowsTotal  -ne 1)   { Fail "After cancel A: windowsTotal=$($d4.windowsTotal), expected 1" }
+OK "Detail reflects cancel (row kept, 100 expected / 1 window)"
 
 SqlCleanup
 Write-Host ""
