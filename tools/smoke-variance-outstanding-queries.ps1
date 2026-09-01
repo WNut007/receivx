@@ -345,14 +345,36 @@ console.log(bad === 0 ? 'PREDICATES_OK' : 'PREDICATES_FAIL');
         else                                    { OK "$($s.what) routes through $($s.needs)()" }
     }
 
-    # The export is the fourth copy; it must use the helper and it must not
-    # label a written-off line as work still coming.
-    if ($js -notmatch "const outstanding = slotOutstanding\(slot\)") {
-        Bad "export detail sheet does not use slotOutstanding()"
-    } elseif ($js -notmatch "'Closed short'") {
-        Bad "export does not distinguish a closed-short line from a Partial"
+    # The export is the fourth copy. It used to be built in the browser by
+    # buildExportRows(); it now runs on the server in PullSheetExportService so
+    # the per-pull sheet and Reports -> Pull Sheets come off ONE generator. The
+    # rule did not move with it for free — the first server version computed
+    # Outstanding as Expected - Received and resurrected the shortfall of every
+    # window that had been closed short. So the check follows the code.
+    #
+    # Scoped to the PullSheetDetailRow class body, not the whole file: three
+    # DTOs in that file carry an Outstanding member, and a file-wide match would
+    # be satisfied by any of them.
+    # Behavioural coverage of the same rule lives in
+    # smoke-pull-sheets-period-scoping.ps1 case 7, which reads the number off a
+    # real exported workbook.
+    $dtoPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'src\ReceivingOps.Web\Models\Dtos\PullSheetExportDtos.cs'
+    if (-not (Test-Path $dtoPath)) {
+        Bad "PullSheetExportDtos.cs not found — the export DTOs moved without this check following"
     } else {
-        OK "export uses slotOutstanding() and labels closed-short lines"
+        $dto = Get-Content -Raw $dtoPath
+        $detailCls = [regex]::Match($dto, '(?s)class PullSheetDetailRow\s*\{.*?\n\}')
+        if (-not $detailCls.Success) {
+            Bad "could not isolate PullSheetDetailRow in PullSheetExportDtos.cs"
+        } elseif ($detailCls.Value -notmatch 'IsSettled\s*\?\s*0\s*:') {
+            Bad "export Outstanding is not settled-aware — a closed-short window would report its written-off shortfall as still owed"
+        } elseif ($detailCls.Value -notmatch 'IsClosed') {
+            Bad "export IsSettled does not consider IsClosed"
+        } elseif ($dto -notmatch 'Closed short') {
+            Bad "export does not distinguish a closed-short line from a Partial"
+        } else {
+            OK "server export zeroes Outstanding on a settled window and labels closed-short lines"
+        }
     }
 
     # db/047 §6 — the receive response carries the window's post-tx IsClosed so

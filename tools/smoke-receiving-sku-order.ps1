@@ -28,8 +28,8 @@
 #   5. window hours       — still ascending within an item
 #   6. client comparator  — receiving.js reproduces the server order from a
 #                           shuffled input (the site that used to override it)
-#   7. export path        — buildExportRows adds no ordering of its own, so an
-#                           exported sheet matches the screen
+#   7. export path        — the per-pull xlsx (now server-generated, shared with
+#                           Reports -> Pull Sheets) lists rows in grid order
 #   8. source guard       — all four PullRepository sites carry the new key
 #
 # Fixtures are seeded through SQL: the ordering is a read-path property, and
@@ -283,20 +283,51 @@ OK 'the shipped comparator, run over the reversed rows, returns the server order
 
 # ---------------------------------------------------------------------------
 Step '7. The export inherits the grid order'
-# buildExportRows walks `items` — the array ingestPullDetail already sorted —
-# and must not impose an order of its own, or a sheet stops matching the screen.
-if ($js -notmatch '(?s)function buildExportRows\(\)\s*\{(.*?)\r?\n  \}') { Fail 'could not isolate buildExportRows in receiving.js' }
-$export = $Matches[1]
-if ($export -notmatch 'items\.forEach') { Fail 'buildExportRows no longer walks items for the Detail sheet' }
-if ($export -notmatch 'items\.map')     { Fail 'buildExportRows no longer walks items for the Summary sheet' }
-foreach ($m in [regex]::Matches($export, '\.sort\(')) {
-    $start = [Math]::Max(0, $m.Index - 80)
-    $ctx = $export.Substring($start, $m.Index - $start)
-    if ($ctx -notmatch 'Object\.keys\(item\.schedule\)') {
-        Fail "buildExportRows imposes its own ordering — the export would stop matching the grid:`n  ...$ctx.sort("
-    }
+# The per-pull Export button no longer builds the workbook in the browser. It
+# calls /api/reports/pull-sheets/pull/{id}/export.xlsx, the same generator
+# Reports -> Pull Sheets uses, so the ordering claim now belongs to the server
+# query. Assert it against the FILE rather than against source: the sheet the
+# operator opens must list rows in the order the grid shows them.
+$dll = Get-ChildItem "$repoRoot\src\ReceivingOps.Web\bin\Debug\net8.0" -Filter 'ClosedXML.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $dll) { Fail 'ClosedXML.dll not found — build the project first' }
+Add-Type -Path $dll.FullName
+
+$xlsx = Join-Path ([IO.Path]::GetTempPath()) "skuord-$([guid]::NewGuid().ToString('N')).xlsx"
+try {
+    $xr = Invoke-WebRequest -Uri "$base/api/reports/pull-sheets/pull/$multi/export.xlsx" -WebSession $sv -UseBasicParsing
+} catch {
+    Fail "per-pull export request failed: $($_.Exception.Message)"
 }
-OK 'the only sort in buildExportRows is the per-item hour sort; row order comes from the grid'
+[IO.File]::WriteAllBytes($xlsx, $xr.Content)
+
+$xwb = New-Object ClosedXML.Excel.XLWorkbook($xlsx)
+$xd  = $xwb.Worksheet('Detail')
+# Resolve columns by header name so a column insertion cannot shift the check.
+$xh = @{}
+foreach ($c in 1..($xd.LastColumnUsed().ColumnNumber())) { $xh[$xd.Cell(1,$c).GetString()] = $c }
+foreach ($need in 'Item Code','Vendor Code') {
+    if (-not $xh.ContainsKey($need)) { $xwb.Dispose(); Fail "export Detail sheet has no '$need' column" }
+}
+
+# Detail is window-grained (each fixture item carries hours 7 and 9), so collapse
+# consecutive duplicates to get the ROW order the grid would show.
+$seq = @()
+foreach ($r in 2..($xd.LastRowUsed().RowNumber())) {
+    $code = $xd.Cell($r, $xh['Item Code']).GetString()
+    $vend = $xd.Cell($r, $xh['Vendor Code']).GetString()
+    if ([string]::IsNullOrEmpty($vend)) { $vend = '<null>' }
+    $key = "$code@$vend"
+    if ($seq.Count -eq 0 -or $seq[-1] -ne $key) { $seq += $key }
+}
+$xwb.Dispose()
+Remove-Item $xlsx -Force -ErrorAction SilentlyContinue
+
+$shapeExport = $seq -join ' | '
+if ($shapeExport -eq $oldMulti) { Fail "the export is still on the SortOrder order:`n  $shapeExport" }
+if ($shapeExport -ne $wantMulti) {
+    Fail "the exported sheet disagrees with the grid.`n  grid (API):   $wantMulti`n  sheet (xlsx): $shapeExport"
+}
+OK 'the exported Detail sheet lists rows in exactly the grid order'
 
 # ---------------------------------------------------------------------------
 Step '8. All four PullRepository sites carry the new key'
