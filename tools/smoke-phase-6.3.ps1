@@ -109,21 +109,23 @@ foreach ($needle in @(
     # delegated row actions (rendered HTML uses double-quoted attrs)
     'data-act="windows"',
     'data-act="edit"',
-    'data-act="delete"',
+    'data-act="cancel"',
     # delegated handler dispatch
     "act === 'edit'",
-    "act === 'delete'",
+    "act === 'cancel'",
     "act === 'windows'",
     # CRUD functions
     'function openAddItemModal',
     'function saveAddItem',
     'function openEditItemModal',
     'function saveEditItem',
-    'function deleteItem',
+    'function cancelItem',
     'function openWindowsModal',
     'function renderWindowsTable',
     'function refreshWindowsModal',
-    # HTTP verbs hit by each flow
+    # HTTP verbs hit by each flow. DELETE is the WINDOW sub-resource only --
+    # the item's own delete became POST .../cancel in c3abbbb, so a DELETE
+    # turning up against /items/{id} would be a regression, not a match.
     "method: 'POST'",
     "method: 'PUT'",
     "method: 'DELETE'",

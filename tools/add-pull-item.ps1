@@ -42,7 +42,12 @@
       - dbo.Pulls(Id, PullNumber, Status)
       - dbo.PullItems(Id, PullId, ItemCode, Description, VendorCode,
                       VendorName, Tag NULL|'pcba'|'swap',
-                      Status DEFAULT 'normal', SortOrder)
+                      Status DEFAULT 'normal', SortOrder,
+                      Origin)  — db/052; MUST be written as 'operator' here.
+                      ETL cancels any item missing from the ERP draft, and an
+                      item this script creates is by definition never in one.
+                      Left NULL it is unexempt and the next in-window sync
+                      strikes it through. See smoke-add-pull-item-origin.ps1.
       - dbo.PullItemWindows(PullItemId, HourOfDay 0..23, ExpectedQty,
                             ReceivedQty)  — UQ_PIW_Hour on (PullItemId,HourOfDay)
       - dbo.PurchaseOrderLines(ItemCode, Description, ...) for the lookup
@@ -341,12 +346,12 @@ WHERE  PullId = '$pullId';
     if ($mode -eq 'create') {
         [void]$sb.AppendLine(@"
 INSERT INTO dbo.PullItems
-       (Id, PullId, ItemCode, Description, VendorCode, VendorName, Tag, Status, SortOrder)
+       (Id, PullId, ItemCode, Description, VendorCode, VendorName, Tag, Status, SortOrder, Origin)
 VALUES ('$pullItemId',
         '$pullId',
         '$(SqlEscape $itemCode)',
         N'$(SqlEscape $description)',
-        $vendorCodeSql, $vendorNameSql, $tagSql, 'normal', $sortOrder);
+        $vendorCodeSql, $vendorNameSql, $tagSql, 'normal', $sortOrder, 'operator');
 "@)
     } else {
         [void]$sb.AppendLine("DELETE FROM dbo.PullItemWindows WHERE PullItemId = '$pullItemId';")

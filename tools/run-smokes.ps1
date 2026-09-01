@@ -129,6 +129,13 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # HARNESS-OWNER-% namespace with the smoke above, so the two must not
         # run concurrently; also owns PL-CANX-%.
         'smoke-operator-cancel-permanent.ps1'
+        # The OTHER create path. db/052's Origin stamp reached the API but not
+        # tools/add-pull-item.ps1, whose items were therefore unexempt and got
+        # struck through by the next in-window sync. Drives that script over
+        # piped stdin, so it is sensitive to its PROMPT ORDER by design. Shares
+        # the HARNESS-OWNER-% namespace with the two smokes above -- the three
+        # must not run concurrently.
+        'smoke-add-pull-item-origin.ps1'
         # Read-path companion to storer-grain: the console grid orders by
         # (ItemCode, VendorCode, SortOrder) so a SKU's storer rows sit together.
         # Seeds its own SKUORD-% pulls via SQL; needs node on PATH for step 6.

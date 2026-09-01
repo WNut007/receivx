@@ -1523,25 +1523,30 @@
 
   document.getElementById('iefm-save')?.addEventListener('click', saveExtendedFields);
 
-  // ---- Delete item -------------------------------------------------------
+  // ---- Cancel item -------------------------------------------------------
   async function cancelItem(itemId) {
     if (!drawerPullIdForItems) return;
     const it = drawerItems.find(x => x.id === itemId);
     if (!it) return;
-    // The confirm has to state irreversibility, not cascade mechanics. Nothing
-    // is removed any more, and the action cannot be undone for the life of the
-    // pull -- there is no un-cancel anywhere in the product. The trash icon is
-    // easy to hit by accident, which is the whole reason this gate is worded
-    // this way rather than inherited from the old delete.
+    // The confirm states what actually happens, not cascade mechanics: nothing
+    // is removed, the row stops counting, and ERP will not re-import it.
+    //
+    // It deliberately does NOT claim permanence. An earlier wording said the
+    // item "cannot be un-cancelled", which was false -- the edit modal's Status
+    // dropdown reaches 'normal' in two clicks, and because UpdateAsync marks
+    // Status on the same value-diff rule, a restored row is ERP-proof too. That
+    // recovery path is the supported one; do not add an undo button here and do
+    // not hide the pencil on cancelled rows. This gate exists because the icon
+    // is easy to hit by accident, not because the action is irreversible.
     const ok = await confirmAction({
       title: 'Cancel item ' + it.itemCode + '?',
-      message: 'The item stays on the pull, struck through, and counts for nothing. ' +
-               'ERP sync will not restore it and it cannot be un-cancelled. ' +
-               'Refused if any window has receipts.',
+      message: 'The item stays on the pull, struck through, and stops counting ' +
+               'toward the pull totals and the close check. ERP sync will not ' +
+               're-import it. You can restore it later by editing the item and ' +
+               'setting Status back to normal. Refused if any window has receipts.',
       // confirmAction's vocabulary is trash|warning|info and anything else
       // falls back to warning silently. 'warning' is named explicitly rather
-      // than leaned on: irreversible is the point, and 'trash' would now be a
-      // lie about what the action does.
+      // than leaned on: 'trash' would be a lie about what the action does.
       icon: 'warning',
       confirmLabel: 'Cancel item',
       danger: true,

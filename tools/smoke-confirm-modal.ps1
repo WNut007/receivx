@@ -81,7 +81,7 @@ $expected = @(
     @{ file='C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\pos.js';        needle='Delete this PO line' },
     @{ file='C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\config.js';     needle='Reset preferences to defaults' },
     @{ file='C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\config.js';     needle="title: 'Sign out" },
-    @{ file='C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\dashboard.js';  needle="title: 'Delete item '" },
+    @{ file='C:\dev\receivx\src\ReceivingOps.Web\wwwroot\js\dashboard.js';  needle="title: 'Cancel item '" },
     @{ file='C:\dev\receivx\mockups\config.html';                           needle='Reset preferences to defaults' },
     @{ file='C:\dev\receivx\mockups\config.html';                           needle="title: 'Sign out" },
     @{ file='C:\dev\receivx\mockups\receiving-mockup-v2-fullreceived.html'; needle='Reopen pull sheet' }
