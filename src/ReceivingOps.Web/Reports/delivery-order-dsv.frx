@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Report ScriptLanguage="CSharp" ReportInfo.Created="06/11/2026 14:54:17" ReportInfo.Modified="06/11/2026 14:54:17" ReportInfo.CreatorVersion="2026.2.1.0">
   <Dictionary>
     <TableDataSource Name="Orders" ReferenceName="DoReport.Orders" DataType="System.Int32" Enabled="true">
@@ -94,7 +94,6 @@
         <TextObject Name="ColVendor" Left="423.36" Top="1.89" Width="132.3" Height="45.36" CanGrow="true" Text="[Lines.VendorName]" Font="Arial, 8pt"/>
         <TextObject Name="ColDnInv" Left="555.66" Top="1.89" Width="124.74" Height="45.36" CanGrow="true" Text="[Lines.DnInv]" Font="Arial, 8pt"/>
         <LineObject Name="RowRule" Top="51.03" Width="680.4" Border.Width="0.25"/>
-      </DataBand>
       <DataFooterBand Name="OrderFooterDsv" Height="189">
         <LineObject Name="RuleTotal" Top="3.78" Width="680.4" Border.Width="0.5"/>
         <TextObject Name="TotalLabel" Top="11.34" Width="151.2" Height="22.68" CanGrow="true" Text="TOTAL QTY" HorzAlign="Right" Font="Arial, 9pt, style=Bold"/>
@@ -113,9 +112,11 @@
         <PictureObject Name="SigProdImg" Left="466" Top="75.71" Width="210.4" Height="40" DataColumn="Orders.ProductionSigBytes" SizeMode="Zoom"/>
         <TextObject Name="SigProdCap" Left="462" Top="143.64" Width="218.4" Height="15.12" Text="Name / Date" HorzAlign="Center" Font="Arial, 7pt"/>
       </DataFooterBand>
+      </DataBand>
     </DataBand>
     <PageFooterBand Name="PageFootDsv" Height="30.24">
       <TextObject Name="PageNum" Left="491.4" Top="7.56" Width="189" Height="15.12" CanGrow="true" Text="Page [Page#] of [TotalPages#]" HorzAlign="Right" Font="Arial, 7pt"/>
     </PageFooterBand>
   </ReportPage>
 </Report>
+
