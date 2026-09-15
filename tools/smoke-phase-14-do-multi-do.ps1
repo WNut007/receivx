@@ -109,14 +109,22 @@ VALUES ('$poB', '$poBnum', '$WH_01', '2026-01-02', NULL, 'open', N'Phase 14 mult
 -- chars wrapping in the info grid's right-value cell) slipped past the
 -- battery. These widths still wrap on detail cells but stay ≤2 lines,
 -- so the regression case is exercised end-to-end.
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId)
+--
+-- Note carries the WDT sentinel on both lines: this smoke asserts .dsv-do,
+-- which is the DELIVERY NOTE partial, and /preview with no ?type resolves to
+-- the Note. Since c3c3afb the DN is issued only for marked lines, so an
+-- unmarked fixture yields the empty state and zero articles.
+-- Line A uses the bare sentinel and line B the qualified '... and <text>'
+-- form, so the two-DO split is proven to survive BOTH accepted spellings
+-- rather than only the one the WDT smoke happens to seed first.
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId, Note)
 VALUES ('$lineA', '$poA', 1, 'PH14MULTI-ITEM-A', N'Multi-DO smoke item A', 100, 0,
         'V-MULTI-A', N'Multi Vendor Alpha (BRANCH OFFICE)', 'SUBINV-AAA', 'LOC-ALPHA',
-        'PALLET-MULTI-A-001', '0000099001', 'ASN-MULTI-A-001', '07:00', 'INV-MULTI-A', 'OID-MULTI-A1');
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId)
+        'PALLET-MULTI-A-001', '0000099001', 'ASN-MULTI-A-001', '07:00', 'INV-MULTI-A', 'OID-MULTI-A1', N'Transferred from WDT');
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, VendorCode, VendorName, SubInventory, ToLocation, PalletId, KanbanNo, AsnNo, OrderRound, InvoiceNo, OrderId, Note)
 VALUES ('$lineB', '$poB', 1, 'PH14MULTI-ITEM-B', N'Multi-DO smoke item B', 100, 0,
         'V-MULTI-B', N'Multi Vendor Beta Industries Ltd.', 'SUBINV-BBB', 'LOC-BETA',
-        'PALLET-MULTI-B-001', '0000099002', 'ASN-MULTI-B-001', '07:00', 'INV-MULTI-B', 'OID-MULTI-B1');
+        'PALLET-MULTI-B-001', '0000099002', 'ASN-MULTI-B-001', '07:00', 'INV-MULTI-B', 'OID-MULTI-B1', N'Transferred from WDT and repacked');
 "@ | Out-Null
 OK "Two POs seeded with distinct (Vendor × SubInv × ToLoc) triples + wide ERP stamps"
 
@@ -282,3 +290,4 @@ Cleanup
 Write-Host ""
 Write-Host "ALL PASS — Phase 14: one pull spawned 2 DOs split by (Vendor × FromSubInv × ToLoc)." -ForegroundColor Green
 exit 0
+

@@ -84,8 +84,13 @@ VALUES (@poId, 'PO-DOR-SUMMARY',
         '22222222-2222-2222-2222-000000000001',
         '2026-01-01', NULL, 'open',
         N'DO smoke dedicated PO — SUMMARY backfill target', SYSUTCDATETIME());
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
-VALUES (NEWID(), @poId, 1, 'SUMMARY', N'DO smoke SUMMARY', 1000, 0);
+-- Note carries the WDT sentinel because this smoke asserts the DELIVERY NOTE
+-- (it checks for '>DELIVERY NOTE<' and .dsv-do, and /preview with no ?type
+-- resolves to the Note). Since c3c3afb the DN is issued only for lines marked
+-- 'Transferred from WDT'; without this stamp the fixture produces the empty
+-- state and every assertion below it is unreachable.
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, Note)
+VALUES (NEWID(), @poId, 1, 'SUMMARY', N'DO smoke SUMMARY', 1000, 0, N'Transferred from WDT');
 '@
     # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
     # refusal is printed instead of discarded. A cleanup that cannot report its
@@ -314,28 +319,27 @@ OK "DSV header: dsv-dn-value + VENDOR + VENDOR ID rows wired through the info gr
 #     empty for manual sign, APPROVED FOR DELIVERY BY filled with the
 #     closer's PNG signature).
 # ----------------------------------------------------------------------------
-Step "DSV footer: STORING NOTE + DELIVERED BY (empty) + APPROVED FOR DELIVERY BY (signature)"
+Step "DSV footer: STORING NOTE + the 3-party signature boxes"
+# The two-block DELIVERED BY / APPROVED FOR DELIVERY BY footer this case used to
+# assert was replaced by 505cc44 ("3-party signature boxes on both DO reports").
+# _DoPreview's footer now carries the STORING NOTE strip plus the shared
+# _SignatureBoxes partial — CUSTOMER / WAREHOUSE / PRODUCTION. Neither old label
+# is rendered anywhere any more, so those assertions could only ever fail.
 $footer = [regex]::Match($prev.Content, '(?s)<footer class="dsv-footer">(.*?)</footer>').Value
 if (-not $footer)                                       { Fail "Footer element missing (.dsv-footer)" }
 if ($footer -notmatch 'STORING NOTE')                   { Fail "STORING NOTE strip missing" }
-if ($footer -notmatch 'DELIVERED BY')                   { Fail "Footer missing 'DELIVERED BY' label (left block)" }
-if ($footer -notmatch 'APPROVED FOR DELIVERY BY')       { Fail "Footer missing 'APPROVED FOR DELIVERY BY' label (right block)" }
-if ($footer -match 'RECEIVED BY')                       { Fail "Footer still has legacy 'RECEIVED BY' label" }
-if ($footer -match 'AUTHORIZED BY')                     { Fail "Footer still has legacy 'AUTHORIZED BY' label" }
-if ($footer -match 'Vendor signature')                  { Fail "Footer still has the old 'Vendor signature' label" }
-
-# Two signature blocks with framed boxes
-$blockCount = ([regex]::Matches($footer, 'class="dsv-sig-block"')).Count
-if ($blockCount -ne 2) { Fail "Expected 2 .dsv-sig-block elements, got $blockCount" }
-$boxCount = ([regex]::Matches($footer, 'class="dsv-sig-box[^"]*"')).Count
-if ($boxCount -lt 2) { Fail "Expected at least 2 .dsv-sig-box elements, got $boxCount" }
-
-# APPROVED block carries the closer's PNG signature inside .dsv-sig-box-filled
-if ($footer -notmatch 'dsv-sig-box-filled') { Fail "APPROVED block missing .dsv-sig-box-filled" }
-if ($footer -notmatch [regex]::Escape($SAMPLE_SVG.Substring(0, 40))) {
-    Fail "APPROVED FOR DELIVERY BY signature missing the PNG dataURL"
+foreach ($party in 'CUSTOMER','WAREHOUSE','PRODUCTION') {
+    if ($footer -notmatch "<div class=`"do-sign-label`">$party</div>") {
+        Fail "Footer missing the $party signature box (505cc44 3-party set)"
+    }
 }
-OK "DSV footer: STORING NOTE + 2 sig blocks + 2 framed boxes + signature dataURL"
+$labelCount = ([regex]::Matches($footer, 'class="do-sign-label"')).Count
+if ($labelCount -ne 3) { Fail "Expected exactly 3 .do-sign-label elements in the footer, got $labelCount" }
+# Legacy labels from the pre-505cc44 layouts must not come back.
+foreach ($legacy in 'DELIVERED BY','APPROVED FOR DELIVERY BY','RECEIVED BY','AUTHORIZED BY','Vendor signature') {
+    if ($footer -match [regex]::Escape($legacy)) { Fail "Footer still has legacy label '$legacy'" }
+}
+OK "DSV footer: STORING NOTE + 3-party boxes (CUSTOMER/WAREHOUSE/PRODUCTION), no legacy labels"
 
 # ----------------------------------------------------------------------------
 # 3. /api/reports/do/{id}/export.pdf — attachment + %PDF
@@ -346,7 +350,23 @@ if ($pdf.StatusCode -ne 200) { Fail "PDF returned $($pdf.StatusCode)" }
 if ($pdf.Headers['Content-Type'] -notmatch 'application/pdf') { Fail "Wrong Content-Type: $($pdf.Headers['Content-Type'])" }
 $cd = $pdf.Headers['Content-Disposition']
 if ($cd -notmatch '^attachment') { Fail "PDF must be attachment, got: $cd" }
-if ($cd -notmatch [regex]::Escape("$pullNum-DO.pdf")) { Fail "PDF filename should be $pullNum-DO.pdf, got: $cd" }
+# Filename convention is "<Report_Title>_<PullNumber>_<yyyyMMddHHmmss>.pdf", all
+# spaces underscored, the timestamp in Bangkok local time. The old
+# "<PullNumber>-DO.pdf" form predates the Delivery Note / Delivery Order split:
+# the title now names WHICH report the file is, which a bare "-DO" suffix could
+# not. This request carries no ?type, so it is the Delivery Note.
+if ($cd -notmatch [regex]::Escape("Delivery_Note_${pullNum}_")) {
+    Fail "PDF filename should start Delivery_Note_${pullNum}_, got: $cd"
+}
+if ($cd -notmatch "Delivery_Note_$([regex]::Escape($pullNum))_\d{14}\.pdf") {
+    Fail "PDF filename missing the 14-digit timestamp: $cd"
+}
+# The header itself legitimately contains a space after the semicolon; it is the
+# FILENAME that must carry none, since Build-then-Replace(' ','_') is what
+# guarantees a PullNumber with a space in it cannot break Content-Disposition.
+$fname = [regex]::Match($cd, 'filename="([^"]+)"').Groups[1].Value
+if (-not $fname)        { Fail "Content-Disposition has no quoted filename: $cd" }
+if ($fname -match ' ')  { Fail "PDF filename contains a raw space: $fname" }
 if ($pdf.RawContentLength -lt 1000) { Fail "PDF suspiciously small ($($pdf.RawContentLength) bytes)" }
 $head4 = [System.Text.Encoding]::ASCII.GetString($pdf.Content[0..3])
 if ($head4 -ne '%PDF') { Fail "PDF magic bytes wrong: '$head4'" }

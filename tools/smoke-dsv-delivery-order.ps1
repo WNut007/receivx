@@ -76,9 +76,14 @@ VALUES (@poId, 'PO-DSV-001',
         '22222222-2222-2222-2222-000000000001',
         '2026-01-01', NULL, 'open',
         N'DSV order smoke dedicated PO', SYSUTCDATETIME());
-INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty)
-VALUES (NEWID(), @poId, 1, 'DSVITEM-A', N'DSV smoke item A', 500, 0),
-       (NEWID(), @poId, 2, 'DSVITEM-B', N'DSV smoke item B', 500, 0);
+-- Note carries the WDT sentinel for the sake of this smoke's LAST case, the
+-- '?type=note still renders the Delivery Note' regression. The Delivery ORDER
+-- cases above it are unaffected either way — the DO tab never applies the WDT
+-- whitelist — but since c3c3afb the DN is issued only for marked lines, and an
+-- unmarked fixture makes that final case assert against the empty state.
+INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, Note)
+VALUES (NEWID(), @poId, 1, 'DSVITEM-A', N'DSV smoke item A', 500, 0, N'Transferred from WDT'),
+       (NEWID(), @poId, 2, 'DSVITEM-B', N'DSV smoke item B', 500, 0, N'Transferred from WDT');
 '@
     # -b makes sqlcmd exit non-zero on a SQL error, and the output is kept so a
     # refusal is printed instead of discarded. A cleanup that cannot report its

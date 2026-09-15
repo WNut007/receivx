@@ -166,10 +166,31 @@ function ReceiveProbe($sv) {
     $g = [guid]::NewGuid().ToString()
     return Code { Invoke-RestMethod -Uri "$base/api/receipts/preview?pullItemId=$g&qty=1" -WebSession $sv }
 }
-function Preview($sv, $pull) { Invoke-RestMethod -Uri "$base/api/reports/do/$pull/preview" -WebSession $sv }
+# ?type=order EXPLICITLY. This smoke is about the 3-party signature boxes, which
+# both reports render from the same shared partial (_SignatureBoxes.cshtml,
+# included by _DoPreview and _DsvOrderPreview alike), so either tab exercises
+# them. The Delivery ORDER is the right one to ask for here:
+#
+#   - /preview with no ?type resolves to the Delivery NOTE, and since c3c3afb
+#     the Note is issued only for lines marked 'Transferred from WDT'. An
+#     unmarked pull renders the empty state, which has no articles and
+#     therefore no signature boxes at all.
+#   - $BPI_PULL is a pre-existing shared pull this smoke does NOT own. Stamping
+#     the sentinel on its PO lines to populate the Note would mutate data
+#     outside the fixture namespace, which docs/smoke-conventions.md rules out.
+#
+# The Delivery Order applies no WDT whitelist, so it renders regardless.
+function Preview($sv, $pull) { Invoke-RestMethod -Uri "$base/api/reports/do/$pull/preview?type=order" -WebSession $sv }
 function ClosedPull($sv, $pnum) {
-    $rows = Invoke-RestMethod -Uri "$base/api/pulls?status=closed" -WebSession $sv
-    return $rows | Where-Object { $_.pullNumber -eq $pnum }
+    # /api/pulls returns a PullDashboardResponse envelope { items, page, pageSize,
+    # total, aggregates } — not a bare array. Piping the envelope itself into
+    # Where-Object silently matched nothing, so every caller got $null and read
+    # as "the pull is not closed" rather than as a broken query. Also ask for the
+    # pull by number and a large page, so a fixture that has drifted off page 1
+    # cannot reproduce the same silent miss.
+    $resp = Invoke-RestMethod -Uri "$base/api/pulls?status=closed&q=$pnum&pageSize=200" -WebSession $sv
+    if ($null -eq $resp.items) { Fail "GET /api/pulls returned no 'items' property - the response shape changed" }
+    return $resp.items | Where-Object { $_.pullNumber -eq $pnum }
 }
 
 # ---- pre-flight: shared test pull must start with zero signatures ----
@@ -317,14 +338,25 @@ try {
     if ($drawHtml -match 'do-sign-drawn' -and $drawHtml -match 'src="data:image') { OK "drawn signature <img> present in preview" } else { Fail "preview has no drawn signature img" }
 
     Step "20. PDF embeds the per-party signature image (8e)"
-    foreach ($rt in 'note','order') {
-        $pdfPath = Join-Path $env:TEMP ("smoke-do-" + [guid]::NewGuid().ToString('N') + ".pdf")
-        Invoke-WebRequest -Uri "$base/api/reports/do/$BPI_PULL/export.pdf?type=$rt" -WebSession $cust -OutFile $pdfPath | Out-Null
-        $b = [System.IO.File]::ReadAllBytes($pdfPath)
-        $magic = -join ($b[0..4] | ForEach-Object { [char]$_ })
-        if ($magic -eq '%PDF-' -and $b.Length -gt 50000) { OK "$rt PDF valid + non-trivial ($([int]($b.Length/1024)) KB)" } else { Fail "$rt PDF bad: magic=$magic size=$($b.Length)" }
-        Remove-Item $pdfPath -ErrorAction SilentlyContinue
-    }
+    # The two report types have DIFFERENT correct outcomes on this pull, and the
+    # loop asserts each rather than expecting a PDF from both.
+    #
+    # $BPI_PULL carries no line marked 'Transferred from WDT', so since c3c3afb
+    # its Delivery NOTE is empty, and an empty DN export is specified to refuse
+    # with 409 rather than emit a blank PDF. This smoke does not own that pull
+    # and must not stamp the sentinel on it to force a PDF. The signature-embed
+    # assertion therefore rides on the Delivery ORDER, which applies no
+    # whitelist; smoke-do-report covers the DN PDF on a fixture it does own.
+    $pdfPath = Join-Path $env:TEMP ("smoke-do-" + [guid]::NewGuid().ToString('N') + ".pdf")
+    Invoke-WebRequest -Uri "$base/api/reports/do/$BPI_PULL/export.pdf?type=order" -WebSession $cust -OutFile $pdfPath | Out-Null
+    $b = [System.IO.File]::ReadAllBytes($pdfPath)
+    $magic = -join ($b[0..4] | ForEach-Object { [char]$_ })
+    if ($magic -eq '%PDF-' -and $b.Length -gt 50000) { OK "order PDF valid + non-trivial ($([int]($b.Length/1024)) KB)" } else { Fail "order PDF bad: magic=$magic size=$($b.Length)" }
+    Remove-Item $pdfPath -ErrorAction SilentlyContinue
+
+    $noteCode = Code { Invoke-WebRequest -Uri "$base/api/reports/do/$BPI_PULL/export.pdf?type=note" -WebSession $cust -UseBasicParsing }
+    if ($noteCode -eq 409) { OK "note PDF on an unmarked pull → 409 (refuses a blank DN, not a broken export)" }
+    else { Fail "note PDF expected 409 on a pull with no WDT-marked line, got $noteCode" }
 
     Step "21. drawn signature REQUIRED + bounded (8f)"
     $bigSvg = 'data:image/png;base64,' + ('A' * 205000)   # > 200KB cap
