@@ -392,3 +392,87 @@ Future migrations append at the next `db/0NN`. Past gaps:
 - `db/024–025` filled at v2.3.1 (PullItems ERP cols + view).
 - `db/026–027` filled at v2.3.2 (TrialId rename + view re-alter).
 - `db/028` filled at v3.0 (ErpSyncLog).
+
+---
+
+## 8. Pre-deploy checklist (ordered)
+
+Written 2026-09-15 for the `feat/digital-signature` deploy. Run the steps in
+order; step 1 gates the rest.
+
+### 1. Prove which migrations are already applied
+
+**This project keeps no migration-history table** — no `__EFMigrationsHistory`,
+no `SchemaVersions`, nothing that records which `.sql` files have run. The only
+reliable way to tell is to look for the objects each migration creates.
+
+Run `tools/diag/diag-migrations-applied.sql` against production, read-only. It
+is SELECT-only, takes no locks beyond a normal read and mutates nothing. It
+reports one row per migration db/047–053:
+
+- `Applied = yes` — every object that migration creates is present.
+- `Applied = no` — it still needs running.
+- `Applied = PARTIAL - investigate` — **stop.** Each migration runs as one
+  batch, so a partial result means someone ran half a file. Do not deploy until
+  that is understood.
+
+Every migration in the range is idempotent, so re-running an applied one is a
+no-op; this tells you which will actually do work.
+
+The same file also reports:
+
+- `PullItems_Rows` / `Receipts_Rows` and the two index sizes — these set how
+  long db/053's rebuilds take.
+- `SupportsOnlineRebuild` — must be `yes`. db/053 rebuilds both indexes with
+  `ONLINE = ON`; on an edition that does not support it the migration refuses
+  at parse time with error 40536 rather than silently running offline.
+
+### 2. Run outstanding migrations
+
+Run any migration step 1 reported as `no`, in numeric order, **before the new
+DLL is deployed**. db/053's own header says so: the queries are correct without
+it, only slower.
+
+`ONLINE = ON` means the rebuilds do not block readers or writers. Offline they
+would hold a schema-modification lock on the whole table — on `dbo.Receipts`,
+the busiest table in the system, that blocks every receive for the duration.
+
+### 3. Deploy
+
+```powershell
+cd deploy
+.\deploy.ps1 -WhatIfCopy   # dry run: publish + inject to staging, copy nothing
+.\deploy.ps1               # the real thing
+```
+
+`deploy.ps1` publishes, re-injects all four environment variables into
+`web.config` from the ACL-locked `deploy-secrets.json`, backs up the live
+folder, stops the app pool, robocopies, restarts, health-checks over loopback,
+and auto-rolls-back if the health check fails.
+
+### 4. Post-deploy checks
+
+- `/Reports` → Closed Pulls → search `0000031539`, then `1539`. **Both must
+  return the pull.** `1539` is the case that failed before the contains change,
+  so it is the one that proves the deploy took.
+- Search `PL-DOR` → must return **zero rows**, not the whole list.
+- Delivery Note preview on a pull carrying a `Transferred from WDT and …`
+  line → that line must now appear. Use
+  `tools/diag/diag-wdt-note-variants.sql` to find one first.
+- Delivery Order tab on the same pull → unchanged.
+
+### 5. Tag the deployed commit
+
+Tag the SHA you actually deployed, **not `HEAD`** — they diverge the moment
+anything lands while the deploy is running.
+
+```powershell
+$tag = "prod-$(Get-Date -Format yyyy-MM-dd)"
+git tag -a $tag <deployed-sha> -m "Deployed to production"
+git push origin $tag
+```
+
+> **`prod-2026-07-30` is not a reliable indicator of production state.** It
+> points at `def8f2e`, which is dated 2026-08-06 — the name and the content
+> already disagree — and later deploys did not move it. Do not infer what is on
+> production from that tag; confirm against the running system.
