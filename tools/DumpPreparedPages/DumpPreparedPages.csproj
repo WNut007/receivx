@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Dumps what a report ACTUALLY renders, page by page, straight out of
+    FastReport's prepared-page tree.
+
+    Why this exists: PDFSimpleExport rasterises every page, so an exported
+    Delivery Note PDF carries JPEG page images and no text layer at all. There
+    is no way to assert on the printed figures from the PDF. Walking
+    Report.PreparedPages after Prepare() reads the same object values the
+    exporter is about to draw, before they become pixels.
+
+    Not a product surface: a console tool, referenced by
+    tools/smoke-do-note-total-per-note.ps1 and runnable by hand.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DumpPreparedPages</AssemblyName>
+    <RootNamespace>ReceivingOps.Tools.DumpPreparedPages</RootNamespace>
+    <!-- The web project is an app, not a library; referencing it is deliberate
+         so this tool builds the report through exactly the same code path the
+         server uses. -->
+    <NoWarn>$(NoWarn);CS8618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ReceivingOps.Web\ReceivingOps.Web.csproj" />
+  </ItemGroup>
+
+</Project>
