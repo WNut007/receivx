@@ -2,8 +2,9 @@
 #
 # Checks per the Phase 6 spec:
 #   1. Column dbo.Pulls.LockHourCap exists, NOT NULL, BIT.
-#   2. DF_Pulls_LockHourCap default constraint exists and = 1.
-#   3. All existing pulls have LockHourCap = 1 (backfill via DEFAULT).
+#   2. DF_Pulls_LockHourCap default constraint exists and = 0 (db/048).
+#   3. The APPLICATION default is still strict — the DB default is only reached
+#      by writers that send no value at all.
 #   4. PullSummary + PullDetail responses carry lockHourCap (read path).
 #   5. POST /api/pulls without lockHourCap → persists 1 (strict default).
 #   6. POST /api/pulls with lockHourCap=false → persists 0.
@@ -16,6 +17,7 @@
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5213'
 $WH_01 = '22222222-2222-2222-2222-000000000001'
+$repoRoot = Split-Path -Parent $PSScriptRoot
 
 function Step($n) { Write-Host "`n--- $n ---" -ForegroundColor Cyan }
 function OK($m)   { Write-Host "PASS: $m" -ForegroundColor Green }
@@ -53,7 +55,7 @@ WHERE c.name = 'LockHourCap'
 if ($colMeta -notmatch 'bit\|0') { Fail "LockHourCap missing or wrong type/nullability: $colMeta" }
 OK "LockHourCap column is BIT NOT NULL"
 
-Step "DF_Pulls_LockHourCap default constraint exists and = 1"
+Step "DF_Pulls_LockHourCap default constraint exists and = 0 (db/048)"
 $dfMeta = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -h -1 -W -Q @'
 SET NOCOUNT ON;
 SELECT dc.name + '|' + dc.definition
@@ -62,37 +64,62 @@ INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
 WHERE c.name = 'LockHourCap'
   AND c.object_id = OBJECT_ID('dbo.Pulls');
 '@ 2>&1
-if ($dfMeta -notmatch 'DF_Pulls_LockHourCap\|\(\(1\)\)') { Fail "DF_Pulls_LockHourCap missing or not = 1: $dfMeta" }
-OK "DF_Pulls_LockHourCap = ((1))"
+# db/048 flipped this from 1 to 0 ("LockHourCap defaults to unlocked"). This
+# file asserted the pre-048 value and has been failing ever since — the
+# assertion went stale, the product did not.
+#
+# The DB default and the APPLICATION default are deliberately different and
+# both are correct. PullCreateRequest.LockHourCap defaults to true
+# (Models/Dtos/PullDtos.cs:247), so every pull created through the API is
+# strict unless the caller explicitly asks otherwise. The DB default is only
+# reached by a writer that sends no value at all, and for those the safe
+# reading is unlocked — see the CLAUDE.md "v2 invariants" note on why a strict
+# cap cannot be escaped by the variance tick.
+if ($dfMeta -notmatch 'DF_Pulls_LockHourCap\|\(\(0\)\)') { Fail "DF_Pulls_LockHourCap missing or not = 0 (db/048): $dfMeta" }
+OK "DF_Pulls_LockHourCap = ((0)) per db/048"
 
 # ----------------------------------------------------------------------------
 # 2. Backfill — all existing pulls = 1
 # ----------------------------------------------------------------------------
-Step "All seeded pulls have LockHourCap = 1 (smoke/verify namespaces excluded)"
-# The backfill invariant is about pulls that existed BEFORE the migration —
-# i.e. seeded fixtures. Smoke harnesses (PL-SMOKE-%, PL-SHC-%, PL-VERIFY-%)
-# create loose pulls on purpose; counting them here would chase a moving
-# target, especially when an earlier smoke leaves a loose pull behind due
-# to a Receipts FK that blocks cleanup.
-$nonStrict = sqlcmd -S LAPTOP-CSB3KO3E -E -C -d ReceivingOps -h -1 -W -Q @"
-SET NOCOUNT ON;
-SELECT COUNT(*) FROM dbo.Pulls
-WHERE LockHourCap = 0
-  AND PullNumber NOT LIKE 'PL-SMOKE-%'
-  AND PullNumber NOT LIKE 'PL-SHC-%'
-  AND PullNumber NOT LIKE 'PL-VERIFY-%';
-"@ 2>&1
-if ([int]($nonStrict.Trim()) -ne 0) { Fail "$nonStrict seeded pull(s) have LockHourCap = 0 after backfill (expected 0)" }
-OK "Backfill clean — all seeded pulls strict"
+Step "A pull created through the API is strict, whatever the DB default says"
+# RETIRED ASSERTION: this step used to require that EVERY non-smoke pull carried
+# LockHourCap = 1, on the strength of the Phase 6.1 backfill. That invariant no
+# longer exists and cannot be restored:
+#
+#   - db/035 wiped all transactional data, so the rows the backfill touched are
+#     gone. Everything re-seeded afterwards took the CURRENT column default.
+#   - db/048 then made that default 0.
+#   - WIP-synthesised pulls are created unlocked ON PURPOSE
+#     (WipSynthesisWriter.InsertPullAsync) and must never be flipped back —
+#     smoke-wip-pull-synthesis §2/§6b fail if they are.
+#
+# Measured on this DB while rewriting the step: 231 non-smoke pulls sit at 0,
+# of which 27 are Origin='po-import' (correct by design) and 197 are PL-S8-*
+# smoke residue that the old exclusion list did not cover. Counting rows was
+# never going to hold; what actually matters is the WRITE PATH, so this step
+# now proves that instead, and step 5 below proves the same thing end-to-end
+# through the API.
+$appDefault = Select-String -Path (Join-Path $repoRoot 'src/ReceivingOps.Web/Models/Dtos/PullDtos.cs') `
+                           -Pattern 'public bool LockHourCap \{ get; set; \} = true;' -SimpleMatch:$false
+if (-not $appDefault) {
+    Fail "PullCreateRequest.LockHourCap no longer defaults to true — the API default is what keeps new pulls strict"
+}
+OK "application default is strict ($($appDefault.Count) DTO site(s) default to true)"
 
 # ----------------------------------------------------------------------------
 # 3. Read path — PullSummary + PullDetail expose lockHourCap
 # ----------------------------------------------------------------------------
 Step "GET /api/pulls (PullSummary) carries lockHourCap"
 $sv = Login 'sadmin' 'admin' $WH_01
-$summaries = Invoke-RestMethod -Uri "$base/api/pulls" -Method GET -WebSession $sv
-if (-not $summaries -or $summaries.Count -eq 0) { Fail "GET /api/pulls returned empty" }
-$first = $summaries[0]
+# /api/pulls returns a PullDashboardResponse envelope { items, page, pageSize,
+# total, aggregates }, NOT a bare array. Indexing the envelope returns the
+# envelope, so `$summaries[0]` used to hand the next assertion an object with no
+# lockHourCap on it and the failure read as a missing field rather than a wrong
+# shape. Same bug fixed in smoke-do-signatures' ClosedPull helper.
+$resp = Invoke-RestMethod -Uri "$base/api/pulls" -Method GET -WebSession $sv
+if ($null -eq $resp.items) { Fail "GET /api/pulls returned no 'items' property — the response shape changed" }
+if ($resp.items.Count -eq 0) { Fail "GET /api/pulls returned zero items" }
+$first = $resp.items[0]
 if (-not ($first | Get-Member -Name 'lockHourCap' -MemberType NoteProperty)) {
     Fail "PullSummary missing lockHourCap field"
 }
