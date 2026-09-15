@@ -22,6 +22,15 @@ using ReceivingOps.Web.Services.PoImport;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ---- Development guard: local database only ----
+// FIRST, before any service registration, so nothing can open a connection
+// ahead of it. A machine-level ConnectionStrings__Default environment variable
+// outranks user-secrets in this project's precedence chain, so a developer can
+// point the whole app at someone else's database without touching the repo.
+// No-op outside Development, where pointing elsewhere is the entire idea.
+if (builder.Environment.IsDevelopment())
+    DevDatabaseGuard.Verify(builder.Configuration);
+
 // ---- MVC + JSON conventions ----
 builder.Services.AddControllersWithViews()
     .AddJsonOptions(o =>

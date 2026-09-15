@@ -1,5 +1,19 @@
-﻿{
+{
   "$schema": "http://json.schemastore.org/launchsettings.json",
+  "//": [
+    "Every Development profile pins ConnectionStrings__Default to the LOCAL dev",
+    "database. This machine carries a User-level ConnectionStrings__Default",
+    "environment variable pointing at a remote host, required by a different",
+    "application; environment variables outrank user-secrets in this project's",
+    "precedence chain (docs/configuration.md), so without this pin a plain",
+    "`dotnet run` drives that remote database instead of LAPTOP-CSB3KO3E.",
+    "launchSettings wins over the machine env var because dotnet run applies",
+    "the profile's variables to the child process.",
+    "Trusted_Connection only - this file is tracked in git and must never carry",
+    "a password. Scripted runs do not read launchSettings at all, so they pin",
+    "the same value themselves (see tools/run-smokes.ps1), and Program.cs",
+    "refuses to start in Development against anything but this database."
+  ],
   "iisSettings": {
     "windowsAuthentication": false,
     "anonymousAuthentication": true,
@@ -15,7 +29,8 @@
       "launchBrowser": true,
       "applicationUrl": "http://0.0.0.0:5213",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__Default": "Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;Application Name=ReceivingOps;"
       }
     },
     "https": {
@@ -24,14 +39,16 @@
       "launchBrowser": true,
       "applicationUrl": "https://localhost:7061;http://localhost:5213",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__Default": "Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;Application Name=ReceivingOps;"
       }
     },
     "IIS Express": {
       "commandName": "IISExpress",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__Default": "Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;Application Name=ReceivingOps;"
       }
     }
   }

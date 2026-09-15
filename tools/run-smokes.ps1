@@ -173,11 +173,33 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # page > 1 used to return nothing, and the header counter (visible rows)
         # disagreed with the pager (unfiltered COUNT).
         'smoke-closed-pulls-server-filters.ps1'
+        # A Development run must never reach a non-local database. This machine
+        # carries a User-level ConnectionStrings__Default pointing at a remote
+        # host for a different application, and env vars outrank user-secrets
+        # here. Starts the app twice in a child process; touches no database.
+        'smoke-dev-db-guard.ps1'
     )
 }
 
 $ErrorActionPreference = 'Stop'
 $toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# ---- Pin the dev database for this process and every child ------------------
+# This machine carries a User-level ConnectionStrings__Default pointing at a
+# remote host, required by a different application, so it cannot be removed.
+# Environment variables outrank user-secrets in this project's precedence chain
+# (docs/configuration.md), so anything a smoke starts would inherit it and drive
+# the wrong database. Scripted runs never read Properties/launchSettings.json,
+# so the pin has to be repeated here rather than relied upon from there.
+#
+# Process-scoped: $env: assignment affects this process and the children it
+# spawns, and touches neither the User nor the Machine environment.
+# Trusted_Connection only - no password belongs in a tracked file.
+# Program.cs refuses to start in Development if this is wrong anyway; the pin is
+# what stops it being wrong in the first place.
+$env:ConnectionStrings__Default =
+    'Server=LAPTOP-CSB3KO3E;Database=ReceivingOps;Trusted_Connection=True;' +
+    'TrustServerCertificate=True;Encrypt=False;Application Name=ReceivingOps;'
 
 # Prefer PowerShell 7 (pwsh.exe) — it defaults to UTF-8 for .ps1 source. Windows
 # PowerShell 5.1 (powershell.exe) reads .ps1 files as the system codepage, which
