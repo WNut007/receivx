@@ -76,6 +76,10 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         # (HTML preview) and the .frx binding, because PDFSimpleExport
         # rasterises the page and leaves no text layer to assert on.
         'smoke-do-note-total-per-note.ps1'
+        # Same fault in the other template, opposite symptom: the DSV Delivery
+        # Order's footer ran once for the whole report, so every order but the
+        # last printed no TOTAL QTY at all.
+        'smoke-dsv-order-total-per-order.ps1'
         'smoke-pos-date-filter.ps1'
         'smoke-phase-8.1-pagination.ps1'
         'smoke-phase-8.2-pagination-component.ps1'
