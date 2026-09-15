@@ -13,8 +13,11 @@
 #   3. total equals the filtered row count, and matches SQL COUNT over the
 #      same predicate (proves page + count share one WHERE)
 #   4. "All dates" sends NO date predicate; All >= Last 2 days
-#   5. Pull number normalization: zero-padded / zero-stripped / prefix
-#   6. LIKE metacharacters are literal, not wildcards
+#   5. Pull number is a digits-only CONTAINS match: zero-padded, zero-stripped,
+#      prefix, SUFFIX and interior all find the same pull (the suffix case is
+#      the one the old prefix match failed — prod pull 0000031539 vs '1539')
+#   6. LIKE metacharacters cannot reach the predicate: q escapes them,
+#      pullNumber strips them (no digits left => no predicate at all)
 #   7. q matches PO number + item code via EXISTS — never multiplies rows
 #   8. Signature filters partition the set (complete + awaiting == all)
 #   9. Warehouse scope: a non-admin's crafted ?warehouseId= cannot widen it
@@ -113,8 +116,14 @@ if ($LASTEXITCODE -ne 0) { Fail "PO seed failed: $seedOut" }
 $sv = Login 'sadmin' 'admin' $WH_01
 
 $pullNumbers = @()
-foreach ($suffix in 'A', 'B', 'C') {
-    $pn = "PL-CPF-$stamp-$suffix"
+# Suffixes are DIGITS, appended with no separator, so each fixture pull carries
+# a distinct digit run that is contiguous in the stored value. The pull-number
+# filter reduces the operator's input to digits and matches CONTAINS, so a
+# separator here ('...-1') would put the dash between the stamp and the suffix
+# and no digits-only search could ever isolate one fixture pull from its two
+# siblings. Real ERP pull numbers are unseparated digit strings; this matches.
+foreach ($suffix in '1', '2', '3') {
+    $pn = "PL-CPF-$stamp$suffix"
     $pullBody = @{
         pullNumber = $pn; warehouseId = $WH_01
         pullDate = (Get-Date -Format 'yyyy-MM-dd')
@@ -238,20 +247,64 @@ if ([string]::IsNullOrWhiteSpace($padded)) {
     if (($pre.items | Where-Object { $_.pullNumber -eq $padded }).Count -ne 1) {
         Fail "prefix search did not return '$padded'"
     }
-    OK "'$padded' found by exact, by zero-stripped '$stripped', and by prefix"
+
+    # THE SUFFIX CASE. This is the one a prefix match can never satisfy, and the
+    # reason the predicate is CONTAINS. Verified against production 2026-09-15:
+    # pull 0000031539 was found by '0000031539', '31539' and '315', but NOT by
+    # '1539'. An operator reading a number off paper quotes the tail as readily
+    # as the head. Asserted as "is among the results", not "is the only result":
+    # a 4-digit run is not unique across a real table and must not be.
+    $last4 = $padded.Substring($padded.Length - 4)
+    $suffixHit = Q $sv "pullNumber=$last4&pageSize=500"
+    if (($suffixHit.items | Where-Object { $_.pullNumber -eq $padded }).Count -ne 1) {
+        Fail "suffix search '$last4' did not return '$padded' — the predicate is a prefix match again, not contains"
+    }
+    # A digit run from the MIDDLE, for the same reason.
+    if ($stripped.Length -ge 3) {
+        $mid = $stripped.Substring(1, [Math]::Max(1, $stripped.Length - 2))
+        $midHit = Q $sv "pullNumber=$mid&pageSize=500"
+        if (($midHit.items | Where-Object { $_.pullNumber -eq $padded }).Count -ne 1) {
+            Fail "interior search '$mid' did not return '$padded'"
+        }
+    }
+    OK "'$padded' found by exact, zero-stripped '$stripped', prefix, suffix '$last4', and interior"
 }
 
 # ---------------------------------------------------------------------------
 # 6. LIKE metacharacters must be literal
 # ---------------------------------------------------------------------------
-Step "6. LIKE metacharacters are escaped, not treated as wildcards"
+Step "6. LIKE metacharacters cannot reach the predicate"
+# q is unchanged: it matches the raw text, so a metacharacter must be ESCAPED
+# and match literally.
 foreach ($meta in '%', '_', '[') {
-    $m = Q $sv "pullNumber=$([uri]::EscapeDataString($meta))&pageSize=1"
-    if ($m.total -ne 0) { Fail "pullNumber='$meta' matched $($m.total) rows — LIKE metacharacter not escaped" }
     $m2 = Q $sv "q=$([uri]::EscapeDataString($meta))&pageSize=1"
     if ($m2.total -ne 0) { Fail "q='$meta' matched $($m2.total) rows — LIKE metacharacter not escaped" }
 }
-OK "'%', '_' and '[' match literally in both pullNumber and q"
+# pullNumber now reduces the input to digits BEFORE building the LIKE, so a
+# metacharacter cannot survive as far as the predicate. Two halves:
+#
+#  (a) input with no digits at all reduces to empty and appends NO predicate.
+#      This returns the whole list. That is a deliberate contract change from
+#      the prefix era, where '%' returned nothing — it now matches "All dates",
+#      where the absence of a predicate is the feature. It also means typing a
+#      non-numeric pull number WIDENS the list instead of narrowing it.
+foreach ($meta in '%', '_', '[') {
+    $m = Q $sv "pullNumber=$([uri]::EscapeDataString($meta))&pageSize=1"
+    if ($m.total -ne $apiAll) {
+        Fail "pullNumber='$meta' gave total=$($m.total), expected the unfiltered $apiAll — a non-digit input must append no predicate"
+    }
+}
+#  (b) digits MIXED with metacharacters must give exactly what the digits alone
+#      give. If a '%' leaked into the LIKE it would widen the match; if it were
+#      escaped into the pattern instead of stripped, it would narrow it to zero.
+#      Equality with the digits-only search excludes both.
+$plain = Q $sv "pullNumber=$stamp&pageSize=50"
+$dirty = Q $sv "pullNumber=$([uri]::EscapeDataString("%$stamp" + '_'))&pageSize=50"
+if ($dirty.total -ne $plain.total) {
+    Fail "pullNumber='%${stamp}_' gave total=$($dirty.total) but '$stamp' gave $($plain.total) — a metacharacter reached the predicate"
+}
+if ($plain.total -lt 3) { Fail "digits search '$stamp' found $($plain.total) fixture pulls, expected at least 3 — assertion (b) is vacuous" }
+OK "q escapes '%','_','['; pullNumber strips them (no-digits => unfiltered $apiAll; mixed == digits-only $($plain.total))"
 
 # ---------------------------------------------------------------------------
 # 7. q searches PO number + item code via EXISTS, without multiplying rows
