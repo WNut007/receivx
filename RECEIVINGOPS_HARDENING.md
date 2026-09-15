@@ -2,10 +2,78 @@
 
 Standing security/operational risks found during other work, captured here
 rather than fixed inline. Each entry records what was found, how it surfaced,
-and the recommended fix. **Nothing in this file has been acted on** — these
-are findings, not changes.
+and the recommended fix. Entries were originally findings only; where one has
+since been acted on, the entry says so under **Control** and names the code and
+the test that hold it. An entry with no **Control** heading has not been acted
+on.
 
 Newest first.
+
+---
+
+## 2026-09-15 — A machine environment variable outranks user-secrets and redirects a Development run
+
+**Severity:** High — a routine `dotnet run` in the dev repo drives a database
+that is not the dev database.
+
+**What was found**
+
+The dev machine carries a **User-level environment variable named
+`ConnectionStrings__Default`, belonging to a different application** installed
+on the same machine. It cannot simply be deleted; that other application needs
+it.
+
+Per this project's documented precedence chain — env vars > DB > user-secrets >
+appsettings.json (`docs/configuration.md`) — that variable **outranks the
+user-secret**, which is where every developer here believes the dev connection
+string lives and is the only place they think to look. Nothing in the repo
+masked it: before this change, `Properties/launchSettings.json` set only
+`ASPNETCORE_ENVIRONMENT` in its three profiles and no profile pinned a
+connection string, so the machine variable was the effective value for a plain
+`dotnet run`.
+
+**Why it matters**
+
+This is the **same class of hazard as the 2026-07-16 user-secrets entry below**
+— a Development run silently operating against a database that is not the dev
+database — arriving through a different configuration provider. The earlier
+entry was found by inspecting user-secrets. Anyone repeating that inspection
+after this variable appeared would have found the user-secret correct and
+concluded the machine was safe, because the provider that actually wins is not
+the one being inspected.
+
+**Control** (unlike the entries below, this one has been acted on)
+
+The local database is pinned in the three places that between them cover every
+way the app starts, plus a backstop for the case the first two miss:
+
+- `Properties/launchSettings.json` — all three Development profiles. Covers F5
+  and `dotnet run` with a profile. Integrated auth only; the file is tracked in
+  git and must never carry a credential.
+- `tools/run-smokes.ps1` — process-scoped `$env:` pin, set before the first
+  child process is spawned. Scripted runs never read `launchSettings.json`, so
+  the pin is repeated there rather than inherited. Neither User nor Machine
+  scope is written.
+- `src/ReceivingOps.Web/Data/DevDatabaseGuard.cs` — invoked from `Program.cs`
+  ahead of any service registration (`AddHangfire` reads the connection string
+  directly, so that is the deadline). Refuses to start when the server is not
+  this machine or the database is not the expected one, and **names the
+  configuration provider that supplied the value**, which is the fact that makes
+  this failure mode legible rather than baffling. Development-only.
+
+Held by `tools/smoke-dev-db-guard.ps1` (in the default battery). Its case 4 is
+behavioural: it starts the app in a child process with a fake remote value in
+the environment and `--no-launch-profile`, so only the guard stands between the
+app and the wrong database, and asserts both a non-zero exit and the guard's own
+message — a non-zero exit alone would also be produced by an ordinary
+connection timeout, which is a different failure.
+
+**Residual risk**
+
+The guard recognises "this machine" by hostname and the usual local aliases. A
+developer whose dev database legitimately lives on another host would be refused
+and would need the guard adjusted. It is Development-only by design; nothing
+here constrains a production deployment, which is supposed to point elsewhere.
 
 ---
 
