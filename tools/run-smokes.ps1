@@ -70,6 +70,12 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-fastreport-bootstrap.ps1'
         'smoke-do-report.ps1'
         'smoke-dn-wdt-transfer-only.ps1'
+        # The Delivery Note footer total must be the sum of THAT note's lines,
+        # never the pull's. Reported against prod 0000032973 / DN 1724870B1,
+        # where a page showing one line of 100 footed 2400. Guards the data
+        # (HTML preview) and the .frx binding, because PDFSimpleExport
+        # rasterises the page and leaves no text layer to assert on.
+        'smoke-do-note-total-per-note.ps1'
         'smoke-pos-date-filter.ps1'
         'smoke-phase-8.1-pagination.ps1'
         'smoke-phase-8.2-pagination-component.ps1'
