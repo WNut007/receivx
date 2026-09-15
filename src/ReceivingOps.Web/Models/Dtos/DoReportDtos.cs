@@ -10,13 +10,27 @@ public static class DoReportConstants
     /// <summary>
     /// PurchaseOrderLines.Note sentinel marking a line as delivery-note
     /// eligible (transferred from WDT). A Delivery Note is issued ONLY for
-    /// lines carrying exactly this value — every other line, including NULL or
-    /// empty Note, is excluded. See
-    /// PullRepository.GetDoReportRowsAsync(wdtTransferLinesOnly). Matched by
-    /// exact equality (SQL Server default CI collation makes it case- and
-    /// trailing-space-insensitive, which is acceptable — no LIKE/prefix match).
+    /// lines whose Note is this value exactly, OR this value followed by
+    /// " and " and further text — see <see cref="WdtTransferNoteAndPrefix"/>.
+    /// Every other line, including NULL or empty Note, is excluded. See
+    /// PullRepository.GetDoReportRowsAsync(wdtTransferLinesOnly). SQL Server's
+    /// default CI collation makes the comparison case- and
+    /// trailing-space-insensitive, which is acceptable.
     /// </summary>
     public const string WdtTransferNote = "Transferred from WDT";
+
+    /// <summary>
+    /// The second accepted form: real rows carry a qualified note such as
+    /// "Transferred from WDT and repacked". Matched as a LIKE prefix of
+    /// <c>WdtTransferNoteAndPrefix + '%'</c>.
+    ///
+    /// The " and " is what keeps this a whitelist rather than a prefix match:
+    /// "Transferred from WDT2" does not match either form, because it neither
+    /// equals the bare value nor continues with " and ". Do not relax this to
+    /// <c>LIKE 'Transferred from WDT%'</c> — that would readmit exactly the
+    /// values the whitelist exists to exclude.
+    /// </summary>
+    public const string WdtTransferNoteAndPrefix = "Transferred from WDT and ";
 }
 
 /// <summary>

@@ -1,11 +1,13 @@
 # Smoke test: Delivery Note — INCLUDE ONLY "Transferred from WDT" lines.
 # Whitelist rule (not an exclusion): a DN is issued only for lines whose
-# PurchaseOrderLines.Note is exactly 'Transferred from WDT'. Every other line —
-# including NULL or empty Note — is excluded. The empty DN is the common case.
+# PurchaseOrderLines.Note is 'Transferred from WDT' exactly, OR that value
+# followed by ' and <text>' (the qualified form real rows carry). Every other
+# line — including NULL, empty, and near-misses like 'Transferred from WDT2' —
+# is excluded. The empty DN is the common case.
 # Scope is the Delivery Note tab only; the Delivery Order tab is unchanged.
 #
 # Covers the 4 brief scenarios:
-#   1. 4 lines, 1 marked WDT → DN shows just that 1 line; TOTAL = its qty; DO keeps all 4.
+#   1. 5 lines, 2 marked WDT (bare + qualified) → DN shows those 2; DO keeps all 5.
 #   3. Note=NULL, Note='', Note='Transferred from WDT2' → all EXCLUDED (no LIKE, no NULL-inclusion).
 #   2. No marked lines → DN empty state + 'There is no vendor records';
 #      DN export → 409; DO tab still renders + its PDF exports 200.
@@ -75,8 +77,13 @@ VALUES (@poA, 'PO-WDT-A', '$WH_01', '2026-01-01', NULL, 'open', N'WDT-only smoke
        (@poB, 'PO-WDT-B', '$WH_01', '2026-01-01', NULL, 'open', N'WDT-only smoke B', SYSUTCDATETIME()),
        (@poC, 'PO-WDT-C', '$WH_01', '2026-01-01', NULL, 'open', N'WDT-only smoke C', SYSUTCDATETIME());
 
--- Pull A: 4 lines share OrderId ORD-WDTA (one DN article). Only A1 is marked
--- exactly WDT (kept); A2 NULL, A3 '' , A4 'Transferred from WDT2' → all excluded.
+-- Pull A: 5 lines share OrderId ORD-WDTA (one DN article). Two are marked and
+-- kept: A1 the bare sentinel, A5 the QUALIFIED '... and <text>' form that real
+-- rows carry. A2 NULL, A3 '', A4 'Transferred from WDT2' → all excluded.
+-- A4 vs A5 is the whole point of the whitelist: 'WDT2' continues the sentinel
+-- with a character, 'WDT and repacked' continues it with ' and '. Only the
+-- second is a WDT transfer. A filter of LIKE 'Transferred from WDT%' would
+-- admit both and this case would stop meaning anything.
 INSERT INTO dbo.PurchaseOrderLines
   (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty,
    OrderId, SubInventory, ToLocation, VendorCode, VendorName, Note)
@@ -84,7 +91,8 @@ VALUES
   (NEWID(), @poA, 1, 'ITEM-WDTA1', N'A one',   100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', N'$WDT'),
   (NEWID(), @poA, 2, 'ITEM-WDTA2', N'A two',   100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', NULL),
   (NEWID(), @poA, 3, 'ITEM-WDTA3', N'A three', 100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', N''),
-  (NEWID(), @poA, 4, 'ITEM-WDTA4', N'A four',  100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', N'${WDT}2');
+  (NEWID(), @poA, 4, 'ITEM-WDTA4', N'A four',  100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', N'${WDT}2'),
+  (NEWID(), @poA, 5, 'ITEM-WDTA5', N'A five',  100, 0, 'ORD-WDTA', 'SUB-A', 'TLOC-A', 'V-A', 'Vendor A', N'$WDT and repacked');
 
 -- Pull B: no marked lines (NULL / '' / WDT2) → empty DN, DN export 409, DO fine.
 INSERT INTO dbo.PurchaseOrderLines
@@ -172,7 +180,7 @@ $sv = Login 'sadmin' 'admin' $WH_01
 
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 Step "Setup: seed 3 closed pulls (A/B/C)"
-$pullA = SeedPull "PL-WDT-A-$stamp" ([ordered]@{ 'ITEM-WDTA1'=40; 'ITEM-WDTA2'=10; 'ITEM-WDTA3'=20; 'ITEM-WDTA4'=30 })
+$pullA = SeedPull "PL-WDT-A-$stamp" ([ordered]@{ 'ITEM-WDTA1'=40; 'ITEM-WDTA2'=10; 'ITEM-WDTA3'=20; 'ITEM-WDTA4'=30; 'ITEM-WDTA5'=25 })
 $pullB = SeedPull "PL-WDT-B-$stamp" ([ordered]@{ 'ITEM-WDTB1'=10; 'ITEM-WDTB2'=20; 'ITEM-WDTB3'=30 })
 $pullC = SeedPull "PL-WDT-C-$stamp" ([ordered]@{ 'ITEM-WDTC1'=100; 'ITEM-WDTC2'=200; 'ITEM-WDTC3'=300 })
 OK "Pulls A/B/C created + closed"
@@ -181,27 +189,37 @@ OK "Pulls A/B/C created + closed"
 # Scenario 1 + 3 — Pull A. DN keeps ONLY ITEM-WDTA1 (exact WDT); excludes A2
 # (NULL), A3 (''), A4 ('WDT2'). TOTAL QTY = A1's 40 alone. DO tab keeps all 4.
 # ----------------------------------------------------------------------------
-Step "Pull A · DN includes ONLY the exact-WDT line; excludes NULL/''/WDT2"
+Step "Pull A · DN includes the bare AND qualified WDT lines; excludes NULL/''/WDT2"
 $dnA = Invoke-WebRequest -Uri "$base/api/reports/do/$($pullA.id)/preview?type=note" -Method GET -WebSession $sv -UseBasicParsing
 if ($dnA.StatusCode -ne 200) { Fail "DN A preview returned $($dnA.StatusCode)" }
-if ($dnA.Content -notmatch '<td class="mono">ITEM-WDTA1</td>') { Fail "DN A missing the only eligible line ITEM-WDTA1" }
+foreach ($keep in 'ITEM-WDTA1','ITEM-WDTA5') {
+    if ($dnA.Content -notmatch "<td class=`"mono`">$keep</td>") {
+        Fail "DN A missing eligible line $keep (A1 = bare sentinel, A5 = 'Transferred from WDT and repacked')"
+    }
+}
 foreach ($drop in 'ITEM-WDTA2','ITEM-WDTA3','ITEM-WDTA4') {
     if ($dnA.Content -match "<td class=`"mono`">$drop</td>") { Fail "DN A wrongly shows non-eligible line $drop" }
 }
+# A4 ('Transferred from WDT2') excluded while A5 ('... and repacked') is kept is
+# what separates the whitelist from a bare prefix match. If the predicate were
+# ever relaxed to LIKE 'Transferred from WDT%', A4 would appear and the loop
+# above fails — that is the regression this pair exists to catch.
 $articlesA = ([regex]::Matches($dnA.Content, '<article class="dsv-do"')).Count
 if ($articlesA -ne 1) { Fail "DN A expected 1 article, got $articlesA" }
 $totA = [regex]::Match($dnA.Content, 'class="num dsv-total-value">([0-9,]+)<')
 if (-not $totA.Success) { Fail "DN A missing dsv-total-value" }
-if ($totA.Groups[1].Value.Replace(',','') -ne '40') { Fail "DN A TOTAL QTY expected 40 (A1 alone), got $($totA.Groups[1].Value)" }
-OK "DN A: 1 line (ITEM-WDTA1), NULL/''/WDT2 excluded, TOTAL QTY = 40"
+if ($totA.Groups[1].Value.Replace(',','') -ne '65') {
+    Fail "DN A TOTAL QTY expected 65 (A1 40 + A5 25), got $($totA.Groups[1].Value)"
+}
+OK "DN A: 2 lines (ITEM-WDTA1 bare + ITEM-WDTA5 qualified), NULL/''/WDT2 excluded, TOTAL QTY = 65"
 
 Step "Pull A · DO tab keeps all 4 lines (unaffected by the DN whitelist)"
 $doA = Invoke-WebRequest -Uri "$base/api/reports/do/$($pullA.id)/preview?type=order" -Method GET -WebSession $sv -UseBasicParsing
 if ($doA.StatusCode -ne 200) { Fail "DO A preview returned $($doA.StatusCode)" }
-foreach ($code in 'ITEM-WDTA1','ITEM-WDTA2','ITEM-WDTA3','ITEM-WDTA4') {
+foreach ($code in 'ITEM-WDTA1','ITEM-WDTA2','ITEM-WDTA3','ITEM-WDTA4','ITEM-WDTA5') {
     if ($doA.Content -notmatch [regex]::Escape($code)) { Fail "DO A missing line $code — DO tab must be unfiltered" }
 }
-OK "DO A: all 4 lines present (DO tab unaffected)"
+OK "DO A: all 5 lines present (DO tab unaffected)"
 
 # ----------------------------------------------------------------------------
 # Scenario 2 + 3 — Pull B. No line marked exactly WDT → empty DN + 409 export;
@@ -250,3 +268,5 @@ SqlCleanup
 Write-Host ""
 Write-Host "ALL PASS — DN 'Transferred from WDT' whitelist (include-only + empty state + 409 + DO untouched)." -ForegroundColor Green
 exit 0
+
+

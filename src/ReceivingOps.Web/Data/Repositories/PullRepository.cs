@@ -658,12 +658,25 @@ public class PullRepository : IPullRepository
         // Invoice was promoted from a MAX'd line attribute to a first-class
         // grouping key so two distinct invoices under the same vendor / sub /
         // to-loc triple split into separate DOs (one page each in the PDF).
-        // DN opt-in whitelist: keep ONLY lines whose Note is exactly the WDT
-        // sentinel; every other line — including NULL/empty Note — is excluded
-        // (NULL falls out of `=` naturally; no ISNULL/COALESCE wrapper). Exact
-        // equality only — no LIKE/prefix — so 'Transferred from WDT2' is excluded.
+        // DN opt-in whitelist: keep ONLY lines carrying the WDT sentinel, in
+        // either of its two accepted forms —
+        //
+        //   Note = 'Transferred from WDT'            (bare)
+        //   Note LIKE 'Transferred from WDT and %'   (qualified)
+        //
+        // Real rows carry the qualified form ("... and repacked"), and an
+        // exact-equality-only filter silently dropped every one of them. Every
+        // other line, including NULL/empty Note, is still excluded — NULL falls
+        // out of both `=` and LIKE naturally, so no ISNULL/COALESCE wrapper.
+        //
+        // The " and " is load-bearing: it keeps this a whitelist rather than a
+        // prefix match. 'Transferred from WDT2' matches NEITHER form. Relaxing
+        // this to LIKE 'Transferred from WDT%' would readmit exactly the values
+        // the whitelist exists to exclude, and smoke-dn-wdt-transfer-only
+        // asserts that it does not.
         var wdtFilter = wdtTransferLinesOnly
-            ? "\n              AND   pol.Note = @WdtTransferNote"
+            ? "\n              AND   (pol.Note = @WdtTransferNote" +
+              "\n                     OR pol.Note LIKE @WdtTransferNoteAnd)"
             : "";
 
         var sql = @"
@@ -706,7 +719,16 @@ public class PullRepository : IPullRepository
         var rows = await conn.QueryAsync<DoReportRow>(
             new CommandDefinition(
                 sql,
-                new { PullId = pullId, WdtTransferNote = DoReportConstants.WdtTransferNote },
+                new
+                {
+                    PullId = pullId,
+                    WdtTransferNote = DoReportConstants.WdtTransferNote,
+                    // Both parameters are always bound, even when wdtFilter is
+                    // empty — Dapper ignores parameters the SQL never names.
+                    // The constant carries no LIKE metacharacter, so the '%' is
+                    // the only wildcard in the pattern and no ESCAPE is needed.
+                    WdtTransferNoteAnd = DoReportConstants.WdtTransferNoteAndPrefix + "%",
+                },
                 cancellationToken: ct));
         return rows.AsList();
     }

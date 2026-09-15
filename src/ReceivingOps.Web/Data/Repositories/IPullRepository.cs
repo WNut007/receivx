@@ -47,9 +47,13 @@ public interface IPullRepository
     // the service can group sequentially.
     //
     // wdtTransferLinesOnly (default false → every existing caller unchanged):
-    // when true, ONLY PurchaseOrderLines carrying Note = DoReportConstants.WdtTransferNote
-    // are returned — a Delivery Note is issued only for those lines; every other
-    // line (including NULL/empty Note) is excluded. Only the DN build path opts in.
+    // when true, ONLY PurchaseOrderLines carrying the WDT sentinel are returned,
+    // in either accepted form — Note = DoReportConstants.WdtTransferNote, or
+    // Note LIKE DoReportConstants.WdtTransferNoteAndPrefix + '%' (the qualified
+    // "... and <something>" form real rows carry). A Delivery Note is issued
+    // only for those lines; every other line (including NULL/empty Note, and
+    // near-misses like 'Transferred from WDT2') is excluded. Only the DN build
+    // path opts in.
     Task<IReadOnlyList<DoReportRow>> GetDoReportRowsAsync(
         Guid pullId, bool wdtTransferLinesOnly = false, CancellationToken ct = default);
 
