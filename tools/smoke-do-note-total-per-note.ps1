@@ -40,6 +40,18 @@ $SMALL_QTY = 100
 $BIG_QTY   = 2300
 $PULL_QTY  = $SMALL_QTY + $BIG_QTY      # 2400 — the number that must never be a note total
 
+# Note B is split across this many lines so it spans more than one printed page.
+# A multi-page note is the case that separates "prints the right note's total"
+# from "prints it on every page of that note", and both are required.
+$BIG_LINES = 8
+$BIG_PER   = [int]($BIG_QTY / $BIG_LINES)
+$BIG_LAST  = $BIG_QTY - ($BIG_PER * ($BIG_LINES - 1))
+
+# Distinct received dates per note, years apart, so a date borrowed from the
+# other note is unmistakable rather than a few seconds out.
+$SMALL_DATE = '2026-03-03'
+$BIG_DATE   = '2026-09-09'
+
 function Step($n) { Write-Host "`n--- $n ---" -ForegroundColor Cyan }
 function OK($m)   { Write-Host "PASS: $m" -ForegroundColor Green }
 function Fail($m) { Write-Host "FAIL: $m" -ForegroundColor Red; Cleanup; exit 1 }
@@ -94,18 +106,19 @@ $po = [Guid]::NewGuid().ToString()
 # (DeliveryNoteNo = g.Key, grouped on OrderId), so two OrderIds = two notes.
 # Both carry the WDT sentinel or the DN whitelist drops them and every
 # assertion below would run against the empty state.
+$lineSql = New-Object System.Text.StringBuilder
+[void]$lineSql.AppendLine("INSERT INTO dbo.PurchaseOrderLines (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty, OrderId, InvoiceNo, SubInventory, ToLocation, VendorCode, VendorName, Note) VALUES")
+[void]$lineSql.AppendLine("(NEWID(), '$po', 1, 'DNTOT-SMALL-$ts', N'DN total smoke small', 9000, 0, 'DNTOT-S-$ts', 'INV-DNTOT-S', 'SUB-S', 'LOC-S', 'V-DNTOT-S', N'Vendor Small', N'Transferred from WDT'),")
+for ($i = 1; $i -le $BIG_LINES; $i++) {
+    $comma = if ($i -eq $BIG_LINES) { ';' } else { ',' }
+    [void]$lineSql.AppendLine("(NEWID(), '$po', $($i+1), 'DNTOT-BIG$i-$ts', N'DN total smoke big $i', 9000, 0, 'DNTOT-B-$ts', 'INV-DNTOT-B', 'SUB-B', 'LOC-B', 'V-DNTOT-B', N'Vendor Big', N'Transferred from WDT')$comma")
+}
+
 Sql @"
 SET NOCOUNT ON; SET QUOTED_IDENTIFIER ON;
 INSERT INTO dbo.PurchaseOrders (Id, PoNumber, WarehouseId, OrderDate, ExpectedDate, Status, Notes, CreatedAt)
 VALUES ('$po', 'PO-DNTOT-$ts', '$WH_01', '2026-01-01', NULL, 'open', N'DN per-note total smoke', SYSUTCDATETIME());
-INSERT INTO dbo.PurchaseOrderLines
-  (Id, PurchaseOrderId, LineNumber, ItemCode, Description, OrderedQty, ReceivedQty,
-   OrderId, InvoiceNo, SubInventory, ToLocation, VendorCode, VendorName, Note)
-VALUES
-  (NEWID(), '$po', 1, 'DNTOT-SMALL-$ts', N'DN total smoke small', 9000, 0,
-   'DNTOT-S-$ts', 'INV-DNTOT-S', 'SUB-S', 'LOC-S', 'V-DNTOT-S', N'Vendor Small', N'Transferred from WDT'),
-  (NEWID(), '$po', 2, 'DNTOT-BIG-$ts',   N'DN total smoke big',   9000, 0,
-   'DNTOT-B-$ts', 'INV-DNTOT-B', 'SUB-B', 'LOC-B', 'V-DNTOT-B', N'Vendor Big',   N'Transferred from WDT');
+$($lineSql.ToString())
 "@ | Out-Null
 
 $pullNum = "PL-DNTOT-$ts"
@@ -114,10 +127,12 @@ $pull = Invoke-RestMethod -Uri "$base/api/pulls" -Method POST -WebSession $sv -C
     eta = $null; notes = $null; lockPoByPull = $false; lockHourCap = $false; referenceNumber = $null
 } | ConvertTo-Json)
 
-foreach ($it in @(
-    @{ code = "DNTOT-SMALL-$ts"; hour = 10; qty = $SMALL_QTY },
-    @{ code = "DNTOT-BIG-$ts";   hour = 11; qty = $BIG_QTY }
-)) {
+$specs = @(@{ code = "DNTOT-SMALL-$ts"; hour = 10; qty = $SMALL_QTY })
+for ($i = 1; $i -le $BIG_LINES; $i++) {
+    $q = if ($i -eq $BIG_LINES) { $BIG_LAST } else { $BIG_PER }
+    $specs += @{ code = "DNTOT-BIG$i-$ts"; hour = (10 + $i); qty = $q }
+}
+foreach ($it in $specs) {
     $item = Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/items" -Method POST -WebSession $sv -ContentType 'application/json' -Body (@{
         itemCode = $it.code; description = $it.code
         windows = @(@{ hourOfDay = $it.hour; expectedQty = $it.qty })
@@ -127,9 +142,23 @@ foreach ($it in @(
         lotBatch = $null; palletId = $null; binLocation = $null; qcStatus = 'pending'; note = $null
     } | ConvertTo-Json) | Out-Null
 }
+# Force the two notes years apart so a borrowed date is obvious. ReceivedAt is
+# server-set on receive, so it has to be restamped here.
+Sql @"
+SET NOCOUNT ON; SET QUOTED_IDENTIFIER ON;
+UPDATE r SET ReceivedAt = '${SMALL_DATE}T08:00:00'
+FROM dbo.Receipts r
+INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
+WHERE pol.OrderId = 'DNTOT-S-$ts';
+UPDATE r SET ReceivedAt = '${BIG_DATE}T17:30:00'
+FROM dbo.Receipts r
+INNER JOIN dbo.PurchaseOrderLines pol ON pol.Id = r.PurchaseOrderLineId
+WHERE pol.OrderId = 'DNTOT-B-$ts';
+"@ | Out-Null
+
 Invoke-RestMethod -Uri "$base/api/pulls/$($pull.id)/close" -Method POST -WebSession $sv -ContentType 'application/json' -Body (@{
     signatureSvg = $SIG } | ConvertTo-Json) | Out-Null
-OK "pull $pullNum closed with 2 delivery notes ($SMALL_QTY + $BIG_QTY = $PULL_QTY)"
+OK "pull $pullNum closed with 2 delivery notes ($SMALL_QTY + $BIG_QTY = $PULL_QTY); note B split over $BIG_LINES lines"
 
 # ---------------------------------------------------------------------------
 Step "1. Two notes render, each carrying its OWN total"
@@ -225,6 +254,82 @@ $pageCount = ([regex]::Matches($raw, '/Type\s*/Page[^s]')).Count
 if ($pageCount -lt 2) { Fail "expected at least 2 pages (one per note), found $pageCount" }
 Remove-Item $pdfPath -ErrorAction SilentlyContinue
 OK "PDF renders, $([int]($bytes.Length/1024)) KB, $pageCount pages"
+
+# ---------------------------------------------------------------------------
+Step "6. PREPARED PAGES: every page foots its OWN note's total, barcode and date"
+# The one assertion that reads what is actually printed. The HTML above proves
+# the data; this proves the TEMPLATE, page by page, straight out of FastReport's
+# prepared-page tree — the same object values the exporter is about to draw.
+#
+# This is the check that would have caught the reported bug. Before the fix,
+# page 1 rendered note B's lines under note S's total and date, because the
+# objects sat in the PageFooterBand and a page footer resolves [Orders.*]
+# against wherever the data source has got to, not the row on the page.
+#
+# BuildProjectReferences=false compiles the tool against the already-built web
+# assembly instead of rebuilding it — the dev server holds that DLL while the
+# battery runs, and rebuilding it here would fail with MSB3027.
+$toolProj = Join-Path $repoRoot 'tools/DumpPreparedPages/DumpPreparedPages.csproj'
+& dotnet build $toolProj -p:BuildProjectReferences=false -v q --nologo 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail "could not build tools/DumpPreparedPages (exit $LASTEXITCODE)" }
+
+$dumpPath = Join-Path $env:TEMP ("dn-pages-" + [guid]::NewGuid().ToString('N') + ".json")
+& dotnet run --project $toolProj --no-build -- --pull $pullNum --type note --out $dumpPath 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dumpPath)) { Fail "DumpPreparedPages failed for $pullNum" }
+$dump = Get-Content $dumpPath -Raw | ConvertFrom-Json
+Remove-Item $dumpPath -ErrorAction SilentlyContinue
+
+if ($dump.pageCount -lt 3) {
+    Fail "expected at least 3 pages (note B over 2+, note S on its own), got $($dump.pageCount) — the multi-page case is not being exercised"
+}
+
+# Text26 carries [Orders.DeliveryNoteNo] and lives in the master band, which
+# prints once per note. Continuation pages therefore carry no note number of
+# their own and inherit the last one seen — that is what "this page belongs to
+# that note" means here.
+$expected = @{
+    "DNTOT-S-$ts" = @{ total = $SMALL_QTY; date = ([datetime]$SMALL_DATE).ToString('dd/MM/yyyy') }
+    "DNTOT-B-$ts" = @{ total = $BIG_QTY;   date = ([datetime]$BIG_DATE).ToString('dd/MM/yyyy') }
+}
+$currentNote = $null
+$seen = @{}
+foreach ($pg in $dump.pages) {
+    $noteObj = $pg.objects | Where-Object { $_.name -eq 'Text26' -and $_.value } | Select-Object -First 1
+    if ($noteObj) { $currentNote = $noteObj.value }
+    if (-not $currentNote) { Fail "page $($pg.page) precedes any note number — cannot attribute it" }
+    if (-not $expected.ContainsKey($currentNote)) { Fail "page $($pg.page) carries an unknown note '$currentNote'" }
+    $want = $expected[$currentNote]
+
+    $total   = ($pg.objects | Where-Object { $_.name -eq 'TotalValue' }     | Select-Object -First 1).value
+    $barcode = ($pg.objects | Where-Object { $_.name -eq 'BcTotal' }        | Select-Object -First 1).value
+    $date    = ($pg.objects | Where-Object { $_.name -eq 'StoreDateValue' } | Select-Object -First 1).value
+
+    if ([string]::IsNullOrWhiteSpace($total)) {
+        Fail "page $($pg.page) ($currentNote) printed NO total — the footer band did not render on this page"
+    }
+    if (([int]($total -replace '[^0-9]', '')) -ne $want.total) {
+        Fail "page $($pg.page) belongs to $currentNote (expected total $($want.total)) but printed '$total'"
+    }
+    # The barcode must carry the same figure, not the literal expression: a
+    # BarcodeObject only evaluates [Orders.x] when AllowExpressions is set, and
+    # without it every printed barcode encodes the string '[Orders.TotalQty]'.
+    if ($barcode -match '^\[') {
+        Fail "page $($pg.page) barcode encodes the raw expression '$barcode' — AllowExpressions is missing"
+    }
+    if (([int]($barcode -replace '[^0-9]', '')) -ne $want.total) {
+        Fail "page $($pg.page) barcode encodes '$barcode', expected $($want.total) to match the printed total"
+    }
+    if ($date -ne $want.date) {
+        Fail "page $($pg.page) belongs to $currentNote (received $($want.date)) but printed date '$date'"
+    }
+    $seen[$currentNote] = ($seen[$currentNote] + 1)
+}
+foreach ($n in $expected.Keys) {
+    if (-not $seen.ContainsKey($n)) { Fail "note $n never appeared in the prepared pages" }
+}
+$multi = ($seen.GetEnumerator() | Where-Object { $_.Value -gt 1 } | Select-Object -First 1)
+if (-not $multi) { Fail "no note spanned more than one page — the repeat-on-every-page rule is untested" }
+OK "$($dump.pageCount) pages, each footing its own note; $($multi.Key) spans $($multi.Value) pages and repeats its total on both"
 
 Cleanup
 Write-Host "`nALL PASS - the Delivery Note footer total is per Delivery Note." -ForegroundColor Green
