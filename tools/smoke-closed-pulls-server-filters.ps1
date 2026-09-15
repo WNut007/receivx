@@ -17,7 +17,8 @@
 #      prefix, SUFFIX and interior all find the same pull (the suffix case is
 #      the one the old prefix match failed — prod pull 0000031539 vs '1539')
 #   6. LIKE metacharacters cannot reach the predicate: q escapes them,
-#      pullNumber strips them (no digits left => no predicate at all)
+#      pullNumber strips them. Typed-but-no-digits ('PL-DOR', '%') returns
+#      ZERO rows; only blank/whitespace input appends no predicate
 #   7. q matches PO number + item code via EXISTS — never multiplies rows
 #   8. Signature filters partition the set (complete + awaiting == all)
 #   9. Warehouse scope: a non-admin's crafted ?warehouseId= cannot widen it
@@ -283,18 +284,29 @@ foreach ($meta in '%', '_', '[') {
 # pullNumber now reduces the input to digits BEFORE building the LIKE, so a
 # metacharacter cannot survive as far as the predicate. Two halves:
 #
-#  (a) input with no digits at all reduces to empty and appends NO predicate.
-#      This returns the whole list. That is a deliberate contract change from
-#      the prefix era, where '%' returned nothing — it now matches "All dates",
-#      where the absence of a predicate is the feature. It also means typing a
-#      non-numeric pull number WIDENS the list instead of narrowing it.
+#  (a) input that HAS characters but no digits returns ZERO rows. The operator
+#      typed a filter; a filter that cannot be satisfied must return nothing.
+#      Returning the whole list here would read as "my search matched
+#      everything" at the moment the search matched nothing. Only an ABSENT
+#      filter returns everything — case (c) below.
 foreach ($meta in '%', '_', '[') {
     $m = Q $sv "pullNumber=$([uri]::EscapeDataString($meta))&pageSize=1"
-    if ($m.total -ne $apiAll) {
-        Fail "pullNumber='$meta' gave total=$($m.total), expected the unfiltered $apiAll — a non-digit input must append no predicate"
+    if ($m.total -ne 0) {
+        Fail "pullNumber='$meta' gave total=$($m.total), expected 0 — a non-digit search must match nothing, not everything"
     }
 }
-#  (b) digits MIXED with metacharacters must give exactly what the digits alone
+# The realistic version of the same input: a non-numeric pull number.
+$plDor = Q $sv "pullNumber=PL-DOR&pageSize=1"
+if ($plDor.total -ne 0) {
+    Fail "pullNumber='PL-DOR' gave total=$($plDor.total), expected 0 — a non-numeric pull number must not widen the list to $apiAll"
+}
+#  (b) whitespace-only input is ABSENT, not unsatisfiable: it appends no
+#      predicate and returns the lot. This is the line between (a) and here.
+$blank = Q $sv "pullNumber=$([uri]::EscapeDataString('   '))&pageSize=1"
+if ($blank.total -ne $apiAll) {
+    Fail "whitespace-only pullNumber gave total=$($blank.total), expected the unfiltered $apiAll — blank input must not filter"
+}
+#  (c) digits MIXED with metacharacters must give exactly what the digits alone
 #      give. If a '%' leaked into the LIKE it would widen the match; if it were
 #      escaped into the pattern instead of stripped, it would narrow it to zero.
 #      Equality with the digits-only search excludes both.
@@ -304,7 +316,7 @@ if ($dirty.total -ne $plain.total) {
     Fail "pullNumber='%${stamp}_' gave total=$($dirty.total) but '$stamp' gave $($plain.total) — a metacharacter reached the predicate"
 }
 if ($plain.total -lt 3) { Fail "digits search '$stamp' found $($plain.total) fixture pulls, expected at least 3 — assertion (b) is vacuous" }
-OK "q escapes '%','_','['; pullNumber strips them (no-digits => unfiltered $apiAll; mixed == digits-only $($plain.total))"
+OK "q escapes '%','_','['; pullNumber: no-digits => 0 rows, blank => unfiltered $apiAll, mixed == digits-only $($plain.total)"
 
 # ---------------------------------------------------------------------------
 # 7. q searches PO number + item code via EXISTS, without multiplying rows
@@ -433,3 +445,4 @@ if ($left -ne 0) { Write-Host "FAIL: $left fixture pulls stranded" -ForegroundCo
 OK "fixture namespace is empty"
 
 Write-Host "`nALL PASS — Closed Pulls filters are server-side." -ForegroundColor Green
+

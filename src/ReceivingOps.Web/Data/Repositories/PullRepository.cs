@@ -489,13 +489,12 @@ public class PullRepository : IPullRepository
         // and cost a guaranteed full scan of every row with no index help at
         // all; ERP pull numbers are unseparated digit strings, so the trade is
         // not worth it. Revisit if separated pull numbers ever become real.
+        // Empty or whitespace input is "no filter" and appends nothing — the
+        // same contract the date filter uses for "All dates". Everything below
+        // is the case where the operator DID type something.
         if (!string.IsNullOrWhiteSpace(filter.PullNumber))
         {
             var digits = DigitsOnly(filter.PullNumber);
-            // Nothing numeric in the input: append no predicate at all, rather
-            // than a predicate that cannot match. Typing letters therefore does
-            // not filter — the same contract the date filter uses for "All
-            // dates", where the absence of a predicate is the feature.
             if (digits.Length > 0)
             {
                 where.Append(@"AND p.PullNumber LIKE @PullDigits ESCAPE '\' ");
@@ -503,6 +502,24 @@ public class PullRepository : IPullRepository
                 // deliberately: it is the thing that stays correct if the
                 // normalisation above is ever loosened to admit other characters.
                 p.Add("PullDigits", "%" + EscapeLike(digits) + "%");
+            }
+            else
+            {
+                // Typed something, but nothing numeric survived — 'PL-DOR', or a
+                // bare '%'. Return ZERO rows, never the whole list.
+                //
+                // Appending no predicate here would mean a non-numeric search
+                // silently WIDENS the result to every closed pull, which reads
+                // to the operator as "my search matched everything" at the exact
+                // moment their search matched nothing. A filter that cannot be
+                // satisfied must return nothing; only an ABSENT filter returns
+                // everything, and that case is the guard above.
+                //
+                // '1 = 0' rather than a parameter: it is constant-folded, it
+                // keeps the string self-contained on `p` so the COUNT statement
+                // can still reuse this WHERE verbatim, and it cannot be confused
+                // with a value the operator supplied.
+                where.Append("AND 1 = 0 ");
             }
         }
 
