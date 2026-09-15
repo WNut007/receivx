@@ -688,6 +688,44 @@ Both halves of the claim have moved:
 A reader treating this smoke as an expected fail would discount a real
 regression in it. Nothing in the battery is currently failing by design.
 
+### "Nothing is failing by design" — recorded 2026-09-15
+
+**Stale claim** (immediately above): "Nothing in the battery is currently
+failing by design."
+
+**What is true now.** Measured full battery on `feat/digital-signature`,
+2026-09-15: **70 PASS / 19 FAIL of 89 suites.** The 19 are not one class, and
+one of them *was* failing by design in exactly the sense the sentence above
+denies:
+
+| Class | Count | What it is |
+|---|---|---|
+| SMTP credential rejected (`5.7.8`) | 7 | An active Gmail App Password block. Every export-dependent smoke cascades from it: `smoke-email-test`, `smoke-my-exports`, `smoke-exports-badge`, `smoke-exports-2tab`, `smoke-ktf-export`, `smoke-phase-8.4-exports`, `smoke-phase-9-extended-fields`. |
+| Seed gap / fixture state | ~9 | Carry-over from `db/035`'s wipe. `smoke-transactions` (404 on PL-2848), `smoke-stage-b` (PL-2844 `SUMMARY`), `smoke-phase-4b/4d/4e`, `smoke-phase-5c/5d`, `verify-phase-3.5`, `smoke-hourcap-6.5` (PL-2900 flags `'1|0'`, expected `'1|1'`). |
+| Source-level assertions | 2 | `smoke-phase-12-4`, `smoke-phase-12-7`. |
+| **Stale assertion (fixed)** | 1 | `verify-hourcap-6.1` required `DF_Pulls_LockHourCap = ((1))`. **db/048 deliberately made it 0.** It had been failing by design since db/048 landed. Fixed 2026-09-15; the file now asserts 0 and passes 8/8. |
+
+So: treat a red suite as a real signal, but check it against these classes
+before assuming a regression — and do not read the sentence above as a
+guarantee that every red suite is new.
+
+**A second, quieter defect surfaced while fixing these.** `GET /api/pulls`
+returns a `PullDashboardResponse` envelope `{ items, page, pageSize, total,
+aggregates }`, not a bare array. Two smokes piped the envelope straight into
+`Where-Object` / indexed it as `[0]`:
+
+- `smoke-do-signatures`'s `ClosedPull()` helper — every caller silently got
+  `$null` and read it as **"the pull is not closed"**, which is a wrong answer
+  that looks like a legitimate one. A signature-progression assertion was
+  passing judgement on a query that had never returned anything.
+- `verify-hourcap-6.1` — `$summaries[0]` returned the envelope itself, so the
+  next assertion reported a *missing lockHourCap field* when the real fault was
+  the response shape.
+
+Both now read `.items` and fail loudly if that property disappears. When a
+smoke asserts against a list endpoint, check the envelope before trusting a
+negative result.
+
 ## Stack
 - .NET 8 LTS, C# 12
 - Dapper (no EF Core, no string concat in SQL)
