@@ -262,3 +262,39 @@ public class PullUpdateRequest
     public bool LockHourCap { get; set; } = true;      // v2.1 Phase 6 — must echo current value; mismatch → 409
     public string? ReferenceNumber { get; set; }       // v2.x Phase 7.1 — editable post-create; vendors revise invoices
 }
+
+/// <summary>
+/// Filter for the /Reports "Closed Pulls" list (GET /api/reports/closed-pulls).
+///
+/// Every field here is applied in SQL. Before this existed the list was a
+/// server-paged query with a client-side filter layered on top, so a search
+/// only ever saw the 50 rows already in the DOM — searching a pull that sat
+/// on page 12 returned nothing, and the header counter (visible rows on this
+/// page) disagreed with the pager total (unfiltered COUNT).
+///
+/// Date bounds are absolute UTC instants, not a bucket name: the browser
+/// resolves "Today" / "Last 2 days" against the operator's own calendar and
+/// sends the resulting half-open window. That keeps "All dates" structurally
+/// unable to emit a predicate (both bounds null) and fixes the old UTC-vs-local
+/// off-by-one, where a pull closed before 07:00 Bangkok time carried the
+/// previous day's UTC date and bucketed a day early.
+/// </summary>
+/// <param name="WarehouseId">Admin's picked warehouse; null = all warehouses ⇒ no predicate.</param>
+/// <param name="SessionWarehouseId">Non-admin's session warehouse, forced by the controller; null for admins.</param>
+/// <param name="Q">Contains-match over PO number + item code, via EXISTS (never a row-multiplying JOIN).</param>
+/// <param name="PullNumber">Prefix match, raw and zero-normalized — see the repository for the two alternatives.</param>
+/// <param name="ClosedFromUtc">Inclusive lower bound on Pulls.ClosedAt.</param>
+/// <param name="ClosedToUtc">EXCLUSIVE upper bound on Pulls.ClosedAt (half-open, so day windows can't overlap).</param>
+/// <param name="Sign">all | unsigned_mine | awaiting | complete.</param>
+/// <param name="SignParties">The caller's canSign parties, lowercase. Only read when Sign = unsigned_mine.</param>
+public record ClosedPullQuery(
+    Guid? WarehouseId,
+    Guid? SessionWarehouseId,
+    string? Q,
+    string? PullNumber,
+    DateTime? ClosedFromUtc,
+    DateTime? ClosedToUtc,
+    string? Sign,
+    IReadOnlyList<string>? SignParties,
+    int Page = 1,
+    int PageSize = 50);

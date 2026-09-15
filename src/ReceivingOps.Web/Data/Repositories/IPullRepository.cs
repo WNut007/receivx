@@ -28,12 +28,16 @@ public interface IPullRepository
 
     // v2.x Phase 7.3 / 8.1 — DO-eligible pulls. Closed status AND
     // net-positive received qty (excludes fully-cancelled cycles).
-    // warehouseId is optional — null returns all warehouses the caller
-    // has access to; the controller does the role-based scoping.
-    // Paged: returns the page slice + the unfiltered-by-paging total
-    // so the Reports view can render "X of N" + (eventually) page nav.
+    // Paged: returns the page slice + the total over the SAME filter, so the
+    // list's header counter and its pager can never report different numbers.
+    //
+    // Every filter on the /Reports bar lives in ClosedPullQuery and is applied
+    // in SQL. Warehouse scoping is the caller's job: the controller sets
+    // SessionWarehouseId for non-admins and WarehouseId for admins, and the
+    // repository prefers the session value so a crafted query string can't
+    // widen a non-admin's scope.
     Task<(IReadOnlyList<PullSummary> Items, int Total)> GetClosedWithReceiptsAsync(
-        Guid? warehouseId, int skip, int take, CancellationToken ct = default);
+        ClosedPullQuery filter, CancellationToken ct = default);
 
     // v2.x Phase 7.4 — flat aggregated rows for the DO report. One row per
     // (PO × PoLineNumber × ItemCode) with SUM(QtyReceived) over all receipts

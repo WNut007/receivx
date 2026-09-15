@@ -1,15 +1,12 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ReceivingOps.Web.Data.Repositories;
-using ReceivingOps.Web.Models;
-using ReceivingOps.Web.Models.Dtos;
 
 namespace ReceivingOps.Web.Controllers;
 
 // v2.x Phase 7.4 — Page controller for /Reports (two-pane Reports page).
-// The DO preview HTML fragment + the PDF export live on the API surface
-// at /api/reports/do/{id}/preview and /api/reports/do/{id}/export.pdf
+// The closed-pull list, the DO preview HTML fragment and the PDF export all
+// live on the API surface: /api/reports/closed-pulls,
+// /api/reports/do/{id}/preview and /api/reports/do/{id}/export.pdf
 // (ReportsApiController).
 //
 // CanViewReports = admin + any recognized whRole (supervisor/operator/viewer/
@@ -20,49 +17,36 @@ namespace ReceivingOps.Web.Controllers;
 [Authorize(Policy = "CanViewReports")]
 public class ReportsController : Controller
 {
-    private readonly IPullRepository _pulls;
-
-    public ReportsController(IPullRepository pulls)
-    {
-        _pulls = pulls;
-    }
-
-    // GET /Reports — server-renders the closed-pull list into the two-pane
-    // layout. Non-admin sessions get their session warehouse only.
+    // GET /Reports — renders the two-pane shell. The closed-pull list itself is
+    // fetched by reports.js from GET /api/reports/closed-pulls, filtered and
+    // paged server-side.
     //
-    // Phase 8.1: paginated. ?page=N&pageSize=M query params drive the
-    // slice; HTML default = page 1, pageSize 50. UI page nav (prev/next)
-    // ships in Phase 8.3; for now the URL params are the only way to
-    // reach pages > 1 — but the result-count surfaces the total so
-    // operators know more data exists.
+    // The list was server-rendered here until the filter bar moved into SQL.
+    // Rendering the rows in both Razor and JS would have meant two markup paths
+    // for one list, and they drift; the endpoint is now the single source. The
+    // ?page= query param went with it — page state lives in the JS pagination
+    // control, because a page link that doesn't carry the active filters points
+    // at the wrong rows.
     [HttpGet("/Reports")]
-    public async Task<IActionResult> Index(
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50,
-        CancellationToken ct = default)
+    public IActionResult Index()
     {
-        var wh = User.IsInRole("admin") ? (Guid?)null : ParseGuid(User.FindFirstValue("warehouseId"));
-        var req = new PaginatedRequest { Page = page, PageSize = pageSize };
-        var (items, total) = await _pulls.GetClosedWithReceiptsAsync(wh, req.Skip, req.Take, ct);
         ViewData["PageId"] = "reports";
 
         // Phase 7e — the current user's signing capabilities (lowercase party
         // peers from the canSign claims, 6b). Drives the per-row batch checkboxes,
-        // the batch-party selector, and the "unsigned for my role" filter. The
-        // list is already warehouse-scoped above, so every visible row is a pull
-        // this user could sign (scope-wise); eligibility narrows to unsigned boxes
-        // client-side. Warehouse is excluded from batch (auto-signed at close).
+        // the batch-party selector, and the 'unsigned for my role' filter. The
+        // API scopes the list to warehouses this user can reach, so every row it
+        // returns is a pull this user could sign (scope-wise); eligibility
+        // narrows to unsigned boxes in the renderer. Warehouse is excluded from
+        // batch (auto-signed at close).
         var signParties = User.FindAll("canSign").Select(c => c.Value).ToArray();
         ViewData["SignPartiesArr"]  = signParties;
         ViewData["SignPartiesJson"] = System.Text.Json.JsonSerializer.Serialize(signParties);
-        return View(new PaginatedResponse<PullSummary>
-        {
-            Items = items,
-            Page = Math.Max(1, page),
-            PageSize = req.Take,
-            Total = total,
-        });
-    }
 
-    private static Guid? ParseGuid(string? s) => Guid.TryParse(s, out var g) ? g : null;
+        // The warehouse filter only means something for admins — everyone else is
+        // pinned to their session warehouse by the API regardless of what they
+        // pick, so the renderer removes the control rather than leaving a dead one.
+        ViewData["IsAdmin"] = User.IsInRole("admin");
+        return View();
+    }
 }

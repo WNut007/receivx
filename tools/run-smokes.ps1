@@ -168,6 +168,11 @@ if (-not $Scripts -or $Scripts.Count -eq 0) {
         'smoke-pull-sheets-period-scoping.ps1'
         'smoke-pull-sheets-nbsp.ps1'
         'smoke-pull-sheets-building.ps1'
+        # Reports -> Closed Pulls. Guards that the filter bar runs in SQL and
+        # not over the rows already in the DOM: searching a pull that sits on
+        # page > 1 used to return nothing, and the header counter (visible rows)
+        # disagreed with the pager (unfiltered COUNT).
+        'smoke-closed-pulls-server-filters.ps1'
     )
 }
 

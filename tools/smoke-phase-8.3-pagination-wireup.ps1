@@ -45,52 +45,50 @@ if ($tx.Content -notmatch '/css/components/pagination\.css'){ Fail "/Transaction
 OK "/Transactions chrome wired (container + JS + CSS)"
 
 # ----------------------------------------------------------------------------
-# 3. /Reports — server-rendered partial. With pageSize=1 we force totalPages > 1.
+# 3. /Reports - JS-mounted pagination, same as /Pos and /Transactions above.
+#    Until the filter bar moved into SQL this page server-rendered the
+#    _Pagination partial, whose <a href="?page=N"> links carried the page number
+#    but no filter state - so a page link navigated back to unfiltered rows.
+#    The list is now fed by GET /api/reports/closed-pulls and paged by
+#    mountPagination(), so the assertions match /Pos and /Transactions.
 # ----------------------------------------------------------------------------
-Step "/Reports: partial renders pagination-nav when totalPages > 1"
-$reports = Invoke-WebRequest -Uri "$base/Reports?pageSize=1" -WebSession $sv -UseBasicParsing
+Step "/Reports: container + pagination.js loaded"
+$reports = Invoke-WebRequest -Uri "$base/Reports" -WebSession $sv -UseBasicParsing
+if ($reports.Content -notmatch 'id="reports-pagination"')         { Fail "/Reports missing pagination container" }
+if ($reports.Content -notmatch '/js/components/pagination\.js')   { Fail "/Reports missing pagination.js script tag" }
 if ($reports.Content -notmatch '/css/components/pagination\.css') { Fail "/Reports missing pagination.css link" }
-if ($reports.Content -notmatch 'class="pagination"') { Fail "/Reports partial not rendered (expected when total > 1 with pageSize=1)" }
-if ($reports.Content -notmatch 'class="pagination-info"') { Fail "/Reports pagination-info missing" }
-if ($reports.Content -notmatch 'class="pagination-nav"')  { Fail "/Reports pagination-nav missing" }
-if ($reports.Content -notmatch 'href="\?[^"]*page=2[^"]*"') { Fail "/Reports nav links don't carry ?page=N" }
-if ($reports.Content -notmatch 'aria-current="page"') { Fail "/Reports active page link missing aria-current" }
-OK "/Reports partial renders pagination-nav with page=N hrefs + aria-current"
+# The server-rendered pager is gone along with the rows it paged.
+if ($reports.Content -match 'class="pagination-btn"') { Fail "/Reports still server-renders the pager" }
+if ($reports.Content -match 'href="\?[^"]*page=\d')  { Fail "/Reports still emits ?page=N links" }
+OK "/Reports mounts pagination client-side; no server-rendered pager remains"
 
 # ----------------------------------------------------------------------------
-# 4. /Reports — partial omitted when totalPages <= 1 (small dataset)
+# 4. /Reports - ?page=N drives distinct slices, and carries the filter with it.
+#    This is what sections 4-6 used to prove about the partial: that paging
+#    slices server-side, and that a page link does not drop the active filter.
 # ----------------------------------------------------------------------------
-Step "/Reports: partial omitted when totalPages <= 1"
-$reports2 = Invoke-WebRequest -Uri "$base/Reports?pageSize=500" -WebSession $sv -UseBasicParsing
-if ($reports2.Content -match 'class="pagination"') {
-    Fail "Reports rendered .pagination wrapper for tiny dataset (pageSize=500, total < 500)"
+Step "/Reports: ?page=N drives different slices and preserves the filter"
+$cp1 = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?pageSize=1&page=1" -WebSession $sv
+$cp2 = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?pageSize=1&page=2" -WebSession $sv
+if ($cp1.items.Count -lt 1) { Fail "closed-pulls page=1 returned no row" }
+if ($cp1.totalPages -lt 2) {
+    Write-Host "  (only 1 eligible closed pull - skip distinct-slice check)" -ForegroundColor DarkGray
+} else {
+    if ($cp2.items.Count -lt 1) { Fail "closed-pulls page=2 returned no row but totalPages=$($cp1.totalPages)" }
+    if ($cp1.items[0].id -eq $cp2.items[0].id) { Fail "page=1 and page=2 returned the same row - OFFSET not applied" }
+    OK "page=1 row $($cp1.items[0].id.Substring(0,8)) vs page=2 row $($cp2.items[0].id.Substring(0,8)) (distinct)"
 }
-OK "/Reports pagination omitted when one page covers everything"
 
-# ----------------------------------------------------------------------------
-# 5. /Reports — ?page=2&pageSize=1 returns a different row than page=1
-# ----------------------------------------------------------------------------
-Step "/Reports: ?page=N drives different slices server-side"
-$p1 = Invoke-WebRequest -Uri "$base/Reports?pageSize=1&page=1" -WebSession $sv -UseBasicParsing
-$p2 = Invoke-WebRequest -Uri "$base/Reports?pageSize=1&page=2" -WebSession $sv -UseBasicParsing
-$id1 = ([regex]::Match($p1.Content, 'data-pull-id="([0-9a-f-]+)"')).Groups[1].Value
-$id2 = ([regex]::Match($p2.Content, 'data-pull-id="([0-9a-f-]+)"')).Groups[1].Value
-if (-not $id1) { Fail "page=1 returned no row id" }
-if (-not $id2) { Fail "page=2 returned no row id (Reports may have only 1 eligible pull)" }
-if ($id1 -eq $id2) { Fail "page=1 + page=2 returned same row id — OFFSET not applied" }
-OK "page=1 row $($id1.Substring(0,8)) vs page=2 row $($id2.Substring(0,8)) (distinct)"
-
-# ----------------------------------------------------------------------------
-# 6. /Reports — base query preserved across page links
-# ----------------------------------------------------------------------------
-Step "/Reports: pagination links preserve other query params"
-$preserved = Invoke-WebRequest -Uri "$base/Reports?dateRange=all&pageSize=1&page=1" -WebSession $sv -UseBasicParsing
-if ($preserved.Content -notmatch 'href="\?[^"]*dateRange=all[^"]*page=2"') {
-    if ($preserved.Content -notmatch 'href="\?[^"]*page=2[^"]*dateRange=all') {
-        Fail "Reports nav link dropped dateRange=all when navigating to page 2"
-    }
-}
-OK "Reports nav links preserve dateRange=all across page navigation"
+# A filter travels alongside page: the total must stay the FILTERED total on
+# page 2, not silently revert to the unfiltered count the way the old
+# server-rendered pager's href did.
+$target = $cp1.items[0].pullNumber
+$enc = [uri]::EscapeDataString($target)
+$f1 = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?pullNumber=$enc&pageSize=1&page=1" -WebSession $sv
+$f2 = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?pullNumber=$enc&pageSize=1&page=2" -WebSession $sv
+if ($f1.total -ge $cp1.total) { Fail "filtered total ($($f1.total)) did not narrow the unfiltered total ($($cp1.total))" }
+if ($f2.total -ne $f1.total)  { Fail "total changed from $($f1.total) to $($f2.total) between pages - filter dropped on page 2" }
+OK "filter preserved across pages: total stays $($f1.total) on page 1 and page 2"
 
 Write-Host ""
 Write-Host "ALL PASS — Phase 8.3 pagination wired across Reports / Pos / Transactions." -ForegroundColor Green

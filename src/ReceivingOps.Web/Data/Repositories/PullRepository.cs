@@ -408,12 +408,23 @@ public class PullRepository : IPullRepository
     // of delivery; pulls closed with everything cancelled produce nothing).
     // Phase 8.1: paged + total. ClosedAt covered by IX_Pulls_ClosedAt
     // (filtered Status='closed' INCLUDE WarehouseId+PullDate+PullNumber).
+    //
+    // Every filter the /Reports bar exposes is applied HERE, in SQL. The page
+    // slice and the total share one `where` string — built once below and
+    // appended to both statements — so the two can never drift into reporting
+    // different populations, which is exactly what the header counter ("N
+    // pulls", visible DOM rows) and the pager ("X closed pulls", unfiltered
+    // COUNT) used to do.
+    //
+    // The WHERE is deliberately self-contained on `p`: it touches no alias from
+    // SummarySelect's join list, so `SELECT COUNT(*) FROM dbo.Pulls p` plus the
+    // same string is a valid statement. Keep it that way when adding filters.
     public async Task<(IReadOnlyList<PullSummary> Items, int Total)> GetClosedWithReceiptsAsync(
-        Guid? warehouseId, int skip, int take, CancellationToken ct = default)
+        ClosedPullQuery filter, CancellationToken ct = default)
     {
-        const string whereSql = @"
+        var p = new DynamicParameters();
+        var where = new StringBuilder(@"
             WHERE p.Status = 'closed'
-              AND (@WarehouseId IS NULL OR p.WarehouseId = @WarehouseId)
               AND EXISTS (
                   SELECT 1 FROM dbo.Receipts r
                   INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
@@ -425,24 +436,157 @@ public class PullRepository : IPullRepository
                   FROM dbo.Receipts r
                   INNER JOIN dbo.PullItems pi ON pi.Id = r.PullItemId
                   WHERE pi.PullId = p.Id
-              ) > 0";
-        var pageSql = SummarySelect + whereSql + @"
+              ) > 0 ");
+
+        // ----- Warehouse -------------------------------------------------
+        // At most one of these is set: the controller forces SessionWarehouseId
+        // for non-admins (so a crafted ?warehouseId= can't widen their scope)
+        // and passes the operator's picked WarehouseId only for admins.
+        var effectiveWh = filter.SessionWarehouseId ?? filter.WarehouseId;
+        if (effectiveWh is { } wh)
+        {
+            where.Append("AND p.WarehouseId = @WarehouseId ");
+            p.Add("WarehouseId", wh);
+        }
+
+        // ----- Pull number ------------------------------------------------
+        // Two OR'd alternatives, both PREFIX matches:
+        //   1. against the stored value as typed — finds 'PL-DOR-...' and any
+        //      operator who types the full zero-padded '0000031539';
+        //   2. against the zero-stripped numeric value — so typing '31539',
+        //      or a partial '315', finds stored '0000031539'.
+        // TRY_CAST yields NULL for every non-numeric PullNumber (and for digit
+        // strings too long for bigint), so those rows simply fall out of (2)
+        // instead of raising a conversion error.
+        if (!string.IsNullOrWhiteSpace(filter.PullNumber))
+        {
+            var raw = filter.PullNumber.Trim();
+            where.Append(@"AND (p.PullNumber LIKE @PullRaw ESCAPE '\'
+                                OR (@PullDigits IS NOT NULL
+                                    AND CAST(TRY_CAST(p.PullNumber AS bigint) AS varchar(32))
+                                        LIKE @PullDigits ESCAPE '\')) ");
+            p.Add("PullRaw", EscapeLike(raw) + "%");
+            p.Add("PullDigits", NormalizeDigits(raw));
+        }
+
+        // ----- Search: PO number + item code ------------------------------
+        // EXISTS, never a JOIN: a pull with 40 lines matching the term must
+        // still come back as ONE row, and must still be counted once.
+        if (!string.IsNullOrWhiteSpace(filter.Q))
+        {
+            where.Append(@"AND (EXISTS (
+                                    SELECT 1 FROM dbo.PullItems pi
+                                    WHERE pi.PullId = p.Id
+                                      AND pi.ItemCode LIKE @Q ESCAPE '\')
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM dbo.Receipts r
+                                    INNER JOIN dbo.PullItems pi2     ON pi2.Id = r.PullItemId
+                                    INNER JOIN dbo.PurchaseOrders po ON po.Id  = r.PurchaseOrderId
+                                    WHERE pi2.PullId = p.Id
+                                      AND po.PoNumber LIKE @Q ESCAPE '\')) ");
+            p.Add("Q", "%" + EscapeLike(filter.Q.Trim()) + "%");
+        }
+
+        // ----- Closed-at window -------------------------------------------
+        // Half-open [from, to). "All dates" leaves both null and appends
+        // nothing at all — the absence of a predicate is the feature.
+        if (filter.ClosedFromUtc is { } from)
+        {
+            where.Append("AND p.ClosedAt >= @ClosedFrom ");
+            p.Add("ClosedFrom", from);
+        }
+        if (filter.ClosedToUtc is { } to)
+        {
+            where.Append("AND p.ClosedAt < @ClosedTo ");
+            p.Add("ClosedTo", to);
+        }
+
+        // ----- Signature status -------------------------------------------
+        // UQ_PullSig_Party caps dbo.PullSignatures at 3 rows per pull, so the
+        // correlated COUNT is a 3-row seek on the unique index.
+        switch ((filter.Sign ?? "all").Trim().ToLowerInvariant())
+        {
+            case "complete":
+                where.Append(@"AND (SELECT COUNT(*) FROM dbo.PullSignatures ps
+                                    WHERE ps.PullId = p.Id) >= 3 ");
+                break;
+            case "awaiting":
+                where.Append(@"AND (SELECT COUNT(*) FROM dbo.PullSignatures ps
+                                    WHERE ps.PullId = p.Id) < 3 ");
+                break;
+            case "unsigned_mine":
+                // "Any party I can sign that isn't signed on this pull." The
+                // parties arrive as a list; rather than splicing an IN list into
+                // the SQL, each of the 3 fixed parties gets a bit parameter and
+                // the VALUES row-set does the matching.
+                var mine = filter.SignParties ?? Array.Empty<string>();
+                where.Append(@"AND EXISTS (
+                                   SELECT 1
+                                   FROM (VALUES ('Customer',   @MineCustomer),
+                                                ('Warehouse',  @MineWarehouse),
+                                                ('Production', @MineProduction)) AS v(Party, Mine)
+                                   WHERE v.Mine = 1
+                                     AND NOT EXISTS (
+                                         SELECT 1 FROM dbo.PullSignatures ps
+                                         WHERE ps.PullId = p.Id AND ps.Party = v.Party)) ");
+                p.Add("MineCustomer",   Has(mine, "customer"));
+                p.Add("MineWarehouse",  Has(mine, "warehouse"));
+                p.Add("MineProduction", Has(mine, "production"));
+                break;
+        }
+
+        var whereSql = where.ToString();
+        var paging = new PaginatedRequest { Page = filter.Page, PageSize = filter.PageSize };
+        p.Add("Skip", paging.Skip);
+        p.Add("Take", paging.Take);
+
+        var sql = SummarySelect + whereSql + @"
             ORDER BY p.ClosedAt DESC, p.PullDate DESC, p.Id DESC
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT COUNT(*) FROM dbo.Pulls p " + whereSql + ";";
 
-        var p = new
-        {
-            WarehouseId = warehouseId,
-            Skip = Math.Max(0, skip),
-            Take = Math.Clamp(take, 1, 500),
-        };
         using var conn = _factory.Create();
         using var multi = await conn.QueryMultipleAsync(
-            new CommandDefinition(pageSql, p, cancellationToken: ct));
+            new CommandDefinition(sql, p, cancellationToken: ct));
         var items = (await multi.ReadAsync<PullSummary>()).AsList();
         var total = await multi.ReadSingleAsync<int>();
         return (items, total);
+    }
+
+    /// <summary>1 when the caller holds that signing party, else 0. Passed as a bit parameter.</summary>
+    private static int Has(IReadOnlyList<string> parties, string party)
+    {
+        for (int i = 0; i < parties.Count; i++)
+            if (string.Equals(parties[i], party, StringComparison.OrdinalIgnoreCase)) return 1;
+        return 0;
+    }
+
+    /// <summary>
+    /// Neutralises LIKE metacharacters in operator input so a search for "50%"
+    /// looks for the literal text rather than matching every row. Pairs with
+    /// ESCAPE '\' on every LIKE that consumes the result — the backslash itself
+    /// is escaped first, or a hand-typed "\%" would arrive already-escaped.
+    /// </summary>
+    private static string EscapeLike(string s) => s
+        .Replace("\\", "\\\\")
+        .Replace("%", "\\%")
+        .Replace("_", "\\_")
+        .Replace("[", "\\[");
+
+    /// <summary>
+    /// The zero-stripped LIKE prefix for a pull-number search, or null when the
+    /// operator typed anything that isn't a digit (in which case only the raw
+    /// prefix alternative applies). "0000031539" becomes "31539%", "315" stays
+    /// "315%", and an all-zeros input becomes "0%" rather than a bare "%" that
+    /// would match everything.
+    /// </summary>
+    private static string? NormalizeDigits(string raw)
+    {
+        if (raw.Length == 0) return null;
+        foreach (var c in raw) if (!char.IsAsciiDigit(c)) return null;
+        var trimmed = raw.TrimStart('0');
+        return (trimmed.Length == 0 ? "0" : trimmed) + "%";
     }
 
     // v2.x Phase 7.4 — DO report aggregation. Filter notes:

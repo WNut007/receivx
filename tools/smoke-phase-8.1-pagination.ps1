@@ -53,14 +53,25 @@ if ($def.page -ne 1)      { Fail "default page should be 1, got $($def.page)" }
 if ($def.pageSize -ne 50) { Fail "default pageSize should be 50, got $($def.pageSize)" }
 OK "defaults applied: page=$($def.page), pageSize=$($def.pageSize)"
 
-# 3. /Reports paginated server-render
-Step "GET /Reports renders paginated result count + page slice"
-$r1 = Invoke-WebRequest -Uri "$base/Reports?page=1&pageSize=3" -WebSession $sv -UseBasicParsing
+# 3. /Reports closed-pull list, paginated through the JSON endpoint.
+#    This used to assert a server-rendered page of rows. The list moved to
+#    GET /api/reports/closed-pulls when the filter bar moved into SQL, so the
+#    paging claim is asserted where paging now happens; the filters themselves
+#    are covered by smoke-closed-pulls-server-filters.ps1.
+Step "GET /api/reports/closed-pulls returns a page slice; /Reports renders the shell"
+$cp = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?page=1&pageSize=3" -WebSession $sv
+foreach ($prop in 'items','page','pageSize','total','totalPages') {
+    if ($null -eq $cp.$prop) { Fail "closed-pulls response missing $prop" }
+}
+if ($cp.page -ne 1)         { Fail "closed-pulls page should echo 1, got $($cp.page)" }
+if ($cp.pageSize -ne 3)     { Fail "closed-pulls pageSize should echo 3, got $($cp.pageSize)" }
+if ($cp.items.Count -gt 3)  { Fail "closed-pulls pageSize=3 returned $($cp.items.Count) rows" }
+if ($cp.total -lt $cp.items.Count) { Fail "closed-pulls total ($($cp.total)) < items ($($cp.items.Count))" }
+$r1 = Invoke-WebRequest -Uri "$base/Reports" -WebSession $sv -UseBasicParsing
 if ($r1.StatusCode -ne 200) { Fail "GET /Reports returned $($r1.StatusCode)" }
-if ($r1.Content -notmatch 'of \d+ pulls?') { Fail "Reports list missing 'X of N' count surface" }
-$rows1 = ([regex]::Matches($r1.Content, 'data-pull-id=')).Count
-if ($rows1 -gt 3) { Fail "Reports page 1 returned $rows1 rows, > 3" }
-OK "Reports page slice: $rows1 rows + 'of N' count surfaced"
+if ($r1.Content -notmatch 'id="result-count"')       { Fail "Reports missing the result-count surface" }
+if ($r1.Content -notmatch 'id="reports-pagination"') { Fail "Reports missing the pagination container" }
+OK "closed-pulls slice: $($cp.items.Count) of total=$($cp.total); /Reports renders the shell"
 
 # 4. /Transactions data-limit-notice DOM
 Step "GET /Transactions includes data-limit-notice DOM"

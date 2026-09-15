@@ -234,6 +234,17 @@
     color: var(--text-dim); font-size: 13px;
   }
 
+  /* Every filter round-trips to the server now, so the list is briefly stale
+     while a request is in flight. Fade rather than blank it: replacing the rows
+     with a spinner on each debounced keystroke is more disruptive than the wait
+     it covers. Pointer-events stay off so a click can't land on a row that is
+     about to be replaced. */
+  .pull-rows.is-loading {
+    opacity: 0.55;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+
   /* Preview pane */
   .preview-toolbar {
     display: flex; justify-content: space-between; align-items: center;
@@ -981,6 +992,13 @@
   border: 1px solid var(--border); border-radius: 8px;
 }
 .batch-bar .batch-count { font-size: 12px; font-weight: 600; color: var(--text); }
+/* Selection survives page navigation, so the count can describe pulls the
+   operator cannot currently see. Give it an accent pill the moment it is
+   non-zero — the Sign button next to it is about to act on all of them. */
+.batch-bar .batch-count.has-selection {
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg);
+}
 .batch-bar .batch-party-wrap { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .batch-bar .batch-party { width: auto; min-width: 110px; }
 .batch-bar .batch-result { font-size: 11px; color: var(--text-muted); flex-basis: 100%; }

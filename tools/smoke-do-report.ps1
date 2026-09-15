@@ -206,9 +206,18 @@ if ($page.StatusCode -ne 200) { Fail "GET /Reports returned $($page.StatusCode)"
 foreach ($needle in 'reports-filter-bar','reports-split','reports-list-pane','reports-preview-pane','preview-toolbar') {
     if ($page.Content -notmatch [regex]::Escape($needle)) { Fail "Two-pane DOM missing: $needle" }
 }
-if ($page.Content -notmatch [regex]::Escape($pullNum)) { Fail "Reports list missing $pullNum" }
-if ($page.Content -notmatch 'data-pull-id=') { Fail "List rows missing data-pull-id attribute" }
-OK "List page renders with two-pane DOM + smoke pull present"
+# The list rows are no longer server-rendered: /Reports ships the two-pane
+# shell and reports.js fills it from GET /api/reports/closed-pulls (the
+# filter bar moved into SQL). So the "is my pull in the list?" claim is
+# asserted against the endpoint that now produces the list.
+if ($page.Content -notmatch 'id="pull-rows"') { Fail "Reports missing the #pull-rows list container" }
+$listed = Invoke-RestMethod -Uri "$base/api/reports/closed-pulls?pullNumber=$([uri]::EscapeDataString($pullNum))&pageSize=50" -WebSession $sv
+if ($listed.total -lt 1) { Fail "Closed-pulls list missing $pullNum" }
+if (($listed.items | Where-Object { $_.pullNumber -eq $pullNum }).Count -ne 1) {
+    Fail "Closed-pulls list did not return exactly one row for $pullNum"
+}
+if (-not $listed.items[0].id) { Fail "List row missing its pull id" }
+OK "List page renders the two-pane shell; closed-pulls endpoint carries $pullNum"
 
 # ----------------------------------------------------------------------------
 # 2. /api/reports/do/{id}/preview — DSV HTML fragment + aggregated lines

@@ -3,6 +3,7 @@ using FastReport.Export.PdfSimple;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ReceivingOps.Web.Data.Repositories;
+using ReceivingOps.Web.Models;
 using ReceivingOps.Web.Models.Dtos;
 using ReceivingOps.Web.Services;
 
@@ -32,6 +33,68 @@ public class ReportsApiController : Controller
         _sign = sign;
         _authz = authz;
     }
+
+    // GET /api/reports/closed-pulls → one filtered page of the Closed Pulls list.
+    //
+    // Response is PaginatedResponse<PullSummary>: { items, page, pageSize, total }.
+    // EVERY filter is applied in SQL against the full table — the list used to be
+    // a server-paged query with a client-side filter layered on top, so searching
+    // for a pull that happened to sit on page 12 found nothing at all.
+    //
+    // Date bounds arrive as absolute UTC instants that the browser resolved from
+    // its own calendar, half-open [from, to). "All dates" sends neither, which is
+    // why it cannot emit a predicate.
+    [HttpGet("closed-pulls")]
+    public async Task<IActionResult> ClosedPulls(
+        [FromQuery] string? q,
+        [FromQuery] string? pullNumber,
+        [FromQuery] DateTime? closedFrom,
+        [FromQuery] DateTime? closedTo,
+        [FromQuery] Guid? warehouseId,
+        [FromQuery] string? sign,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        // Non-admins are pinned to their session warehouse regardless of what the
+        // query string asks for; admins get the picked warehouse (null = all).
+        var isAdmin = User.IsInRole("admin");
+        var filter = new ClosedPullQuery(
+            WarehouseId:        isAdmin ? warehouseId : null,
+            SessionWarehouseId: isAdmin ? null : ParseGuid(User.FindFirstValue("warehouseId")),
+            Q:                  q,
+            PullNumber:         pullNumber,
+            ClosedFromUtc:      NormalizeUtc(closedFrom),
+            ClosedToUtc:        NormalizeUtc(closedTo),
+            Sign:               sign,
+            // The caller's own signing capabilities — never taken from the client,
+            // so "unsigned for my role" can't be aimed at somebody else's role.
+            SignParties:        User.FindAll("canSign").Select(c => c.Value).ToArray(),
+            Page:               page,
+            PageSize:           pageSize);
+
+        var (items, total) = await _pulls.GetClosedWithReceiptsAsync(filter, ct);
+        return Ok(new PaginatedResponse<PullSummary>
+        {
+            Items = items,
+            Page = Math.Max(1, page),
+            PageSize = Math.Clamp(pageSize, 1, 500),
+            Total = total,
+        });
+    }
+
+    // Model binding gives us Kind=Unspecified for "…Z" query values, and
+    // Kind=Local when the value carries an offset. ClosedAt is stored as
+    // SYSUTCDATETIME(), so both must be normalised to UTC before they are
+    // compared against it — otherwise a machine running in UTC+7 silently
+    // shifts every window by seven hours.
+    private static DateTime? NormalizeUtc(DateTime? value) => value switch
+    {
+        null => null,
+        { Kind: DateTimeKind.Utc } d => d,
+        { Kind: DateTimeKind.Local } d => d.ToUniversalTime(),
+        var d => DateTime.SpecifyKind(d!.Value, DateTimeKind.Utc),
+    };
 
     // GET /api/reports/do/{id}/preview → HTML fragment for the preview pane.
     // Non-admin sessions are restricted to their session warehouse — the
