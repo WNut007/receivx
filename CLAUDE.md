@@ -1514,6 +1514,122 @@ every encrypted secret in DB is unrecoverable. Back up alongside the DB.
 - Phase 11.2 "re-import from config files" admin button (alternative to manual `DELETE FROM dbo.AppSettings` + restart)
 - Phase 12.x extensions (deferred): admin warehouse picker on `/Imports` (uploader currently uses session WH for all roles), recent-runs panel listing the operator's prior `PoImportLog` rows, per-row preview pane in the modal (currently only totals + first 50 errors). None blocking; all easy adds when first needed.
 
+# Session handoff — 2026-09-15 (`feat/digital-signature`, unreleased)
+
+Not a tag. This block covers **2026-08-25 → 2026-09-15** on
+`feat/digital-signature`, which is 99 commits ahead of `main` and is where
+all work since v3.5 lives. `main` is still at v3.5 (2026-06-01). Nothing
+here is deployed.
+
+## Shipped in this window
+
+- **Pull Sheets export** (`f244184`, `97d7cac`, `2af401d`, `035f8ec`) —
+  Reports gains a Pull Sheets section: preview + XLSX for a (warehouse,
+  date, period), **open pulls included**, which is what distinguishes it
+  from the Delivery Orders section beside it. Four sheets: Header
+  (criteria), Summary (pull × item), Detail (pull × item × window),
+  Grand Total (item across the period). Preview and export run the SAME
+  query — a preview that disagreed with the file it offers would be worse
+  than no preview. Periods come from `Models/ReceivingPeriods`, one
+  definition shared with the rest of the app. `97d7cac` scopes Building
+  to the pull and resolves Vendor from PO lines (Phase 14 grain);
+  `2af401d` retires the client-side workbook builder, so the server is
+  the only thing that builds a workbook.
+- **Operator edits beat ERP sync, permanently** (`1eb4f53`, db/052) —
+  once data is in Receivx it belongs to Receivx. ERP sync populates a
+  pull initially; after that any field an operator changes is
+  authoritative and **no later sync writes it again for the life of that
+  pull**, even if ERP later sends a different value. Not "wins until ERP
+  changes": there is no comparison against the ERP value at read time and
+  no conflict flag. Field-level, not row-level — editing Remark does not
+  freeze ExpectedQty.
+- **Operator cancel is permanent and ERP-proof** (`c3abbbb`, `675aa1d`) —
+  the delete button became a cancel. Nothing is removed: the row stays on
+  the pull, flips to `Status='canceled'`, and takes an
+  `OperatorFieldEdits` mark on Status; ERP sync then skips that row whole
+  (no insert, no update, no un-cancel) for the life of the pull. The hard
+  DELETE it replaces removed the row, so the next sync found the draft
+  line absent and re-INSERTed it as net-new — measured on production
+  2026-08-31 at 15 affected (pull, item) pairs. `675aa1d` closes four
+  loose ends, including two smokes that had been red since `c3abbbb`
+  while saying nothing about the product.
+- **Closed Pulls filters moved into SQL** (`bde44b5`) — the `/Reports`
+  filter bar ran in the browser over whichever ~50 rows the server had
+  already rendered, while the pager counted the whole table, so a pull
+  on page 12 was unfindable and the header counter disagreed with the
+  pager by construction. All five filters now run in SQL;
+  the page slice and the COUNT are appended the SAME `where` string so
+  they cannot report different populations. Also fixes the UTC-vs-Bangkok
+  date-bucket off-by-one, where a pull closed before 07:00 local carried
+  the previous day's UTC date — the browser now resolves the bucket
+  against the operator's calendar and sends absolute UTC instants,
+  half-open `[from, to)`. Migration `db/053` adds two INCLUDE columns for
+  the EXISTS probes this introduced (index rebuilds via `DROP_EXISTING`,
+  no new indexes). **Confirmed against production 2026-09-15** on the
+  reported pull: it qualified, sat on page 18 of 50 of 1,469 qualifying
+  pulls, and was invisible purely because of client-side filtering.
+- **Pull number is a digits-only CONTAINS match** (`05cf21c`) — the same
+  production check found the reported pull was matched by its prefixes
+  but NOT by a trailing fragment, because the filter was two OR'd prefix
+  matches. Input is now reduced to digits and matched with
+  `LIKE '%digits%'`. Two contract changes: input with **no digits at all
+  appends no predicate**, so typing a non-numeric pull number WIDENS the
+  list rather than narrowing it (`'%'` used to return nothing, now
+  returns everything); and a pull number whose digits are broken by
+  separators is not found by the joined-up digits. **Measured, not
+  assumed:** the LIKE is NOT confined to the closed subset — the
+  optimiser scans the PullNumber unique index over every row of
+  `dbo.Pulls`, taking logical reads on Pulls from 2 to 74 over 14,723
+  pulls of which 39 are closed. Cost scales with total pulls.
+- **Development cannot start against a non-local database** (`b608ab4`,
+  `1932e33`) — a User-level `ConnectionStrings__Default` environment
+  variable belonging to another application on the dev machine outranks
+  user-secrets in this project's precedence chain, so a plain
+  `dotnet run` drove that other database. Pinned in launchSettings (all
+  three Dev profiles, integrated auth only) and in `tools/run-smokes.ps1`
+  (process-scoped, before the first child spawns), with
+  `Data/DevDatabaseGuard.cs` as the backstop — it refuses to start and
+  **names the configuration provider that supplied the value**. Held by
+  `smoke-dev-db-guard.ps1`, whose case 4 is behavioural.
+
+## Open items
+
+- **The four DO smokes fail at HEAD, and the cause is stale fixtures, not
+  a broken report.** `smoke-do-report`, `smoke-do-signatures`,
+  `smoke-dsv-delivery-order` and `smoke-phase-14-do-multi-do` all render
+  zero `<article class="dsv-do">`. Root cause is `c3c3afb` (2026-07-30),
+  "Delivery Note includes only Transferred from WDT lines":
+  `ParseReportType` maps anything that is not `"order"` to
+  **DeliveryNote**, so a `/preview` call with no `type` gets the Delivery
+  NOTE, and the DN keeps only lines whose `PurchaseOrderLines.Note` is
+  exactly `Transferred from WDT`. None of these four fixtures set it —
+  only `smoke-dn-wdt-transfer-only.ps1`, shipped with `c3c3afb`, does.
+  Proven by causation, not inference: stamping the sentinel on
+  `smoke-do-report`'s own fixture makes the `.dsv-do` failure vanish and
+  carries the smoke four assertions further. `smoke-do-report` then hits
+  a SECOND stale assertion — it still wants a `DELIVERED BY` footer label
+  that `505cc44` (3-party signature boxes) removed; the partial renders
+  no such label at all. **Not a production defect:** the Delivery ORDER
+  path (`?type=order`, `_DsvOrderPreview.cshtml`) is untouched and passes
+  in full at HEAD, and `c3c3afb` is already inside `prod-2026-07-30`, so
+  prod has behaved this way since that deploy. Fixing means updating the
+  four fixtures, not the report.
+- **`prod-2026-07-30` is not a reliable indicator of what is on
+  production.** The tag points at `def8f2e`, which is dated **2026-08-06**
+  — the name and the content already disagree — and later deploys have
+  happened without moving it. Do not use it to infer prod state; confirm
+  against the running system instead.
+
+## Uncommitted / deliberately not committed
+
+- `publish/` carries local `dotnet publish` drift and is left alone. The
+  last committed snapshot is `f4d5cf0` (2026-08-07), so it is ~5 weeks
+  behind the source.
+- `tools/diag/diag-pull-0000031539.sql` and
+  `tools/diag/diag-pull-0000031539-dupe.sql` — read-only, SELECT-only
+  operator diagnostics for a specific production pull. Untracked on
+  purpose.
+
 # Session handoff — 2026-06-01 (v3.5)
 
 Tag **v3.5** on `main`. Ships **Path B + DSV Delivery Note redesign**.
